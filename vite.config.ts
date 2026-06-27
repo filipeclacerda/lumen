@@ -8,10 +8,8 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     watch: {
-      ignored: (path: string) => {
-        const normalized = path.replace(/\\/g, "/");
-        return normalized.indexOf("/src-tauri/target/") !== -1;
-      }
+      ignored: [/src-tauri/, /\\src-tauri\\/, "**/src-tauri/**"],
+      usePolling: true
     }
   },
   envPrefix: ["VITE_", "TAURI_"]

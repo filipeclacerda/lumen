@@ -31,7 +31,7 @@ pub struct Transaction {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Summary {
-    income_in_cents: i64, expenses_in_cents: i64, balance_in_cents: i64,
+    income_in_cents: i64, expenses_in_cents: i64, investments_in_cents: i64, balance_in_cents: i64,
     transaction_count: i64, by_category: Vec<CategoryTotal>,
 }
 
@@ -150,13 +150,20 @@ pub async fn list_accounts(state: State<'_, AppState>) -> Result<Vec<Account>, A
 }
 
 #[tauri::command]
-pub async fn list_transactions(state: State<'_, AppState>) -> Result<Vec<Transaction>, AppError> {
-    let rows = sqlx::query(
-        "SELECT t.id,t.account_id,t.date,t.description,t.amount_cents,t.category_id,
-         COALESCE(c.name,'Sem categoria') category,t.category_source,t.status
-         FROM transactions t LEFT JOIN categories c ON c.id=t.category_id
-         WHERE t.deleted_at IS NULL ORDER BY date DESC LIMIT 500"
-    ).fetch_all(&state.db).await?;
+pub async fn list_transactions(month: Option<String>, state: State<'_, AppState>) -> Result<Vec<Transaction>, AppError> {
+    let mut q = "SELECT t.id,t.account_id,t.date,t.description,t.amount_cents,t.category_id,
+                 COALESCE(c.name,'Sem categoria') category,t.category_source,t.status
+                 FROM transactions t LEFT JOIN categories c ON c.id=t.category_id
+                 WHERE t.deleted_at IS NULL".to_string();
+    if month.is_some() {
+        q.push_str(" AND strftime('%Y-%m', t.date) = ?");
+    }
+    q.push_str(" ORDER BY date DESC LIMIT 500");
+    
+    let mut query = sqlx::query(&q);
+    if let Some(m) = &month { query = query.bind(m); }
+    let rows = query.fetch_all(&state.db).await?;
+    
     Ok(rows.into_iter().map(|r| Transaction {
         id:r.get("id"), account_id:r.get("account_id"), date:r.get("date"),
         description:r.get("description"), amount_in_cents:r.get("amount_cents"),
@@ -166,22 +173,27 @@ pub async fn list_transactions(state: State<'_, AppState>) -> Result<Vec<Transac
 }
 
 #[tauri::command]
-pub async fn dashboard_summary(state: State<'_, AppState>) -> Result<Summary, AppError> {
+pub async fn dashboard_summary(month: Option<String>, state: State<'_, AppState>) -> Result<Summary, AppError> {
+    let m = month.unwrap_or_else(|| chrono::Local::now().format("%Y-%m").to_string());
     let r = sqlx::query(
         "SELECT
-         COALESCE(SUM(CASE WHEN t.amount_cents>0 AND COALESCE(c.kind,'income')!='transfer' THEN t.amount_cents ELSE 0 END),0) income,
-         COALESCE(-SUM(CASE WHEN t.amount_cents<0 AND COALESCE(c.kind,'expense')!='transfer' THEN t.amount_cents ELSE 0 END),0) expenses,
+         COALESCE(SUM(CASE WHEN t.amount_cents>0 AND COALESCE(c.kind,'income') NOT IN ('transfer','investment') THEN t.amount_cents ELSE 0 END),0) income,
+         COALESCE(-SUM(CASE WHEN t.amount_cents<0 AND COALESCE(c.kind,'expense') NOT IN ('transfer','investment') THEN t.amount_cents ELSE 0 END),0) expenses,
+         COALESCE(-SUM(CASE WHEN t.amount_cents<0 AND COALESCE(c.kind,'expense') = 'investment' THEN t.amount_cents ELSE 0 END),0) investments,
          COALESCE(SUM(t.amount_cents),0) balance, COUNT(*) count
-         FROM transactions t LEFT JOIN categories c ON c.id=t.category_id WHERE t.deleted_at IS NULL"
-    ).fetch_one(&state.db).await?;
+         FROM transactions t LEFT JOIN categories c ON c.id=t.category_id 
+         WHERE t.deleted_at IS NULL AND strftime('%Y-%m', t.date) = ?"
+    ).bind(&m).fetch_one(&state.db).await?;
     let cats = sqlx::query(
         "SELECT COALESCE(c.name,'Sem categoria') category,-SUM(t.amount_cents) amount
          FROM transactions t LEFT JOIN categories c ON c.id=t.category_id
-         WHERE t.amount_cents<0 AND t.deleted_at IS NULL AND COALESCE(c.kind,'expense')!='transfer'
+         WHERE t.amount_cents<0 AND t.deleted_at IS NULL AND COALESCE(c.kind,'expense') NOT IN ('transfer','investment')
+         AND strftime('%Y-%m', t.date) = ?
          GROUP BY category ORDER BY amount DESC LIMIT 6"
-    ).fetch_all(&state.db).await?;
+    ).bind(&m).fetch_all(&state.db).await?;
     Ok(Summary {
         income_in_cents:r.get("income"), expenses_in_cents:r.get("expenses"),
+        investments_in_cents:r.get("investments"),
         balance_in_cents:r.get("balance"), transaction_count:r.get("count"),
         by_category:cats.into_iter().map(|x|CategoryTotal{category:x.get("category"),amount_in_cents:x.get("amount")}).collect(),
     })
@@ -275,7 +287,7 @@ pub async fn reorder_rules(ids: Vec<String>, state: State<'_, AppState>) -> Resu
     let mut tx = state.db.begin().await?;
     for (index, id) in ids.into_iter().enumerate() {
         sqlx::query("UPDATE categorization_rules SET priority=?,updated_at=datetime('now') WHERE id=?")
-            .bind((index as i64 + 1) * 10).bind(id).execute(&mut *tx).await?;
+            .bind((index as i64 + 1) * 10).bind(id).execute(&mut *tx).await.map_err(|e| { println!("DB ERROR: {:?}", e); e })?;
     }
     tx.commit().await?;
     Ok(())
@@ -367,8 +379,8 @@ pub async fn apply_rules_retroactive(overwrite_manual: bool, state: State<'_, Ap
             account_id:&account_id, normalized_description:&description, amount_in_cents:row.get("amount_cents"),
         }) {
             sqlx::query("UPDATE transactions SET category_id=?,category_source='rule',categorization_rule_id=? WHERE id=?")
-                .bind(&rule.category_id).bind(&rule.id).bind(row.get::<String,_>("id")).execute(&mut *tx).await?;
-            sqlx::query("UPDATE categorization_rules SET use_count=use_count+1 WHERE id=?").bind(&rule.id).execute(&mut *tx).await?;
+                .bind(&rule.category_id).bind(&rule.id).bind(row.get::<String,_>("id")).execute(&mut *tx).await.map_err(|e| { println!("DB ERROR: {:?}", e); e })?;
+            sqlx::query("UPDATE categorization_rules SET use_count=use_count+1 WHERE id=?").bind(&rule.id).execute(&mut *tx).await.map_err(|e| { println!("DB ERROR: {:?}", e); e })?;
             count += 1;
         }
     }
@@ -483,7 +495,7 @@ pub async fn commit_import(session_id: String, state: State<'_, AppState>) -> Re
     let session = state.sessions.lock().await.remove(&session_id).ok_or(AppError::SessionExpired)?;
     let mut tx = state.db.begin().await?;
     let batch_id = Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO import_batches(id,file_name,created_at) VALUES(?,?,datetime('now'))").bind(&batch_id).bind(session.file_name).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO import_batches(id,file_name,created_at) VALUES(?,?,datetime('now'))").bind(&batch_id).bind(session.file_name).execute(&mut *tx).await.map_err(|e| { println!("DB ERROR: {:?}", e); e })?;
     let mut count = 0;
     for candidate in session.candidates {
         if matches!(candidate.duplicate_status, crate::domain::import::DuplicateStatus::Exact) { continue; }
@@ -495,9 +507,9 @@ pub async fn commit_import(session_id: String, state: State<'_, AppState>) -> Re
             .bind(&candidate.description).bind(&candidate.normalized_description).bind(candidate.amount_in_cents)
             .bind(&candidate.external_id).bind(fingerprint(&session.account_id,&candidate)).bind("cleared")
             .bind(&batch_id).bind(&candidate.suggested_category_id).bind(source).bind(&candidate.suggested_rule_id)
-            .execute(&mut *tx).await?;
+            .execute(&mut *tx).await.map_err(|e| { println!("DB ERROR: {:?}", e); e })?;
         if let Some(rule_id) = candidate.suggested_rule_id {
-            sqlx::query("UPDATE categorization_rules SET use_count=use_count+1 WHERE id=?").bind(rule_id).execute(&mut *tx).await?;
+            sqlx::query("UPDATE categorization_rules SET use_count=use_count+1 WHERE id=?").bind(rule_id).execute(&mut *tx).await.map_err(|e| { println!("DB ERROR: {:?}", e); e })?;
         }
         count += 1;
     }

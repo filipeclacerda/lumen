@@ -24,9 +24,9 @@ const demoRules: CategorizationRule[] = [
 const isTauri = () => "__TAURI_INTERNALS__" in window;
 export const api = {
   accounts: async (): Promise<Account[]> => isTauri() ? invoke("list_accounts") : [{ id: "demo", name: "Conta principal", kind: "checking", balanceInCents: 549526 }],
-  transactions: async (): Promise<Transaction[]> => isTauri() ? invoke("list_transactions") : demoTransactions,
-  summary: async (): Promise<DashboardSummary> => isTauri() ? invoke("dashboard_summary") : {
-    incomeInCents: 780000, expensesInCents: 50374, balanceInCents: 729626, transactionCount: 4,
+  transactions: async (month?: string): Promise<Transaction[]> => isTauri() ? invoke("list_transactions", { month: month || null }) : demoTransactions,
+  summary: async (month?: string): Promise<DashboardSummary> => isTauri() ? invoke("dashboard_summary", { month: month || null }) : {
+    incomeInCents: 780000, expensesInCents: 50374, investmentsInCents: 20000, balanceInCents: 729626, transactionCount: 4,
     byCategory: [{ category: "Alimentação", amountInCents: 31740 }, { category: "Moradia", amountInCents: 18734 }]
   },
   categories: async (): Promise<Category[]> => isTauri() ? invoke("list_categories") : demoCategories,

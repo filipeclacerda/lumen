@@ -1,19 +1,37 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowDownRight, ArrowUpRight, Landmark, Plus } from "lucide-react";
 import { api } from "../../shared/api";
 import { money, shortDate } from "../../shared/format";
 
 export function Dashboard() {
-  const { data: summary } = useQuery({ queryKey: ["summary"], queryFn: api.summary });
-  const { data: transactions = [] } = useQuery({ queryKey: ["transactions"], queryFn: api.transactions });
+  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const { data: summary } = useQuery({ queryKey: ["summary", month], queryFn: () => api.summary(month) });
+  const { data: transactions = [] } = useQuery({ queryKey: ["transactions", month], queryFn: () => api.transactions(month) });
+  
   if (!summary) return <p>Carregando visão geral…</p>;
   const max = Math.max(...summary.byCategory.map(x => x.amountInCents), 1);
+  const [y, m] = month.split('-');
+  const currentMonthName = new Date(parseInt(y), parseInt(m) - 1).toLocaleString('pt-BR', { month: 'long', year: 'numeric' }).toUpperCase();
+  const netIncomeInCents = summary.incomeInCents - summary.expensesInCents;
+  
   return <section>
-    <header><div><p className="eyebrow">JUNHO DE 2026</p><h1>Olá, Filip 👋</h1><p className="muted">Aqui está o retrato do seu mês.</p></div><button><Plus size={17}/> Nova transação</button></header>
+    <header>
+      <div>
+        <p className="eyebrow" style={{display: "flex", alignItems: "center", gap: "10px"}}>
+          {currentMonthName} 
+          <input type="month" value={month} onChange={e => setMonth(e.target.value)} style={{fontSize: "12px", padding: "4px", borderRadius: "5px", border: "1px solid #dce2de", color: "#52605b", cursor: "pointer"}} />
+        </p>
+        <h1>Olá, Filip 👋</h1>
+        <p className="muted">Aqui está o retrato do seu mês.</p>
+      </div>
+      <button onClick={() => console.log("Em breve")}><Plus size={17}/> Nova transação</button>
+    </header>
     <div className="cards">
       <article><div className="metric-icon green"><ArrowUpRight/></div><p>Receitas</p><strong>{money(summary.incomeInCents)}</strong><small className="positive">↑ entradas no mês</small></article>
       <article><div className="metric-icon red"><ArrowDownRight/></div><p>Despesas</p><strong>{money(summary.expensesInCents)}</strong><small>gastos confirmados</small></article>
-      <article className="dark"><div className="metric-icon"><Landmark/></div><p>Saldo do mês</p><strong>{money(summary.balanceInCents)}</strong><small>receitas menos despesas</small></article>
+      <article><div className="metric-icon" style={{background: '#e9f0f5', color: '#1a5b82'}}><ArrowUpRight style={{transform: "rotate(45deg)"}}/></div><p>Investimentos</p><strong>{money(summary.investmentsInCents)}</strong><small>dinheiro guardado</small></article>
+      <article className="dark"><div className="metric-icon"><Landmark/></div><p>Saldo do mês</p><strong>{money(netIncomeInCents)}</strong><small>receitas menos despesas</small></article>
     </div>
     <div className="grid">
       <article className="panel"><div className="panel-title"><h2>Gastos por categoria</h2><span>Este mês</span></div>

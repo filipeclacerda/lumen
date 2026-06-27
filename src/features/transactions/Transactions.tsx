@@ -14,8 +14,8 @@ export function Transactions() {
   const [undoIds, setUndoIds] = useState<string[]>([]);
   const [notice, setNotice] = useState("");
   const client = useQueryClient();
-  const { data = [] } = useQuery({ queryKey: ["transactions"], queryFn: api.transactions });
-  const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: api.categories });
+  const { data = [] } = useQuery({ queryKey: ["transactions"], queryFn: () => api.transactions() });
+  const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: () => api.categories() });
   const rows = data.filter(t => t.description.toLowerCase().includes(search.toLowerCase()));
   const allVisibleSelected = rows.length > 0 && rows.every(t=>selected.has(t.id));
   function toggle(id:string) {
@@ -69,10 +69,20 @@ export function Transactions() {
         <button className="secondary" onClick={applyBulkCategory}><Tags size={15}/> Categorizar</button>
         <button className="danger" onClick={()=>setConfirmDelete(true)}><Trash2 size={15}/> Excluir</button></div>}</div>
       <table><thead><tr><th className="select-cell"><input type="checkbox" aria-label="Selecionar transações visíveis" checked={allVisibleSelected} onChange={toggleAll}/></th><th>Data</th><th>Descrição</th><th>Categoria</th><th>Status</th><th>Valor</th></tr></thead>
-      <tbody>{rows.map(t=><tr key={t.id} className={selected.has(t.id)?"selected-row":""}><td className="select-cell"><input type="checkbox" aria-label={`Selecionar ${t.description}`} checked={selected.has(t.id)} onChange={()=>toggle(t.id)}/></td><td>{shortDate(t.date)}</td><td><b>{t.description}</b></td><td><select className="category-select" aria-label={`Categoria de ${t.description}`} value={t.categoryId??""} onChange={e=>changeCategory(t,e.target.value)}>
-        <option value="">Sem categoria</option>{categories.map(c=><option key={c.id} value={c.id}>{c.parentId?"↳ ":""}{c.name}</option>)}</select>
-        {t.categorySource&&<small className="source-label">{t.categorySource==="rule"?"regra":"manual"}</small>}</td>
-        <td><span className="badge">{t.status === "cleared" ? "Confirmada" : "Pendente"}</span></td><td className={t.amountInCents > 0 ? "positive amount" : "amount"}>{money(t.amountInCents)}</td></tr>)}</tbody></table>
+      <tbody>
+        {rows.length === 0 && <tr><td colSpan={6} style={{textAlign:"center", padding:"60px 20px", color:"#87908c"}}>Nenhuma transação encontrada para este filtro.</td></tr>}
+        {rows.map(t=><tr key={t.id} className={selected.has(t.id)?"selected-row":""}>
+          <td className="select-cell"><input type="checkbox" aria-label={`Selecionar ${t.description}`} checked={selected.has(t.id)} onChange={()=>toggle(t.id)}/></td>
+          <td style={{whiteSpace:"nowrap", color: "#66706c"}}>{shortDate(t.date)}</td>
+          <td><div style={{display:"flex", alignItems:"center", gap:"12px"}}><div className="tx-icon">{t.description[0]}</div> <b>{t.description}</b></div></td>
+          <td><select className="category-select" aria-label={`Categoria de ${t.description}`} value={t.categoryId??""} onChange={e=>changeCategory(t,e.target.value)}>
+            <option value="">Sem categoria</option>{categories.map(c=><option key={c.id} value={c.id}>{c.parentId?"↳ ":""}{c.name}</option>)}</select>
+            {t.categorySource&&<small className="source-label" style={{marginTop:"6px"}}>{t.categorySource==="rule"?"categorizado por regra":"selecionado manualmente"}</small>}
+          </td>
+          <td><span className="badge" style={t.status === 'cleared' ? undefined : {background:"#fbf3e5", color:"#a96a1a"}}>{t.status === "cleared" ? "Confirmada" : "Pendente"}</span></td>
+          <td className={t.amountInCents > 0 ? "positive amount" : "amount"}>{money(t.amountInCents)}</td>
+        </tr>)}
+      </tbody></table>
     </article>
     {learning&&<div className="modal-backdrop"><article className="modal"><h2>Usar esta correção no futuro?</h2><p className="muted">Você pode criar uma regra local ou manter a alteração somente nesta transação.</p>
       <label>Descrição contém<input value={learning.pattern} onChange={e=>setLearning({...learning,pattern:e.target.value})}/></label>

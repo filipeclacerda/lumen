@@ -5,13 +5,13 @@ export type Transaction = {
   amountInCents: number; categoryId?: string; category?: string;
   categorySource?: "manual" | "rule"; status: "cleared" | "pending";
 };
-export type CategoryKind = "income" | "expense" | "transfer";
+export type CategoryKind = "income" | "expense" | "transfer" | "investment";
 export type Category = {
   id: string; parentId?: string; name: string; color?: string; icon?: string;
   kind: CategoryKind; sortOrder: number; isSystem: boolean;
 };
 export type RuleOperator = "contains" | "starts_with" | "regex";
-export type MovementType = "any" | "income" | "expense" | "transfer";
+export type MovementType = "any" | "income" | "expense" | "transfer" | "investment";
 export type RuleCondition = {
   operator: RuleOperator; pattern: string; accountId?: string; movementType: MovementType;
   minAmountInCents?: number; maxAmountInCents?: number;
@@ -26,7 +26,7 @@ export type RuleImpact = {
   sample: { transactionId: string; date: string; description: string; currentCategory?: string; suggestedCategory: string }[];
 };
 export type DashboardSummary = {
-  incomeInCents: number; expensesInCents: number; balanceInCents: number;
+  incomeInCents: number; expensesInCents: number; investmentsInCents: number; balanceInCents: number;
   transactionCount: number; byCategory: { category: string; amountInCents: number }[];
 };
 export type ImportCandidate = {

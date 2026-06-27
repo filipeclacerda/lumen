@@ -15,18 +15,26 @@ export function ImportPage() {
   }
   async function commit() {
     if (!preview) return;
-    const count = await api.commitImport(preview.sessionId);
-    setMessage(`${count} transações importadas com segurança.`);
-    setPreview(undefined);
+    try {
+      const count = await api.commitImport(preview.sessionId);
+      setMessage(`${count} transações importadas com segurança.`);
+      setPreview(undefined);
+    } catch (e: any) {
+      setMessage(`Erro ao importar: ${e}`);
+    }
   }
   async function changeCategory(sourceRow:number, categoryId:string) {
     if(!preview)return;
-    await api.setImportCategory(preview.sessionId,sourceRow,categoryId||undefined);
-    const category=categories.find(c=>c.id===categoryId);
-    setPreview({...preview,candidates:preview.candidates.map(c=>c.sourceRow===sourceRow?{
-      ...c,suggestedCategoryId:categoryId||undefined,suggestedCategoryName:category?.name,
-      suggestedRuleId:undefined,suggestedRuleName:undefined
-    }:c)});
+    try {
+      await api.setImportCategory(preview.sessionId,sourceRow,categoryId||undefined);
+      const category=categories.find(c=>c.id===categoryId);
+      setPreview({...preview,candidates:preview.candidates.map(c=>c.sourceRow===sourceRow?{
+        ...c,suggestedCategoryId:categoryId||undefined,suggestedCategoryName:category?.name,
+        suggestedRuleId:undefined,suggestedRuleName:undefined
+      }:c)});
+    } catch (e: any) {
+      setMessage(`Erro ao definir categoria: ${e.message || e}`);
+    }
   }
   return <section><header><div><p className="eyebrow">IMPORTAÇÃO SEGURA</p><h1>Importar extrato</h1><p className="muted">CSV e OFX são processados somente neste computador.</p></div></header>
     {!preview && <article className="dropzone"><FileUp size={42}/><h2>Selecione um arquivo bancário</h2><p>Use o seletor protegido para escolher um CSV, OFX ou extrato PDF textual do Sicoob.</p><button onClick={choose}>Escolher arquivo</button><small><ShieldCheck size={15}/> Nenhum dado financeiro é enviado para a internet.</small></article>}
