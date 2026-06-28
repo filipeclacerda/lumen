@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Account, AppBootstrap, Category, CategorizationRule, CreditCardImportPreview, CreditCardInvoice, CreditCardInvoiceItem, DashboardSummary, FinancialReport, FinancialTarget, FinancialTargetInput, ImportPreview, OnboardingInput, OnboardingResult, PaymentMatchCandidate, ReportFilter, RuleImpact, RuleInput, Transaction, TransactionLink, UserProfile } from "./types";
+import type { Account, AccountType, AppBootstrap, Category, CategorizationRule, CreditCardImportPreview, CreditCardInvoice, CreditCardInvoiceItem, DashboardSummary, FinancialReport, FinancialTarget, FinancialTargetInput, ImportPreview, OnboardingInput, OnboardingResult, PaymentMatchCandidate, ReportFilter, RuleImpact, RuleInput, Transaction, TransactionInput, TransactionLink, UserProfile } from "./types";
 
 const demoTransactions: Transaction[] = [
   { id: "1", accountId: "card", accountName:"Cartão principal", accountKind:"credit_card", date: "2026-06-26", description: "Supermercado Aurora", amountInCents: -28490, categoryId: "groceries", category: "Supermercado", categorySource: "rule", status: "cleared" },
@@ -73,6 +73,14 @@ export const api = {
     invoke("delete_transactions", { transactionIds }),
   restoreTransactions: (transactionIds: string[]): Promise<number> =>
     invoke("restore_transactions", { transactionIds }),
+  createTransaction: (input: TransactionInput): Promise<string> => invoke("create_transaction", { input }),
+  updateTransaction: (input: TransactionInput): Promise<void> => invoke("update_transaction", { input }),
+  createAccount: (name: string, kind: AccountType): Promise<string> => invoke("create_account", { name, kind }),
+  renameAccount: (id: string, name: string): Promise<void> => invoke("rename_account", { id, name }),
+  archiveAccount: (id: string): Promise<void> => invoke("archive_account", { id }),
+  exportTransactionsCsv: (path: string): Promise<number> => invoke("export_transactions_csv", { path }),
+  backupDatabase: (path: string): Promise<void> => invoke("backup_database", { path }),
+  restoreDatabase: (path: string): Promise<void> => invoke("restore_database", { path }),
   previewImport: (path: string, accountId: string): Promise<ImportPreview> => invoke("preview_import", { path, accountId }),
   updateImportCandidate: (sessionId: string, sourceRow: number, amountInCents: number, included: boolean): Promise<ImportPreview["candidates"][number]> =>
     invoke("update_import_candidate", { sessionId, sourceRow, amountInCents, included }),
@@ -121,8 +129,10 @@ export const api = {
       {month:"2026-06",incomeInCents:780000,expensesInCents:503740,investmentsInCents:60000,savingsInCents:276260,savingsRatePercent:35}
     ];
     return {
-      summary:{incomeInCents:780000,expensesInCents:503740,investmentsInCents:60000,savingsInCents:276260,incomeChangePercent:0,expenseChangePercent:1.2,savingsChangePercent:-2,savingsRatePercent:35,dailyAverageInCents:16791,projectedExpensesInCents:503740},
+      summary:{incomeInCents:4520000,expensesInCents:2898740,investmentsInCents:305000,savingsInCents:1621260,savingsRatePercent:35.9,dailyAverageInCents:16104,projectedExpensesInCents:503740},
+      latestMonthSummary:{incomeInCents:780000,expensesInCents:503740,investmentsInCents:60000,savingsInCents:276260,incomeChangePercent:0,expenseChangePercent:1.2,savingsChangePercent:-2,savingsRatePercent:35,dailyAverageInCents:16791,projectedExpensesInCents:503740},
       previousSummary:{incomeInCents:780000,expensesInCents:498000,investmentsInCents:60000,savingsInCents:282000,dailyAverageInCents:16064,projectedExpensesInCents:498000},
+      currentInvestedInCents:485000,
       monthly,categories:[
         {categoryId:"food",category:"Alimentação",color:"#e5a142",amountInCents:168000,sharePercent:33},
         {categoryId:"housing",category:"Moradia",color:"#728bba",amountInCents:142000,sharePercent:28},

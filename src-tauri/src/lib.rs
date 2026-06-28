@@ -16,7 +16,16 @@ pub fn run() {
         .setup(|app| {
             let data_dir = app.path().app_data_dir().expect("diretório de dados");
             std::fs::create_dir_all(&data_dir)?;
-            let db = tauri::async_runtime::block_on(infrastructure::database::connect(&data_dir.join("financa.db")))
+            let db_path = data_dir.join("financa.db");
+            // A restore staged by `restore_database` is swapped in here, before any
+            // connection opens, so the live database is never overwritten in place.
+            let staged = data_dir.join("financa.restore");
+            if staged.exists() {
+                let _ = std::fs::remove_file(data_dir.join("financa.db-wal"));
+                let _ = std::fs::remove_file(data_dir.join("financa.db-shm"));
+                std::fs::rename(&staged, &db_path)?;
+            }
+            let db = tauri::async_runtime::block_on(infrastructure::database::connect(&db_path))
                 .map_err(|e| Box::<dyn std::error::Error>::from(e.to_string()))?;
             app.manage(AppState {
                 db,
@@ -28,7 +37,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_app_bootstrap, commands::get_profile, commands::save_profile,
             commands::complete_onboarding,
-            commands::list_accounts, commands::list_transactions, commands::dashboard_summary,
+            commands::list_accounts, commands::create_account, commands::rename_account,
+            commands::archive_account,
+            commands::list_transactions, commands::dashboard_summary,
+            commands::create_transaction, commands::update_transaction,
             commands::list_categories, commands::save_category, commands::archive_category,
             commands::list_rules, commands::save_rule, commands::archive_rule, commands::reorder_rules,
             commands::preview_rule, commands::preview_rules_retroactive, commands::apply_rules_retroactive,
@@ -46,7 +58,8 @@ pub fn run() {
             commands::set_credit_card_invoice_deleted,
             commands::list_financial_targets, commands::save_financial_target,
             commands::save_financial_target_override, commands::delete_financial_target,
-            commands::generate_financial_report
+            commands::generate_financial_report,
+            commands::export_transactions_csv, commands::backup_database, commands::restore_database
         ])
         .run(tauri::generate_context!())
         .expect("erro ao executar Finança");

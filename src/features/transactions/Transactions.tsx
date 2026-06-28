@@ -1,12 +1,15 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CreditCard, Landmark, Search, Tags, Trash2, Undo2 } from "lucide-react";
+import { CreditCard, Landmark, Pencil, Plus, Search, Tags, Trash2, Undo2 } from "lucide-react";
 import { useState } from "react";
 import { api } from "../../shared/api";
-import { shortDate } from "../../shared/format";
+import { money, shortDate } from "../../shared/format";
 import type { Transaction } from "../../shared/types";
+import { TransactionForm } from "./TransactionForm";
 
 export function Transactions() {
   const [search, setSearch] = useState("");
+  const [showNew, setShowNew] = useState(false);
+  const [editing, setEditing] = useState<Transaction>();
   const [learning, setLearning] = useState<{transaction:Transaction;categoryId:string;pattern:string}>();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkCategory, setBulkCategory] = useState("");
@@ -14,7 +17,7 @@ export function Transactions() {
   const [undoIds, setUndoIds] = useState<string[]>([]);
   const [notice, setNotice] = useState("");
   const client = useQueryClient();
-  const { data = [] } = useQuery({ queryKey: ["transactions"], queryFn: () => api.transactions() });
+  const { data = [], isLoading } = useQuery({ queryKey: ["transactions"], queryFn: () => api.transactions() });
   const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: () => api.categories() });
   const rows = data.filter(t => t.description.toLowerCase().includes(search.toLowerCase()));
   const allVisibleSelected = rows.length > 0 && rows.every(t=>selected.has(t.id));
@@ -35,14 +38,6 @@ export function Transactions() {
     await api.updateTransactionCategory(transaction.id, categoryId || undefined);
     await refresh();
     if(categoryId) setLearning({transaction,categoryId,pattern:transaction.description.toUpperCase()});
-  }
-  async function changeAmount(transactionId:string,amountInCents:number) {
-    try {
-      await api.updateTransactionAmount(transactionId,amountInCents);
-      setNotice("Valor da transação atualizado."); await refresh();
-    } catch(e:any) {
-      setNotice(`Não foi possível atualizar: ${e?.message||e}`);
-    }
   }
   async function deleteOne(id:string) {
     const count=await api.deleteTransactions([id]);
@@ -74,16 +69,19 @@ export function Transactions() {
     const count=await api.restoreTransactions(undoIds);
     setUndoIds([]); setNotice(`${count} transações restauradas.`); await refresh();
   }
-  return <section><header><div><p className="eyebrow">MOVIMENTAÇÕES</p><h1>Transações</h1><p className="muted">{data.length} lançamentos no período</p></div></header>
+  return <section><header><div><p className="eyebrow">MOVIMENTAÇÕES</p><h1>Transações</h1><p className="muted">{data.length} lançamentos no período</p></div>
+    <button onClick={()=>setShowNew(true)}><Plus size={17}/> Nova transação</button></header>
+    {showNew&&<TransactionForm onClose={()=>setShowNew(false)}/>}
+    {editing&&<TransactionForm existing={editing} onClose={()=>setEditing(undefined)}/>}
     {notice&&<div className="notice notice-action"><span>{notice}</span>{undoIds.length>0&&<button className="text-button" onClick={undoDelete}><Undo2 size={15}/> Desfazer</button>}</div>}
     <article className="panel"><div className="transactions-toolbar"><div className="toolbar"><Search size={18}/><input aria-label="Buscar transações" placeholder="Buscar por descrição…" value={search} onChange={e=>setSearch(e.target.value)}/></div>
       {selected.size>0&&<div className="bulk-actions"><b>{selected.size} selecionada{selected.size>1?"s":""}</b><select aria-label="Categoria em massa" value={bulkCategory} onChange={e=>setBulkCategory(e.target.value)}>
         <option value="">Sem categoria</option>{categories.map(c=><option key={c.id} value={c.id}>{c.parentId?"↳ ":""}{c.name}</option>)}</select>
         <button className="secondary" onClick={applyBulkCategory}><Tags size={15}/> Categorizar</button>
         <button className="danger" onClick={()=>setConfirmDelete(true)}><Trash2 size={15}/> Excluir</button></div>}</div>
-      <table><thead><tr><th className="select-cell"><input type="checkbox" aria-label="Selecionar transações visíveis" checked={allVisibleSelected} onChange={toggleAll}/></th><th>Data</th><th>Descrição</th><th>Origem</th><th>Categoria</th><th>Status</th><th>Valor editável</th><th></th></tr></thead>
+      <div className="table-scroll"><table><thead><tr><th className="select-cell"><input type="checkbox" aria-label="Selecionar transações visíveis" checked={allVisibleSelected} onChange={toggleAll}/></th><th>Data</th><th>Descrição</th><th>Origem</th><th>Categoria</th><th>Status</th><th className="amount">Valor</th><th></th></tr></thead>
       <tbody>
-        {rows.length === 0 && <tr><td colSpan={8} style={{textAlign:"center", padding:"60px 20px", color:"#87908c"}}>Nenhuma transação encontrada para este filtro.</td></tr>}
+        {rows.length === 0 && <tr><td colSpan={8} style={{textAlign:"center", padding:"60px 20px", color:"var(--text-soft)"}}>{isLoading?"Carregando transações…":"Nenhuma transação encontrada para este filtro."}</td></tr>}
         {rows.map(t=><tr key={t.id} className={selected.has(t.id)?"selected-row":""}>
           <td className="select-cell"><input type="checkbox" aria-label={`Selecionar ${t.description}`} checked={selected.has(t.id)} onChange={()=>toggle(t.id)}/></td>
           <td style={{whiteSpace:"nowrap", color: "#66706c"}}>{shortDate(t.date)}</td>
@@ -97,10 +95,11 @@ export function Transactions() {
             {t.categorySource&&<small className="source-label" style={{marginTop:"6px"}}>{t.categorySource==="rule"?"categorizado por regra":"selecionado manualmente"}</small>}
           </td>
           <td><span className="badge" style={t.status === 'cleared' ? undefined : {background:"#fbf3e5", color:"#a96a1a"}}>{t.status === "cleared" ? "Confirmada" : "Pendente"}</span></td>
-          <td><TransactionAmountEditor value={t.amountInCents} onCommit={value=>changeAmount(t.id,value)}/></td>
-          <td><button className="danger icon-button" title="Excluir transação" aria-label={`Excluir ${t.description}`} onClick={()=>deleteOne(t.id)}><Trash2 size={15}/></button></td>
+          <td className="amount"><span className={t.amountInCents>0?"positive":""}>{money(t.amountInCents)}</span></td>
+          <td><div className="row-actions"><button className="icon-button" title="Editar transação" aria-label={`Editar ${t.description}`} onClick={()=>setEditing(t)}><Pencil size={14}/></button>
+            <button className="danger icon-button" title="Excluir transação" aria-label={`Excluir ${t.description}`} onClick={()=>deleteOne(t.id)}><Trash2 size={15}/></button></div></td>
         </tr>)}
-      </tbody></table>
+      </tbody></table></div>
     </article>
     {learning&&<div className="modal-backdrop"><article className="modal"><h2>Usar esta correção no futuro?</h2><p className="muted">Você pode criar uma regra local ou manter a alteração somente nesta transação.</p>
       <label>Descrição contém<input value={learning.pattern} onChange={e=>setLearning({...learning,pattern:e.target.value})}/></label>
@@ -111,17 +110,4 @@ export function Transactions() {
       <div className="editor-actions"><button className="secondary" onClick={()=>setConfirmDelete(false)}>Cancelar</button><button className="danger" onClick={deleteSelected}><Trash2 size={15}/> Mover para lixeira</button></div>
     </article></div>}
   </section>
-}
-
-function TransactionAmountEditor({value,onCommit}:{value:number;onCommit:(value:number)=>void}) {
-  const [text,setText]=useState((value/100).toFixed(2).replace(".",","));
-  function commit() {
-    const parsed=Number(text.trim().replace(/\./g,"").replace(",","."));
-    if(!Number.isFinite(parsed)||parsed===0){setText((value/100).toFixed(2).replace(".",","));return}
-    const cents=Math.round(parsed*100);
-    setText((cents/100).toFixed(2).replace(".",","));
-    if(cents!==value)onCommit(cents);
-  }
-  return <div className="editable-money"><span>R$</span><input value={text} aria-label="Editar valor"
-    onChange={e=>setText(e.target.value)} onBlur={commit} onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur()}}/></div>
 }

@@ -1,12 +1,17 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, CreditCard, Landmark, Link2, Trash2, Undo2, Unlink } from "lucide-react";
+import { Archive, CheckCircle2, ChevronDown, CreditCard, Landmark, Link2, Pencil, Plus, Trash2, Undo2, Unlink } from "lucide-react";
 import { useState } from "react";
 import { api } from "../../shared/api";
 import { money, shortDate } from "../../shared/format";
-import type { CreditCardInvoice, PaymentMatchCandidate } from "../../shared/types";
+import { Modal } from "../../shared/ui/Modal";
+import { useToast } from "../../shared/ui/toast";
+import type { Account, AccountType, CreditCardInvoice, PaymentMatchCandidate } from "../../shared/types";
 
 export function AccountsCards() {
   const client=useQueryClient();
+  const toast=useToast();
+  const [accountModal,setAccountModal]=useState<{mode:"new"|"edit";account?:Account}>();
+  const [archiving,setArchiving]=useState<Account>();
   const [expanded,setExpanded]=useState<string>();
   const [deletingTransaction,setDeletingTransaction]=useState<string>();
   const [matching,setMatching]=useState<{
@@ -70,15 +75,34 @@ export function AccountsCards() {
     await api.setInvoiceStatus(invoice.id, invoice.status==="paid"?"open":"paid");
     await refresh();
   }
+  async function confirmArchive() {
+    if(!archiving)return;
+    try {
+      await api.archiveAccount(archiving.id);
+      toast("Conta arquivada.");
+      setArchiving(undefined);
+      await client.invalidateQueries({queryKey:["accounts"]});
+    } catch(e) {
+      toast((e as {message?:string})?.message??"Não foi possível arquivar a conta.","error");
+      setArchiving(undefined);
+    }
+  }
 
   return <section>
     <header><div><p className="eyebrow">PATRIMÔNIO E CRÉDITO</p><h1>Contas e cartões</h1>
-      <p className="muted">Saldos, faturas e pagamentos conciliados em um só lugar.</p></div></header>
+      <p className="muted">Saldos, faturas e pagamentos conciliados em um só lugar.</p></div>
+      <button onClick={()=>setAccountModal({mode:"new"})}><Plus size={17}/> Adicionar conta</button></header>
     {notice&&<div className="notice notice-action"><span>{notice}</span>{undoId&&<button className="text-button" onClick={restore}><Undo2 size={15}/> Desfazer</button>}</div>}
     <div className="account-grid">{accounts.map(account=><article className="account-card" key={account.id}>
       <div className={`metric-icon ${account.kind==="credit_card"?"red":"green"}`}>{account.kind==="credit_card"?<CreditCard/>:<Landmark/>}</div>
       <div><small>{account.kind==="credit_card"?"Cartão de crédito":"Conta"}</small><h3>{account.name}</h3></div>
-      <strong>{money(account.balanceInCents)}</strong>
+      <div className="account-card-right">
+        <strong>{money(account.balanceInCents)}</strong>
+        <div className="account-actions">
+          <button className="icon-button" title="Renomear conta" aria-label={`Renomear ${account.name}`} onClick={()=>setAccountModal({mode:"edit",account})}><Pencil size={13}/></button>
+          <button className="icon-button" title="Arquivar conta" aria-label={`Arquivar ${account.name}`} onClick={()=>setArchiving(account)}><Archive size={13}/></button>
+        </div>
+      </div>
     </article>)}</div>
     <article className="panel">
       <div className="panel-title"><h2>Faturas importadas</h2><span>{invoices.length} fatura{invoices.length===1?"":"s"}</span></div>
@@ -86,24 +110,34 @@ export function AccountsCards() {
         <p className="muted">Use a área Importar para adicionar o CSV do cartão.</p></div>:
       <div className="invoice-list">{invoices.map(invoice=><div className="invoice-row-wrap" key={invoice.id}>
         <div className="invoice-row">
-          <button className="invoice-main" onClick={()=>setExpanded(expanded===invoice.id?undefined:invoice.id)}>
-            <span><b>{invoice.accountName}</b><small>Vence em {shortDate(invoice.dueDate)}</small></span>
-            <span><small>Compras</small>{money(invoice.purchasesInCents)}</span>
-            <span><small>Créditos</small>{money(invoice.creditsInCents)}</span>
-            <strong>{money(invoice.totalInCents)}</strong>
-            <span className={`badge ${invoice.status==="paid"?"success-badge":""}`}>{invoice.status==="paid"?"Paga":"Aberta"}</span>
+          <button className={`invoice-expand-toggle ${expanded===invoice.id?"expanded":""}`}
+            title={expanded===invoice.id?"Recolher fatura":"Expandir fatura"}
+            aria-label={expanded===invoice.id?`Recolher fatura ${invoice.accountName}`:`Expandir fatura ${invoice.accountName}`}
+            aria-expanded={expanded===invoice.id}
+            onClick={()=>setExpanded(expanded===invoice.id?undefined:invoice.id)}>
+            <ChevronDown size={17}/>
           </button>
+          <button className="invoice-identity" onClick={()=>setExpanded(expanded===invoice.id?undefined:invoice.id)}>
+            <b>{invoice.accountName}</b>
+            <small>Vence em {shortDate(invoice.dueDate)}</small>
+            <span className={`invoice-payment-slot ${invoice.paymentTransactionId?"":"empty"}`}>
+              <Link2 size={12}/>{invoice.paymentTransactionId?`${invoice.paymentDescription} em ${shortDate(invoice.paymentDate!)}`:"Vincule um pagamento"}
+            </span>
+          </button>
+          <div className="invoice-metric"><small>Compras</small><b>{money(invoice.purchasesInCents)}</b></div>
+          <div className="invoice-metric"><small>Créditos</small><b>{money(invoice.creditsInCents)}</b></div>
+          <div className="invoice-metric invoice-total-value"><small>Total</small><strong>{money(invoice.totalInCents)}</strong></div>
+          <div className="invoice-status"><span className={`badge ${invoice.status==="paid"?"success-badge":""}`}>{invoice.status==="paid"?"Paga":"Aberta"}</span></div>
           <div className="invoice-actions">
             {invoice.paymentTransactionId
               ?<button className="secondary icon-button" title="Desvincular pagamento" onClick={()=>unlink(invoice.id)}><Unlink size={16}/></button>
               :<>
-                 <button className="secondary" onClick={()=>toggleStatus(invoice)}>{invoice.status==="paid"?<Undo2 size={15}/>:<CheckCircle2 size={15}/>} {invoice.status==="paid"?"Reabrir":"Marcar paga"}</button>
-                 <button className="secondary" onClick={()=>findPayment(invoice)}><Link2 size={15}/> Vincular pagamento</button>
+                 <button className="secondary icon-button" title={invoice.status==="paid"?"Reabrir fatura":"Marcar fatura como paga"} onClick={()=>toggleStatus(invoice)}>{invoice.status==="paid"?<Undo2 size={16}/>:<CheckCircle2 size={16}/>}</button>
+                 <button className="secondary icon-button" title="Vincular pagamento" onClick={()=>findPayment(invoice)}><Link2 size={16}/></button>
                </>}
             <button className="danger icon-button" title="Excluir fatura" onClick={()=>remove(invoice.id)}><Trash2 size={16}/></button>
           </div>
         </div>
-        {invoice.paymentTransactionId&&<p className="linked-payment"><Link2 size={14}/> {invoice.paymentDescription} em {shortDate(invoice.paymentDate!)}</p>}
         {expanded===invoice.id&&<div className="invoice-items">
           <table><thead><tr><th>Data</th><th>Descrição</th><th>Portador</th><th>Parcela</th><th>Categoria</th><th>Valor</th><th></th></tr></thead>
             <tbody>{items.map(item=><tr key={item.transactionId}><td>{shortDate(item.date)}</td><td>{item.description}</td>
@@ -135,5 +169,52 @@ export function AccountsCards() {
         <button className="danger" onClick={removeTransaction}>Excluir</button>
       </div>
     </article></div>}
+    {accountModal&&<AccountModal mode={accountModal.mode} account={accountModal.account}
+      onClose={()=>setAccountModal(undefined)}
+      onSaved={async()=>{setAccountModal(undefined);await client.invalidateQueries({queryKey:["accounts"]});toast(accountModal.mode==="new"?"Conta criada.":"Conta atualizada.");}}/>}
+    {archiving&&<Modal title="Arquivar conta" onClose={()=>setArchiving(undefined)}>
+      <p className="muted">Arquivar <b>{archiving.name}</b>? Ela deixará de aparecer nas listas. Contas com transações ativas não podem ser arquivadas.</p>
+      <div className="editor-actions">
+        <button className="secondary" onClick={()=>setArchiving(undefined)}>Cancelar</button>
+        <button className="danger" onClick={confirmArchive}><Archive size={15}/> Arquivar</button>
+      </div>
+    </Modal>}
   </section>
+}
+
+function AccountModal({mode,account,onClose,onSaved}:{
+  mode:"new"|"edit"; account?:Account; onClose:()=>void; onSaved:()=>void
+}) {
+  const [name,setName]=useState(account?.name??"");
+  const [kind,setKind]=useState<AccountType>(account?.kind??"checking");
+  const [error,setError]=useState("");
+  const [saving,setSaving]=useState(false);
+  const kinds:{value:AccountType;label:string}[]=[
+    {value:"checking",label:"Conta corrente"},{value:"savings",label:"Poupança"},
+    {value:"cash",label:"Dinheiro"},{value:"credit_card",label:"Cartão de crédito"}
+  ];
+  async function submit() {
+    setError("");
+    if(name.trim().length<2){setError("Informe um nome com pelo menos 2 caracteres.");return;}
+    setSaving(true);
+    try {
+      if(mode==="edit"&&account) await api.renameAccount(account.id,name.trim());
+      else await api.createAccount(name.trim(),kind);
+      onSaved();
+    } catch(e) {
+      setError((e as {message?:string})?.message??"Não foi possível salvar a conta.");
+    } finally { setSaving(false); }
+  }
+  return <Modal title={mode==="new"?"Nova conta":"Renomear conta"} onClose={onClose}>
+    <div className="modal-form">
+      <label>Nome<input value={name} onChange={e=>setName(e.target.value)} placeholder="Ex.: Conta corrente, Carteira"/></label>
+      {mode==="new"&&<label>Tipo<select value={kind} onChange={e=>setKind(e.target.value as AccountType)}>
+        {kinds.map(k=><option key={k.value} value={k.value}>{k.label}</option>)}</select></label>}
+      {error&&<p className="form-error">{error}</p>}
+      <div className="editor-actions">
+        <button className="secondary" onClick={onClose} disabled={saving}>Cancelar</button>
+        <button onClick={submit} disabled={saving}>{saving?"Salvando…":"Salvar"}</button>
+      </div>
+    </div>
+  </Modal>;
 }

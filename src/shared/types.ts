@@ -30,6 +30,10 @@ export type Transaction = {
   amountInCents: number; categoryId?: string; category?: string;
   categorySource?: "manual" | "rule"; status: "cleared" | "pending";
 };
+export type TransactionInput = {
+  id?: string; accountId: string; date: string; description: string;
+  amountInCents: number; categoryId?: string;
+};
 export type CategoryKind = "income" | "expense" | "transfer" | "investment";
 export type Category = {
   id: string; parentId?: string; name: string; color?: string; icon?: string;
@@ -147,7 +151,8 @@ export type FinancialTarget = {
 };
 export type FinancialTargetInput = Omit<FinancialTarget,"id"|"categoryName"|"overrides">&{id?:string};
 export type FinancialReport = {
-  summary:ReportSummary; previousSummary:ReportSummary; monthly:MonthlyReportPoint[];
+  summary:ReportSummary; latestMonthSummary:ReportSummary; previousSummary:ReportSummary;
+  currentInvestedInCents:number; monthly:MonthlyReportPoint[];
   categories:CategoryReport[]; merchants:MerchantReport[]; daily:DailyReportPoint[];
   sources:{source:"bank"|"credit_card";amountInCents:number;sharePercent:number}[];
   goals:GoalProgress[]; invoices:{openCount:number;paidCount:number;openTotalInCents:number};

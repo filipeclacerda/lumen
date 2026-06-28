@@ -3,5 +3,5 @@
   "identifier": "main-window",
   "description": "Permissões mínimas da janela principal",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-open"]
+  "permissions": ["core:default", "dialog:allow-open", "dialog:allow-save"]
 }

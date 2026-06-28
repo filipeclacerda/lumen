@@ -103,7 +103,9 @@ pub struct InvoiceReport {
 #[serde(rename_all = "camelCase")]
 pub struct FinancialReport {
     summary: ReportSummary,
+    latest_month_summary: ReportSummary,
     previous_summary: ReportSummary,
+    current_invested_in_cents: i64,
     monthly: Vec<MonthlyReportPoint>,
     categories: Vec<CategoryReport>,
     merchants: Vec<MerchantReport>,
@@ -229,6 +231,20 @@ fn summarize(rows: &[ReportRow], month: &str) -> ReportSummary {
     result
 }
 
+fn summarize_period(rows: &[&ReportRow]) -> ReportSummary {
+    let mut result=ReportSummary::default();
+    for row in rows {
+        result.income_in_cents+=income_value(row);
+        result.expenses_in_cents+=expense_value(row);
+        result.investments_in_cents+=investment_value(row);
+    }
+    result.expenses_in_cents=result.expenses_in_cents.max(0);
+    result.savings_in_cents=result.income_in_cents-result.expenses_in_cents;
+    result.savings_rate_percent=(result.income_in_cents>0)
+        .then_some(result.savings_in_cents as f64/result.income_in_cents as f64*100.0);
+    result
+}
+
 fn days_in_month(month: &str) -> i64 {
     let next=shift_month(month,1).unwrap();
     let date=NaiveDate::parse_from_str(&format!("{next}-01"),"%Y-%m-%d").unwrap();
@@ -330,15 +346,13 @@ pub async fn generate_financial_report(filter:ReportFilter,state:State<'_,AppSta
     let previous_month=shift_month(&filter.end_month,-1)?;
     let query_start=if previous_month<filter.start_month{previous_month.clone()}else{filter.start_month.clone()};
     let rows=sqlx::query(
-        "SELECT COALESCE(i.due_date, t.date) as date, strftime('%Y-%m', COALESCE(i.due_date, t.date)) month,
+        "SELECT t.date, strftime('%Y-%m',t.date) month,
          t.description, t.amount_cents,
          a.kind account_kind, t.category_id, c.name category_name, c.color category_color, c.kind category_kind
          FROM transactions t JOIN accounts a ON a.id=t.account_id
          LEFT JOIN categories c ON c.id=t.category_id
-         LEFT JOIN credit_card_invoice_items x ON x.transaction_id=t.id
-         LEFT JOIN credit_card_invoices i ON i.id=x.invoice_id
          WHERE t.deleted_at IS NULL AND a.deleted_at IS NULL
-         AND strftime('%Y-%m', COALESCE(i.due_date, t.date)) >= ? AND strftime('%Y-%m', COALESCE(i.due_date, t.date)) <= ?
+         AND strftime('%Y-%m',t.date)>=? AND strftime('%Y-%m',t.date)<=?
          AND (?='all' OR (?='bank' AND a.kind!='credit_card') OR (?='credit_card' AND a.kind='credit_card'))
          AND (? IS NULL OR t.account_id=?)"
     ).bind(&query_start).bind(&filter.end_month).bind(&filter.source).bind(&filter.source)
@@ -359,30 +373,40 @@ pub async fn generate_financial_report(filter:ReportFilter,state:State<'_,AppSta
             savings_rate_percent:summary.savings_rate_percent
         });
     }
-    let mut summary=summarize(&report_rows,&filter.end_month);
+    let period_rows:Vec<_>=report_rows.iter().filter(|r|r.month>=filter.start_month&&r.month<=filter.end_month).collect();
+    let mut summary=summarize_period(&period_rows);
+    let mut latest_month_summary=summarize(&report_rows,&filter.end_month);
     let previous_summary=summarize(&report_rows,&previous_month);
-    summary.income_change_percent=percent_change(summary.income_in_cents,previous_summary.income_in_cents);
-    summary.expense_change_percent=percent_change(summary.expenses_in_cents,previous_summary.expenses_in_cents);
-    summary.savings_change_percent=percent_change(summary.savings_in_cents,previous_summary.savings_in_cents);
+    latest_month_summary.income_change_percent=percent_change(latest_month_summary.income_in_cents,previous_summary.income_in_cents);
+    latest_month_summary.expense_change_percent=percent_change(latest_month_summary.expenses_in_cents,previous_summary.expenses_in_cents);
+    latest_month_summary.savings_change_percent=percent_change(latest_month_summary.savings_in_cents,previous_summary.savings_in_cents);
     let elapsed=effective_days(&filter.end_month).max(1);
-    summary.daily_average_in_cents=summary.expenses_in_cents/elapsed;
-    summary.projected_expenses_in_cents=summary.daily_average_in_cents*days_in_month(&filter.end_month);
+    latest_month_summary.daily_average_in_cents=latest_month_summary.expenses_in_cents/elapsed;
+    latest_month_summary.projected_expenses_in_cents=latest_month_summary.daily_average_in_cents*days_in_month(&filter.end_month);
+    summary.daily_average_in_cents=if months.is_empty(){0}else{summary.expenses_in_cents/months.len() as i64/days_in_month(&filter.end_month)};
+    summary.projected_expenses_in_cents=latest_month_summary.projected_expenses_in_cents;
 
     let current_rows:Vec<_>=report_rows.iter().filter(|r|r.month==filter.end_month).collect();
     let mut category_map:HashMap<Option<String>,(String,Option<String>,i64)>=HashMap::new();
+    let mut current_category_map:HashMap<Option<String>,i64>=HashMap::new();
     let mut merchant_map:HashMap<String,(i64,i64)>=HashMap::new();
     let mut daily_map:BTreeMap<String,i64>=BTreeMap::new();
     let mut bank=0;let mut card=0;let mut uncategorized_count=0;let mut uncategorized=0;
-    for row in current_rows {
+    for row in &period_rows {
         let expense=expense_value(row);
         if expense==0{continue}
         let category=category_map.entry(row.category_id.clone()).or_insert((
             row.category_name.clone().unwrap_or_else(||"Sem categoria".into()),row.category_color.clone(),0
         ));category.2+=expense;
         let merchant=merchant_map.entry(row.description.clone()).or_insert((0,0));merchant.0+=expense;merchant.1+=1;
-        *daily_map.entry(row.date.clone()).or_default()+=expense;
         if row.account_kind=="credit_card"{card+=expense}else{bank+=expense}
         if row.category_id.is_none(){uncategorized_count+=1;uncategorized+=expense}
+    }
+    for row in current_rows {
+        let expense=expense_value(row);
+        if expense==0{continue}
+        *daily_map.entry(row.date.clone()).or_default()+=expense;
+        *current_category_map.entry(row.category_id.clone()).or_default()+=expense;
     }
     let total=summary.expenses_in_cents.max(1);
     let mut categories:Vec<_>=category_map.into_iter().map(|(id,(name,color,amount))|CategoryReport{
@@ -407,8 +431,8 @@ pub async fn generate_financial_report(filter:ReportFilter,state:State<'_,AppSta
     for target in targets.into_iter().filter(|t|t.enabled) {
         let target_amount=target.overrides.iter().find(|o|o.month==filter.end_month)
             .map(|o|o.amount_in_cents).unwrap_or(target.amount_in_cents);
-        let actual=if target.kind=="savings"{summary.savings_in_cents}else{
-            categories.iter().find(|c|c.category_id==target.category_id).map(|c|c.amount_in_cents).unwrap_or(0)
+        let actual=if target.kind=="savings"{latest_month_summary.savings_in_cents}else{
+            current_category_map.get(&target.category_id).copied().unwrap_or(0).max(0)
         };
         let projected=if target.kind=="savings"{actual}else{actual/elapsed*days_in_month(&filter.end_month)};
         goals.push(GoalProgress{
@@ -430,18 +454,28 @@ pub async fn generate_financial_report(filter:ReportFilter,state:State<'_,AppSta
     ).bind(&filter.start_month).bind(&filter.end_month).bind(&filter.account_id).bind(&filter.account_id)
         .fetch_one(&state.db).await?;
     let invoices=InvoiceReport{open_count:invoice.get("open_count"),paid_count:invoice.get("paid_count"),open_total_in_cents:invoice.get("open_total")};
+    let current_invested:i64=sqlx::query_scalar(
+        "SELECT COALESCE(-SUM(t.amount_cents),0)
+         FROM transactions t JOIN accounts a ON a.id=t.account_id
+         JOIN categories c ON c.id=t.category_id
+         WHERE t.deleted_at IS NULL AND a.deleted_at IS NULL AND c.kind='investment'
+         AND (?='all' OR (?='bank' AND a.kind!='credit_card') OR (?='credit_card' AND a.kind='credit_card'))
+         AND (? IS NULL OR t.account_id=?)"
+    ).bind(&filter.source).bind(&filter.source).bind(&filter.source)
+        .bind(&filter.account_id).bind(&filter.account_id).fetch_one(&state.db).await?;
     let monthly_average=if monthly.is_empty(){0}else{monthly.iter().map(|x|x.expenses_in_cents).sum::<i64>()/monthly.len() as i64};
     let card_share=card.max(0) as f64/total as f64*100.0;
     let mut alerts=vec![];
-    if summary.expenses_in_cents>previous_summary.expenses_in_cents&&previous_summary.expenses_in_cents>0 {
-        alerts.push(format!("As despesas subiram {:.0}% em relação ao mês anterior.",summary.expense_change_percent.unwrap_or(0.0)));
+    if latest_month_summary.expenses_in_cents>previous_summary.expenses_in_cents&&previous_summary.expenses_in_cents>0 {
+        alerts.push(format!("As despesas subiram {:.0}% em relação ao mês anterior.",latest_month_summary.expense_change_percent.unwrap_or(0.0)));
     }
     if uncategorized_count>0 {alerts.push(format!("{uncategorized_count} transações ainda estão sem categoria."));}
     for goal in &goals {
         if goal.projected_to_exceed {alerts.push(format!("A projeção de {} está fora da meta.",goal.label));}
     }
     Ok(FinancialReport{
-        summary,previous_summary,monthly,categories,merchants,daily,sources,goals,invoices,
+        summary,latest_month_summary,previous_summary,current_invested_in_cents:current_invested.max(0),
+        monthly,categories,merchants,daily,sources,goals,invoices,
         uncategorized_count,uncategorized_in_cents:uncategorized.max(0),highest_spending_day,
         monthly_average_in_cents:monthly_average,card_share_percent:card_share,alerts
     })
@@ -456,4 +490,3 @@ mod tests {
     }
     #[test] fn percent_change_handles_zero(){assert_eq!(percent_change(10,0),None);}
 }
-

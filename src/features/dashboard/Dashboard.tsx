@@ -3,9 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowDownRight, ArrowUpRight, Landmark, Plus } from "lucide-react";
 import { api } from "../../shared/api";
 import { money, shortDate } from "../../shared/format";
+import { TransactionForm } from "../transactions/TransactionForm";
 
 export function Dashboard() {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [showForm, setShowForm] = useState(false);
   const { data: summary } = useQuery({ queryKey: ["summary", month], queryFn: () => api.summary(month) });
   const { data: transactions = [] } = useQuery({ queryKey: ["transactions", month], queryFn: () => api.transactions(month) });
   const { data: profile } = useQuery({ queryKey: ["profile"], queryFn: api.profile });
@@ -29,8 +31,9 @@ export function Dashboard() {
         <h1>Olá, {profile?.displayName.split(" ")[0] ?? "você"} 👋</h1>
         <p className="muted">Aqui está o retrato do seu mês.</p>
       </div>
-      <button onClick={() => console.log("Em breve")}><Plus size={17}/> Nova transação</button>
+      <button onClick={() => setShowForm(true)}><Plus size={17}/> Nova transação</button>
     </header>
+    {showForm && <TransactionForm onClose={() => setShowForm(false)} />}
     <div className="cards">
       <article><div className="metric-icon green"><ArrowUpRight/></div><p>Receitas</p><strong>{money(summary.incomeInCents)}</strong>
         <small className="positive">{incomeProgress!==undefined?`${incomeProgress}% da renda mensal de ${money(profile!.monthlyIncomeInCents!)}`:"↑ entradas no mês"}</small></article>

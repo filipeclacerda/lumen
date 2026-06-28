@@ -1,7 +1,7 @@
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use tauri::State;
 use uuid::Uuid;
@@ -10,12 +10,14 @@ mod credit_card;
 pub use credit_card::*;
 mod reports;
 pub use reports::*;
+mod backup;
+pub use backup::*;
 
 use crate::{
     application::state::{AppState, ImportSession},
     domain::{
         categorization::{first_match, CategorizationInput, CategorizationRule, MovementType, RuleOperator},
-        import::{fingerprint, ImportCandidate},
+        import::{fingerprint, normalize_description, ImportCandidate},
     },
     error::AppError,
     infrastructure::importer::parse_file,
@@ -24,6 +26,17 @@ use crate::{
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Account { id: String, name: String, kind: String, balance_in_cents: i64 }
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransactionInput {
+    id: Option<String>,
+    account_id: String,
+    date: String,
+    description: String,
+    amount_in_cents: i64,
+    category_id: Option<String>,
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -335,6 +348,58 @@ pub async fn list_accounts(state: State<'_, AppState>) -> Result<Vec<Account>, A
     Ok(rows.into_iter().map(|r| Account { id:r.get("id"), name:r.get("name"), kind:r.get("kind"), balance_in_cents:r.get("balance") }).collect())
 }
 
+fn validate_account_name(name: &str) -> Result<(), AppError> {
+    if !(2..=80).contains(&name.trim().chars().count()) {
+        return Err(AppError::Validation("O nome da conta deve ter entre 2 e 80 caracteres".into()));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn create_account(name: String, kind: String, state: State<'_, AppState>) -> Result<String, AppError> {
+    validate_account_name(&name)?;
+    if !["checking","savings","cash","credit_card"].contains(&kind.as_str()) {
+        return Err(AppError::Validation("Tipo de conta inválido".into()));
+    }
+    let id = Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO accounts(id,name,kind) VALUES(?,?,?)")
+        .bind(&id).bind(name.trim()).bind(&kind).execute(&state.db).await?;
+    Ok(id)
+}
+
+#[tauri::command]
+pub async fn rename_account(id: String, name: String, state: State<'_, AppState>) -> Result<(), AppError> {
+    validate_account_name(&name)?;
+    let result = sqlx::query("UPDATE accounts SET name=? WHERE id=? AND deleted_at IS NULL")
+        .bind(name.trim()).bind(id).execute(&state.db).await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::Validation("Conta não encontrada".into()));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn archive_account(id: String, state: State<'_, AppState>) -> Result<(), AppError> {
+    let has_active_transactions = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM transactions WHERE account_id=? AND deleted_at IS NULL"
+    ).bind(&id).fetch_one(&state.db).await? > 0;
+    if has_active_transactions {
+        return Err(AppError::Validation("A conta tem transações ativas; mova ou exclua essas transações antes de arquivá-la".into()));
+    }
+    let remaining = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM accounts WHERE deleted_at IS NULL AND id!=?"
+    ).bind(&id).fetch_one(&state.db).await?;
+    if remaining == 0 {
+        return Err(AppError::Validation("Mantenha ao menos uma conta ativa".into()));
+    }
+    let result = sqlx::query("UPDATE accounts SET deleted_at=datetime('now') WHERE id=? AND deleted_at IS NULL")
+        .bind(id).execute(&state.db).await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::Validation("Conta não encontrada".into()));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn list_transactions(month: Option<String>, state: State<'_, AppState>) -> Result<Vec<Transaction>, AppError> {
     let mut q = "SELECT t.id,t.account_id,a.name account_name,a.kind account_kind,t.date,t.description,t.amount_cents,t.category_id,
@@ -560,6 +625,7 @@ pub async fn apply_rules_retroactive(overwrite_manual: bool, state: State<'_, Ap
     let rows = sqlx::query("SELECT id,account_id,normalized_description,amount_cents,category_source FROM transactions WHERE deleted_at IS NULL").fetch_all(&state.db).await?;
     let mut tx = state.db.begin().await?;
     let mut count = 0;
+    let mut rule_hits: HashMap<String, i64> = HashMap::new();
     for row in rows {
         if !overwrite_manual && row.get::<Option<String>,_>("category_source").as_deref() == Some("manual") { continue; }
         let account_id: String = row.get("account_id");
@@ -568,13 +634,127 @@ pub async fn apply_rules_retroactive(overwrite_manual: bool, state: State<'_, Ap
             account_id:&account_id, normalized_description:&description, amount_in_cents:row.get("amount_cents"),
         }) {
             sqlx::query("UPDATE transactions SET category_id=?,category_source='rule',categorization_rule_id=? WHERE id=?")
-                .bind(&rule.category_id).bind(&rule.id).bind(row.get::<String,_>("id")).execute(&mut *tx).await.map_err(|e| { println!("DB ERROR: {:?}", e); e })?;
-            sqlx::query("UPDATE categorization_rules SET use_count=use_count+1 WHERE id=?").bind(&rule.id).execute(&mut *tx).await.map_err(|e| { println!("DB ERROR: {:?}", e); e })?;
+                .bind(&rule.category_id).bind(&rule.id).bind(row.get::<String,_>("id")).execute(&mut *tx).await?;
+            *rule_hits.entry(rule.id.clone()).or_insert(0) += 1;
             count += 1;
         }
     }
+    // Apply each rule's hit count in a single update to keep use_count consistent.
+    for (rule_id, hits) in rule_hits {
+        sqlx::query("UPDATE categorization_rules SET use_count=use_count+? WHERE id=?")
+            .bind(hits).bind(rule_id).execute(&mut *tx).await?;
+    }
     tx.commit().await?;
     Ok(count)
+}
+
+fn validate_transaction_input(input: &TransactionInput) -> Result<(), AppError> {
+    if input.amount_in_cents == 0 {
+        return Err(AppError::Validation("O valor da transação não pode ser zero".into()));
+    }
+    let description_length = input.description.trim().chars().count();
+    if !(1..=200).contains(&description_length) {
+        return Err(AppError::Validation("A descrição deve ter entre 1 e 200 caracteres".into()));
+    }
+    chrono::NaiveDate::parse_from_str(input.date.trim(), "%Y-%m-%d")
+        .map_err(|_| AppError::Validation("Data inválida".into()))?;
+    Ok(())
+}
+
+async fn ensure_account_active(db: &SqlitePool, account_id: &str) -> Result<(), AppError> {
+    let exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM accounts WHERE id=? AND deleted_at IS NULL")
+        .bind(account_id).fetch_one(db).await? > 0;
+    if !exists { return Err(AppError::Validation("Conta não encontrada".into())); }
+    Ok(())
+}
+
+async fn ensure_category_active(db: &SqlitePool, category_id: &Option<String>) -> Result<(), AppError> {
+    if let Some(id) = category_id {
+        let exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM categories WHERE id=? AND deleted_at IS NULL")
+            .bind(id).fetch_one(db).await? > 0;
+        if !exists { return Err(AppError::Validation("Categoria não encontrada".into())); }
+    }
+    Ok(())
+}
+
+/// Builds the deduplication fingerprint for a manually-entered transaction,
+/// reusing the same logic as the importer (ADR 0002).
+fn manual_fingerprint(account_id: &str, date: &str, description: &str, normalized: &str, amount_in_cents: i64) -> String {
+    let candidate = ImportCandidate {
+        source_row: 0,
+        date: date.to_string(),
+        description: description.to_string(),
+        normalized_description: normalized.to_string(),
+        amount_in_cents,
+        external_id: None,
+        suggested_category_id: None,
+        suggested_category_name: None,
+        suggested_rule_id: None,
+        suggested_rule_name: None,
+        duplicate_status: crate::domain::import::DuplicateStatus::New,
+        warnings: vec![],
+        included: true,
+    };
+    fingerprint(account_id, &candidate)
+}
+
+#[tauri::command]
+pub async fn create_transaction(input: TransactionInput, state: State<'_, AppState>) -> Result<String, AppError> {
+    create_transaction_impl(input, &state.db).await
+}
+
+async fn create_transaction_impl(input: TransactionInput, db: &SqlitePool) -> Result<String, AppError> {
+    validate_transaction_input(&input)?;
+    ensure_account_active(db, &input.account_id).await?;
+    ensure_category_active(db, &input.category_id).await?;
+    let description = input.description.trim().to_string();
+    let normalized = normalize_description(&description);
+    let date = input.date.trim().to_string();
+    let fp = manual_fingerprint(&input.account_id, &date, &description, &normalized, input.amount_in_cents);
+    let collides = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM transactions WHERE fingerprint=? AND deleted_at IS NULL"
+    ).bind(&fp).fetch_one(db).await? > 0;
+    if collides {
+        return Err(AppError::Validation("Já existe uma transação idêntica (mesma conta, data, descrição e valor)".into()));
+    }
+    let id = Uuid::new_v4().to_string();
+    let source = input.category_id.as_ref().map(|_| "manual");
+    sqlx::query(
+        "INSERT INTO transactions(id,account_id,date,description,normalized_description,amount_cents,fingerprint,category_id,category_source,status)
+         VALUES(?,?,?,?,?,?,?,?,?,'cleared')"
+    ).bind(&id).bind(&input.account_id).bind(&date).bind(&description).bind(&normalized)
+        .bind(input.amount_in_cents).bind(&fp).bind(&input.category_id).bind(source)
+        .execute(db).await?;
+    Ok(id)
+}
+
+#[tauri::command]
+pub async fn update_transaction(input: TransactionInput, state: State<'_, AppState>) -> Result<(), AppError> {
+    let id = input.id.clone().ok_or_else(|| AppError::Validation("Transação inválida".into()))?;
+    validate_transaction_input(&input)?;
+    ensure_account_active(&state.db, &input.account_id).await?;
+    ensure_category_active(&state.db, &input.category_id).await?;
+    let exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM transactions WHERE id=? AND deleted_at IS NULL")
+        .bind(&id).fetch_one(&state.db).await? > 0;
+    if !exists { return Err(AppError::Validation("Transação não encontrada".into())); }
+    let description = input.description.trim().to_string();
+    let normalized = normalize_description(&description);
+    let date = input.date.trim().to_string();
+    let fp = manual_fingerprint(&input.account_id, &date, &description, &normalized, input.amount_in_cents);
+    let collides = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM transactions WHERE fingerprint=? AND id!=? AND deleted_at IS NULL"
+    ).bind(&fp).bind(&id).fetch_one(&state.db).await? > 0;
+    if collides {
+        return Err(AppError::Validation("Já existe uma transação idêntica (mesma conta, data, descrição e valor)".into()));
+    }
+    let source = input.category_id.as_ref().map(|_| "manual");
+    sqlx::query(
+        "UPDATE transactions SET account_id=?,date=?,description=?,normalized_description=?,amount_cents=?,
+         fingerprint=?,category_id=?,category_source=?,categorization_rule_id=NULL
+         WHERE id=? AND deleted_at IS NULL"
+    ).bind(&input.account_id).bind(&date).bind(&description).bind(&normalized).bind(input.amount_in_cents)
+        .bind(&fp).bind(&input.category_id).bind(source).bind(&id).execute(&state.db).await?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -612,8 +792,15 @@ pub async fn update_transaction_amount(
         included: true,
     };
     let account_id: String = row.get("account_id");
+    let fp = fingerprint(&account_id, &candidate);
+    let collides = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM transactions WHERE fingerprint=? AND id!=? AND deleted_at IS NULL"
+    ).bind(&fp).bind(&transaction_id).fetch_one(&state.db).await? > 0;
+    if collides {
+        return Err(AppError::Validation("Esse valor deixaria a transação idêntica a outra já existente".into()));
+    }
     sqlx::query("UPDATE transactions SET amount_cents=?,fingerprint=? WHERE id=?")
-        .bind(amount_in_cents).bind(fingerprint(&account_id,&candidate)).bind(transaction_id)
+        .bind(amount_in_cents).bind(&fp).bind(transaction_id)
         .execute(&state.db).await?;
     Ok(())
 }
@@ -659,8 +846,22 @@ pub async fn restore_transactions(transaction_ids: Vec<String>, state: State<'_,
     let mut tx = state.db.begin().await?;
     let mut count = 0;
     for id in ids {
+        // Refuse to restore a transaction whose fingerprint now matches an active one,
+        // otherwise the restore would silently re-create a duplicate.
+        if let Some(fp) = sqlx::query_scalar::<_, String>(
+            "SELECT fingerprint FROM transactions WHERE id=? AND deleted_at IS NOT NULL"
+        ).bind(&id).fetch_optional(&mut *tx).await? {
+            let collides = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM transactions WHERE fingerprint=? AND id!=? AND deleted_at IS NULL"
+            ).bind(&fp).bind(&id).fetch_one(&mut *tx).await? > 0;
+            if collides {
+                return Err(AppError::Validation(
+                    "Não é possível restaurar: já existe uma transação idêntica ativa".into()
+                ));
+            }
+        }
         count += sqlx::query("UPDATE transactions SET deleted_at=NULL WHERE id=? AND deleted_at IS NOT NULL")
-            .bind(id).execute(&mut *tx).await?.rows_affected() as usize;
+            .bind(&id).execute(&mut *tx).await?.rows_affected() as usize;
     }
     tx.commit().await?;
     Ok(count)
@@ -819,5 +1020,27 @@ mod tests {
         let final_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM transactions WHERE normalized_description='SALDO INICIAL'")
             .fetch_one(&db).await.unwrap();
         assert_eq!(final_count, 1);
+    }
+
+    #[tokio::test]
+    async fn manual_transaction_rejects_duplicate_fingerprint() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = crate::infrastructure::database::connect(&directory.path().join("manual.db")).await.unwrap();
+        let onboarding = OnboardingInput {
+            display_name:"Pessoa Teste".into(),monthly_income_in_cents:None,income_day:None,
+            financial_goal:None,account_name:"Conta".into(),account_kind:"checking".into(),
+            opening_balance_in_cents:None,
+        };
+        let account_id = complete_onboarding_impl(onboarding, &db).await.unwrap().account_id;
+        let input = TransactionInput {
+            id:None, account_id:account_id.clone(), date:"2026-06-10".into(),
+            description:"Feira da semana".into(), amount_in_cents:-5000, category_id:None,
+        };
+        assert!(create_transaction_impl(input, &db).await.is_ok());
+        let duplicate = TransactionInput {
+            id:None, account_id, date:"2026-06-10".into(),
+            description:"Feira da semana".into(), amount_in_cents:-5000, category_id:None,
+        };
+        assert!(create_transaction_impl(duplicate, &db).await.is_err());
     }
 }

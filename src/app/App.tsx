@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BarChart3, CreditCard, FileUp, LayoutDashboard, Settings, Tags, WalletCards } from "lucide-react";
+import { BarChart3, CreditCard, FileUp, LayoutDashboard, Moon, Settings, Sun, Tags, WalletCards } from "lucide-react";
+import { getTheme, setTheme, type Theme } from "../shared/theme";
 import { Dashboard } from "../features/dashboard/Dashboard";
 import { Transactions } from "../features/transactions/Transactions";
 import { ImportPage } from "../features/import/ImportPage";
@@ -24,6 +26,8 @@ const nav = [
 export function App() {
   const client=useQueryClient();
   const navigate=useNavigate();
+  const [theme,setThemeState]=useState<Theme>(getTheme());
+  const toggleTheme=()=>{const next:Theme=theme==="dark"?"light":"dark";setTheme(next);setThemeState(next)};
   const {data:bootstrap,isLoading}=useQuery({queryKey:["bootstrap"],queryFn:api.bootstrap});
   if(isLoading||!bootstrap)return <div className="app-loading">Preparando seu espaço financeiro…</div>;
   if(!bootstrap.onboardingCompleted)return <Onboarding bootstrap={bootstrap} onFinished={async destination=>{
@@ -38,7 +42,12 @@ export function App() {
     <aside>
       <div className="brand"><span>F</span><div>Finança<br/><small>seu dinheiro, claro</small></div></div>
       <nav>{nav.map(([to, label, Icon]) => <NavLink key={to} to={to} end={to === "/"}><Icon size={18}/>{label}</NavLink>)}</nav>
-      <div className="privacy">🔒 Seus dados ficam neste computador</div>
+      <div className="sidebar-footer">
+        <button className="theme-toggle" onClick={toggleTheme} aria-label={theme==="dark"?"Ativar tema claro":"Ativar tema escuro"} title={theme==="dark"?"Tema claro":"Tema escuro"}>
+          {theme==="dark"?<Sun size={18}/>:<Moon size={18}/>}<span>{theme==="dark"?"Tema claro":"Tema escuro"}</span>
+        </button>
+        <div className="privacy">🔒 Seus dados ficam neste computador</div>
+      </div>
     </aside>
     <main><Routes>
       <Route path="/" element={<Dashboard/>}/>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDownRight, ArrowUpRight, CalendarRange, CreditCard, Landmark, PiggyBank, Plus, Target, Trash2, TrendingUp } from "lucide-react";
+import { AlertTriangle, ArrowDownRight, ArrowUpRight, CalendarRange, CreditCard, Landmark, Plus, Target, Trash2, TrendingUp } from "lucide-react";
 import { api } from "../../shared/api";
 import { money, shortDate } from "../../shared/format";
 import type { FinancialReport, FinancialTarget, ReportSource } from "../../shared/types";
@@ -87,28 +87,49 @@ function ReportContent({report,profileIncome,targets,onEdit,onDelete}:{
   onEdit:(target:FinancialTarget)=>void;onDelete:(id:string)=>void;
 }){
   const summary=report.summary;
+  const latest=report.latestMonthSummary;
+  const topCategory=report.categories[0];
   const cards=[
-    {label:"Receitas",value:summary.incomeInCents,change:changeLabel(summary.incomeChangePercent),icon:<ArrowUpRight/>,tone:"green"},
-    {label:"Despesas",value:summary.expensesInCents,change:changeLabel(summary.expenseChangePercent,true),icon:<ArrowDownRight/>,tone:"red"},
-    {label:"Economizado",value:summary.savingsInCents,change:changeLabel(summary.savingsChangePercent),icon:<PiggyBank/>,tone:"blue"},
-    {label:"Investimentos",value:summary.investmentsInCents,change:`${summary.savingsRatePercent?.toFixed(1)??"—"}% de taxa de economia|good`,icon:<TrendingUp/>,tone:"purple"}
+    {label:"Ganhos no período",value:summary.incomeInCents,detail:`Entradas em ${report.monthly.length} ${report.monthly.length===1?"mês":"meses"}`,icon:<ArrowUpRight/>,tone:"emerald"},
+    {label:"Gastos no período",value:summary.expensesInCents,detail:`Total em ${report.monthly.length} ${report.monthly.length===1?"mês":"meses"}`,icon:<ArrowDownRight/>,tone:"red"},
+    {label:"Maior categoria",value:topCategory?.amountInCents??0,detail:topCategory?`${topCategory.category} · ${topCategory.sharePercent.toFixed(1)}% dos gastos`:"Sem gastos no período",icon:<Target/>,tone:"blue"},
+    {label:"Média mensal",value:report.monthlyAverageInCents,detail:"Média do período filtrado",icon:<CalendarRange/>,tone:"green"},
+    {label:"Total investido atual",value:report.currentInvestedInCents,detail:"Patrimônio investido acumulado",icon:<TrendingUp/>,tone:"purple"}
   ];
   return <>
-    <div className="report-kpis">{cards.map(card=>{const [text,status]=card.change.split("|");return <article key={card.label}>
+    <div className="report-kpis">{cards.map(card=><article key={card.label}>
       <div className={`report-kpi-icon ${card.tone}`}>{card.icon}</div><span>{card.label}</span><strong>{money(card.value)}</strong>
-      <small className={status}>{text}</small></article>})}</div>
+      <small>{card.detail}</small></article>)}</div>
     <div className="report-grid main-charts">
-      <article className="panel wide-panel"><div className="panel-title"><div><h2>Evolução financeira</h2><small>Receitas, despesas e economia por mês</small></div>
-        <div className="chart-legend"><i className="income-dot"/>Receitas <i className="expense-dot"/>Despesas <i className="savings-dot"/>Economia</div></div>
-        <TrendChart data={report.monthly}/></article>
-      <article className="panel"><div className="panel-title"><div><h2>Gastos por categoria</h2><small>Último mês selecionado</small></div></div>
-        <CategoryDonut report={report}/></article>
+      <article className="panel wide-panel"><div className="panel-title"><div><h2>Onde você mais gastou</h2><small>Categorias somadas no período selecionado</small></div></div>
+        <CategoryBars report={report}/></article>
+      <article className="panel"><div className="panel-title"><div><h2>Resumo do período</h2><small>Entradas e destino do dinheiro</small></div></div>
+        <div className="period-summary">
+          <div><span>Receitas</span><b>{money(summary.incomeInCents)}</b></div>
+          <div><span>Despesas</span><b>{money(summary.expensesInCents)}</b></div>
+          <div><span>Economizado</span><b className={summary.savingsInCents>=0?"positive":""}>{money(summary.savingsInCents)}</b></div>
+          <div><span>Aportes no período</span><b>{money(summary.investmentsInCents)}</b></div>
+          <div><span>Taxa de economia</span><b>{summary.savingsRatePercent?.toFixed(1)??"—"}%</b></div>
+        </div>
+        <div className="month-comparison"><b>Último mês x anterior</b>
+          <ComparisonLine label="Despesas" value={latest.expenseChangePercent} inverse/>
+          <ComparisonLine label="Receitas" value={latest.incomeChangePercent}/>
+          <ComparisonLine label="Economia" value={latest.savingsChangePercent}/>
+        </div></article>
     </div>
     <div className="report-grid">
+      <article className="panel"><div className="panel-title"><div><h2>Evolução dos gastos</h2><small>Total gasto em cada mês filtrado</small></div></div>
+        <SpendingBars data={report.monthly}/></article>
       <article className="panel"><div className="panel-title"><div><h2>Cartão x conta bancária</h2><small>Participação nas despesas</small></div></div>
         <SourceComparison report={report}/></article>
+    </div>
+    <div className="report-grid">
       <article className="panel"><div className="panel-title"><div><h2>Gasto acumulado</h2><small>Evolução dentro do mês</small></div></div>
         <CumulativeChart report={report}/></article>
+      <article className="panel"><div className="panel-title"><div><h2>Principais estabelecimentos</h2><small>Somados no período selecionado</small></div></div>
+        <div className="ranking-list">{report.merchants.length?report.merchants.slice(0,5).map((m,i)=><div key={m.merchant}><span className="rank">{i+1}</span>
+          <span><b>{m.merchant}</b><small>{m.transactionCount} lançamento{m.transactionCount===1?"":"s"}</small></span><strong>{money(m.amountInCents)}</strong></div>):
+          <p className="muted">Nenhum gasto no período.</p>}</div></article>
     </div>
     <article className="panel goals-panel"><div className="panel-title"><div><h2><Target size={17}/> Metas do mês</h2>
       <small>Metas recorrentes com ajustes mensais</small></div></div>
@@ -125,15 +146,17 @@ function ReportContent({report,profileIncome,targets,onEdit,onDelete}:{
       </div>)}</div>}
     </article>
     <div className="report-grid insights-grid">
-      <article className="panel"><div className="panel-title"><h2>Maiores estabelecimentos</h2></div>
-        <div className="ranking-list">{report.merchants.length?report.merchants.map((m,i)=><div key={m.merchant}><span className="rank">{i+1}</span>
-          <span><b>{m.merchant}</b><small>{m.transactionCount} lançamento{m.transactionCount===1?"":"s"}</small></span><strong>{money(m.amountInCents)}</strong></div>):
-          <p className="muted">Nenhum gasto no período.</p>}</div></article>
+      <article className="panel"><div className="panel-title"><h2>Concentração dos gastos</h2></div>
+        <div className="insight-list">
+          {report.categories.slice(0,3).map(category=><div key={category.category}><span>{category.category}</span><b>{category.sharePercent.toFixed(1)}%</b></div>)}
+          <div><span>Compras no cartão</span><b>{report.cardSharePercent.toFixed(1)}%</b></div>
+          <div><span>Total sem categoria</span><b>{money(report.uncategorizedInCents)}</b></div>
+        </div></article>
       <article className="panel"><div className="panel-title"><h2>Indicadores úteis</h2></div>
         <div className="insight-list">
           <div><span>Média mensal</span><b>{money(report.monthlyAverageInCents)}</b></div>
-          <div><span>Média diária</span><b>{money(summary.dailyAverageInCents)}</b></div>
-          <div><span>Projeção do mês</span><b>{money(summary.projectedExpensesInCents)}</b></div>
+          <div><span>Média diária do último mês</span><b>{money(latest.dailyAverageInCents)}</b></div>
+          <div><span>Projeção do último mês</span><b>{money(latest.projectedExpensesInCents)}</b></div>
           <div><span>Maior dia de gasto</span><b>{report.highestSpendingDay?`${shortDate(report.highestSpendingDay.date)} · ${money(report.highestSpendingDay.amountInCents)}`:"—"}</b></div>
           <div><span>Sem categoria</span><b>{report.uncategorizedCount} · {money(report.uncategorizedInCents)}</b></div>
         </div></article>
@@ -147,26 +170,27 @@ function ReportContent({report,profileIncome,targets,onEdit,onDelete}:{
   </>
 }
 
-function TrendChart({data}:{data:FinancialReport["monthly"]}){
-  if(!data.length)return <EmptyChart/>;
-  const width=760,height=250,pad=34,max=Math.max(...data.flatMap(x=>[x.incomeInCents,x.expensesInCents,Math.max(x.savingsInCents,0)]),1);
-  const point=(value:number,index:number)=>`${pad+index*(width-pad*2)/Math.max(data.length-1,1)},${height-pad-Math.max(value,0)/max*(height-pad*2)}`;
-  const poly=(key:"incomeInCents"|"expensesInCents"|"savingsInCents")=>data.map((d,i)=>point(d[key],i)).join(" ");
-  return <div className="svg-chart"><svg role="img" aria-label="Evolução mensal de receitas, despesas e economia" viewBox={`0 0 ${width} ${height}`}>
-    {[0,.25,.5,.75,1].map(v=><line key={v} x1={pad} x2={width-pad} y1={pad+v*(height-pad*2)} y2={pad+v*(height-pad*2)} className="grid-line"/>)}
-    <polyline points={poly("incomeInCents")} className="chart-line income-line"/><polyline points={poly("expensesInCents")} className="chart-line expense-line"/>
-    <polyline points={poly("savingsInCents")} className="chart-line savings-line"/>
-    {data.map((d,i)=><text key={d.month} x={pad+i*(width-pad*2)/Math.max(data.length-1,1)} y={height-6} textAnchor="middle">{monthLabel(d.month)}</text>)}
-  </svg></div>
+function ComparisonLine({label,value,inverse=false}:{label:string;value?:number|null;inverse?:boolean}){
+  const [text,status]=changeLabel(value??undefined,inverse).split("|");
+  return <div><span>{label}</span><b className={status}>{text}</b></div>
 }
-function CategoryDonut({report}:{report:FinancialReport}){
-  const visible=report.categories.filter(x=>x.amountInCents>0).slice(0,6);
+
+function SpendingBars({data}:{data:FinancialReport["monthly"]}){
+  if(!data.length)return <EmptyChart/>;
+  const max=Math.max(...data.map(item=>item.expensesInCents),1);
+  return <div className="monthly-spending-bars" role="img" aria-label="Comparação dos gastos mensais">
+    {data.map(item=><div key={item.month}><span title={money(item.expensesInCents)} style={{height:`${Math.max(item.expensesInCents/max*100,3)}%`}}/>
+      <b>{money(item.expensesInCents)}</b><small>{monthLabel(item.month)}</small></div>)}</div>
+}
+function CategoryBars({report}:{report:FinancialReport}){
+  const visible=report.categories.filter(item=>item.amountInCents>0).slice(0,8);
   if(!visible.length)return <EmptyChart/>;
-  let offset=0;const parts=visible.map((item,i)=>{const start=offset;offset+=item.sharePercent;return `${item.color??palette[i%palette.length]} ${start}% ${offset}%`});
-  return <div className="donut-layout"><div className="donut" role="img" aria-label="Distribuição das despesas por categoria" style={{background:`conic-gradient(${parts.join(",")})`}}>
-    <div><b>{money(report.summary.expensesInCents)}</b><small>Total</small></div></div>
-    <div className="donut-legend">{visible.map((item,i)=><div key={item.category}><i style={{background:item.color??palette[i%palette.length]}}/>
-      <span>{item.category}<small>{item.sharePercent.toFixed(1)}%</small></span><b>{money(item.amountInCents)}</b></div>)}</div></div>
+  const max=Math.max(...visible.map(item=>item.amountInCents),1);
+  return <div className="category-bars">{visible.map((item,index)=><div key={item.category}>
+    <div className="category-bar-heading"><span><i style={{background:item.color??palette[index%palette.length]}}/>{item.category}</span>
+      <b>{money(item.amountInCents)} <small>{item.sharePercent.toFixed(1)}%</small></b></div>
+    <div className="category-bar-track"><i style={{width:`${item.amountInCents/max*100}%`,background:item.color??palette[index%palette.length]}}/></div>
+  </div>)}</div>
 }
 const palette=["#247258","#e5a142","#728bba","#a778ba","#d66d68","#4c94a8"];
 function SourceComparison({report}:{report:FinancialReport}){
