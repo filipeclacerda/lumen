@@ -12,5 +12,5 @@ describe("formatação brasileira", () => {
     expect(parseMoneyToCents("")).toBeNull();
     expect(parseMoneyToCents("abc")).toBeNull();
   });
-  it("converte centavos para texto editável", () => expect(centsToInput(123456)).toBe("1234,56"));
+  it("converte centavos para texto editável", () => expect(centsToInput(123456)).toBe("1.234,56"));
 });

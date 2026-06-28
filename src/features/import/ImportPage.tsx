@@ -529,7 +529,7 @@ export function ImportPage() {
               style={{ border: "1px solid var(--border-strong)", borderRadius: 8, padding: 10, background: "var(--surface)", color: "var(--text)", font: "inherit" }}
               value={newCardName} 
               onChange={e => setNewCardName(e.target.value)} 
-              placeholder="Ex.: Sicoob Mastercard" 
+              placeholder="Ex.: Itaú Mastercard" 
               autoFocus 
               onKeyDown={e => e.key === "Enter" && createCard()} 
             />

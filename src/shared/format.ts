@@ -5,11 +5,11 @@ export const shortDate = (value: string) =>
 
 /** Parses a Brazilian-formatted amount ("-1.234,56") into integer cents, or null. */
 export const parseMoneyToCents = (input: string): number | null => {
-  const isNegative = input.includes("-");
-  const digits = input.replace(/\D/g, "");
-  if (!digits) return null;
-  const num = parseInt(digits, 10);
-  return isNegative ? -num : num;
+  const clean = input.trim().replace(/\s|R\$/g, "");
+  if (!clean) return null;
+  const normalized = clean.includes(",") ? clean.replace(/\./g, "").replace(",", ".") : clean;
+  const value = Number(normalized);
+  return Number.isFinite(value) ? Math.round(value * 100) : null;
 };
 
 /** Formats a string of digits into a Brazilian currency mask ("-1.234,56"). */

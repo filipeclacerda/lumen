@@ -772,14 +772,12 @@ EXTRATO CONTA CORRENTE
 PERÍODO: 01/05/2026 - 31/05/2026
 HISTÓRICO DE MOVIMENTAÇÃO
 DATA HISTÓRICO VALOR
-30/04 SALDO ANTERIOR 8.666,10C
+30/04 SALDO ANTERIOR 6.666,10C
 04/05 PIX RECEB.OUTRA IF 20,50C
 Recebimento Pix
 CLIENTE EXEMPLO
 ***.178.766-**
-DOC.: Pix
 04/05 DEB PACOTE SERVIÇOS 11,45D
-DOC.: 129
 04/05 SALDO DO DIA 8.675,15C
 RESUMO
 (+) SALDO EM CONTA: 8.675,15C
@@ -799,8 +797,8 @@ RESUMO
         let path = directory.path().join("Fatura2026-06-10.csv");
         fs::write(&path, concat!(
             "Data;Estabelecimento;Portador;Valor;Parcela\n",
-            "01/05/2026;SUPERMERCADO;FILIPE;R$ 100,00;-\n",
-            "05/05/2026;Pagamento de fatura;FILIPE;R$ -80,00; de 1\n"
+            "01/05/2026;SUPERMERCADO;JOAO;R$ 100,00;-\n",
+            "05/05/2026;Pagamento de fatura;JOAO;R$ -80,00; de 1\n"
         )).unwrap();
         let invoice = parse_credit_card_csv(&path).unwrap();
         assert_eq!(invoice.items[0].candidate.amount_in_cents, -10000);
