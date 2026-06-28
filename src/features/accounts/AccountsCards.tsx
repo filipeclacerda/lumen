@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CreditCard, Landmark, Link2, Trash2, Undo2, Unlink } from "lucide-react";
+import { CheckCircle2, CreditCard, Landmark, Link2, Trash2, Undo2, Unlink } from "lucide-react";
 import { useState } from "react";
 import { api } from "../../shared/api";
 import { money, shortDate } from "../../shared/format";
@@ -8,6 +8,7 @@ import type { CreditCardInvoice, PaymentMatchCandidate } from "../../shared/type
 export function AccountsCards() {
   const client=useQueryClient();
   const [expanded,setExpanded]=useState<string>();
+  const [deletingTransaction,setDeletingTransaction]=useState<string>();
   const [matching,setMatching]=useState<{
     invoice?:CreditCardInvoice; creditTransactionId?:string; amountInCents:number; candidates:PaymentMatchCandidate[]
   }>();
@@ -60,6 +61,15 @@ export function AccountsCards() {
     await api.setCreditCardInvoiceDeleted(undoId,false);
     setUndoId(undefined); setNotice("Fatura restaurada."); await refresh();
   }
+  async function removeTransaction() {
+    if(!deletingTransaction) return;
+    await api.deleteTransactions([deletingTransaction]);
+    setNotice("Lançamento excluído."); setDeletingTransaction(undefined); await refresh();
+  }
+  async function toggleStatus(invoice:CreditCardInvoice) {
+    await api.setInvoiceStatus(invoice.id, invoice.status==="paid"?"open":"paid");
+    await refresh();
+  }
 
   return <section>
     <header><div><p className="eyebrow">PATRIMÔNIO E CRÉDITO</p><h1>Contas e cartões</h1>
@@ -86,7 +96,10 @@ export function AccountsCards() {
           <div className="invoice-actions">
             {invoice.paymentTransactionId
               ?<button className="secondary icon-button" title="Desvincular pagamento" onClick={()=>unlink(invoice.id)}><Unlink size={16}/></button>
-              :<button className="secondary" onClick={()=>findPayment(invoice)}><Link2 size={15}/> Vincular pagamento</button>}
+              :<>
+                 <button className="secondary" onClick={()=>toggleStatus(invoice)}>{invoice.status==="paid"?<Undo2 size={15}/>:<CheckCircle2 size={15}/>} {invoice.status==="paid"?"Reabrir":"Marcar paga"}</button>
+                 <button className="secondary" onClick={()=>findPayment(invoice)}><Link2 size={15}/> Vincular pagamento</button>
+               </>}
             <button className="danger icon-button" title="Excluir fatura" onClick={()=>remove(invoice.id)}><Trash2 size={16}/></button>
           </div>
         </div>
@@ -96,8 +109,10 @@ export function AccountsCards() {
             <tbody>{items.map(item=><tr key={item.transactionId}><td>{shortDate(item.date)}</td><td>{item.description}</td>
               <td>{item.holder??"—"}</td><td>{item.installment??"—"}</td><td>{item.categoryName??"Sem categoria"}</td>
               <td className={item.amountInCents>0?"positive amount":"amount"}>{money(item.amountInCents)}</td>
-              <td>{item.isPayment&&(item.isLinked?<button className="secondary" onClick={()=>unlinkImportedPayment(item.transactionId)}><Unlink size={14}/> Desvincular</button>:
-                <button className="secondary" onClick={()=>findImportedPayment(item.transactionId,item.amountInCents)}><Link2 size={14}/> Conciliar</button>)}</td>
+              <td><div style={{display:"flex",gap:"8px",justifyContent:"flex-end"}}>{item.isPayment&&(item.isLinked?<button className="secondary" onClick={()=>unlinkImportedPayment(item.transactionId)}><Unlink size={14}/> Desvincular</button>:
+                <button className="secondary" onClick={()=>findImportedPayment(item.transactionId,item.amountInCents)}><Link2 size={14}/> Conciliar</button>)}
+                <button className="danger icon-button" title="Excluir lançamento" onClick={()=>setDeletingTransaction(item.transactionId)}><Trash2 size={16}/></button>
+              </div></td>
             </tr>)}</tbody></table>
         </div>}
       </div>)}</div>}
@@ -111,6 +126,14 @@ export function AccountsCards() {
           <strong>{money(candidate.amountInCents)}</strong><Link2 size={17}/>
         </button>)}</div>}
       <div className="editor-actions"><button className="secondary" onClick={()=>setMatching(undefined)}>Fechar</button></div>
+    </article></div>}
+    {deletingTransaction&&<div className="modal-backdrop"><article className="modal">
+      <h2>Excluir lançamento</h2>
+      <p className="muted">Deseja realmente excluir este lançamento?</p>
+      <div className="editor-actions">
+        <button className="secondary" onClick={()=>setDeletingTransaction(undefined)}>Cancelar</button>
+        <button className="danger" onClick={removeTransaction}>Excluir</button>
+      </div>
     </article></div>}
   </section>
 }

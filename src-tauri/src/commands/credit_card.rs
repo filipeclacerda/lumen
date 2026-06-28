@@ -392,6 +392,14 @@ pub async fn unlink_invoice_payment(invoice_id: String, state: State<'_, AppStat
 }
 
 #[tauri::command]
+pub async fn set_invoice_status(invoice_id: String, status: String, state: State<'_, AppState>) -> Result<(), AppError> {
+    if status != "paid" && status != "open" { return Err(AppError::Validation("Status inválido".into())); }
+    sqlx::query("UPDATE credit_card_invoices SET status=? WHERE id=?")
+        .bind(status).bind(invoice_id).execute(&state.db).await?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn find_card_payment_matches(
     credit_transaction_id: String, state: State<'_, AppState>
 ) -> Result<Vec<PaymentMatchCandidate>, AppError> {

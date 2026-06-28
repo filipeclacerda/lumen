@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Account, AppBootstrap, Category, CategorizationRule, CreditCardImportPreview, CreditCardInvoice, CreditCardInvoiceItem, DashboardSummary, ImportPreview, OnboardingInput, OnboardingResult, PaymentMatchCandidate, RuleImpact, RuleInput, Transaction, TransactionLink, UserProfile } from "./types";
+import type { Account, AppBootstrap, Category, CategorizationRule, CreditCardImportPreview, CreditCardInvoice, CreditCardInvoiceItem, DashboardSummary, FinancialReport, FinancialTarget, FinancialTargetInput, ImportPreview, OnboardingInput, OnboardingResult, PaymentMatchCandidate, ReportFilter, RuleImpact, RuleInput, Transaction, TransactionLink, UserProfile } from "./types";
 
 const demoTransactions: Transaction[] = [
   { id: "1", accountId: "card", accountName:"Cartão principal", accountKind:"credit_card", date: "2026-06-26", description: "Supermercado Aurora", amountInCents: -28490, categoryId: "groceries", category: "Supermercado", categorySource: "rule", status: "cleared" },
@@ -107,5 +107,46 @@ export const api = {
   unlinkCardPayment: (creditTransactionId: string): Promise<void> =>
     invoke("unlink_card_payment", { creditTransactionId }),
   setCreditCardInvoiceDeleted: (invoiceId: string, deleted: boolean): Promise<void> =>
-    invoke("set_credit_card_invoice_deleted", { invoiceId, deleted })
+    invoke("set_credit_card_invoice_deleted", { invoiceId, deleted }),
+  setInvoiceStatus: (invoiceId: string, status: 'paid' | 'open'): Promise<void> =>
+    invoke("set_invoice_status", { invoiceId, status }),
+  financialReport: async (filter:ReportFilter):Promise<FinancialReport> => {
+    if(isTauri()) return invoke("generate_financial_report",{filter});
+    const monthly=[
+      {month:"2026-01",incomeInCents:720000,expensesInCents:438000,investmentsInCents:40000,savingsInCents:282000,savingsRatePercent:39},
+      {month:"2026-02",incomeInCents:720000,expensesInCents:482000,investmentsInCents:45000,savingsInCents:238000,savingsRatePercent:33},
+      {month:"2026-03",incomeInCents:760000,expensesInCents:451000,investmentsInCents:50000,savingsInCents:309000,savingsRatePercent:41},
+      {month:"2026-04",incomeInCents:760000,expensesInCents:526000,investmentsInCents:50000,savingsInCents:234000,savingsRatePercent:31},
+      {month:"2026-05",incomeInCents:780000,expensesInCents:498000,investmentsInCents:60000,savingsInCents:282000,savingsRatePercent:36},
+      {month:"2026-06",incomeInCents:780000,expensesInCents:503740,investmentsInCents:60000,savingsInCents:276260,savingsRatePercent:35}
+    ];
+    return {
+      summary:{incomeInCents:780000,expensesInCents:503740,investmentsInCents:60000,savingsInCents:276260,incomeChangePercent:0,expenseChangePercent:1.2,savingsChangePercent:-2,savingsRatePercent:35,dailyAverageInCents:16791,projectedExpensesInCents:503740},
+      previousSummary:{incomeInCents:780000,expensesInCents:498000,investmentsInCents:60000,savingsInCents:282000,dailyAverageInCents:16064,projectedExpensesInCents:498000},
+      monthly,categories:[
+        {categoryId:"food",category:"Alimentação",color:"#e5a142",amountInCents:168000,sharePercent:33},
+        {categoryId:"housing",category:"Moradia",color:"#728bba",amountInCents:142000,sharePercent:28},
+        {categoryId:"transport",category:"Transporte",color:"#a778ba",amountInCents:82000,sharePercent:16},
+        {categoryId:"health",category:"Saúde",color:"#d66d68",amountInCents:61000,sharePercent:12}
+      ],merchants:[
+        {merchant:"SUPERMERCADOS BH",amountInCents:92300,transactionCount:4},
+        {merchant:"MERCADOLIVRE",amountInCents:79139,transactionCount:2}
+      ],daily:[
+        {date:"2026-06-05",amountInCents:68000,cumulativeInCents:68000},
+        {date:"2026-06-12",amountInCents:94000,cumulativeInCents:162000},
+        {date:"2026-06-20",amountInCents:121000,cumulativeInCents:283000},
+        {date:"2026-06-30",amountInCents:220740,cumulativeInCents:503740}
+      ],sources:[
+        {source:"bank",amountInCents:198000,sharePercent:39},
+        {source:"credit_card",amountInCents:305740,sharePercent:61}
+      ],goals:[],invoices:{openCount:1,paidCount:2,openTotalInCents:106477},
+      uncategorizedCount:2,uncategorizedInCents:2690,highestSpendingDay:{date:"2026-06-20",amountInCents:121000,cumulativeInCents:283000},
+      monthlyAverageInCents:483123,cardSharePercent:61,alerts:["As despesas subiram 1% em relação ao mês anterior.","2 transações ainda estão sem categoria."]
+    };
+  },
+  financialTargets: async():Promise<FinancialTarget[]> => isTauri()?invoke("list_financial_targets"):[],
+  saveFinancialTarget:(input:FinancialTargetInput):Promise<string>=>invoke("save_financial_target",{input}),
+  saveFinancialTargetOverride:(targetId:string,month:string,amountInCents:number):Promise<void>=>
+    invoke("save_financial_target_override",{targetId,month,amountInCents}),
+  deleteFinancialTarget:(id:string):Promise<void>=>invoke("delete_financial_target",{id})
 };

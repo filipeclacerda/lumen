@@ -119,3 +119,38 @@ export type TransactionLink = {
   creditTransactionId?: string;
   invoiceId?: string;
 };
+export type ReportSource = "all" | "bank" | "credit_card";
+export type ReportFilter = { startMonth:string; endMonth:string; source:ReportSource; accountId?:string };
+export type ReportSummary = {
+  incomeInCents:number; expensesInCents:number; investmentsInCents:number; savingsInCents:number;
+  incomeChangePercent?:number; expenseChangePercent?:number; savingsChangePercent?:number;
+  savingsRatePercent?:number; dailyAverageInCents:number; projectedExpensesInCents:number;
+};
+export type MonthlyReportPoint = {
+  month:string; incomeInCents:number; expensesInCents:number; investmentsInCents:number;
+  savingsInCents:number; savingsRatePercent?:number;
+};
+export type CategoryReport = {
+  categoryId?:string; category:string; color?:string; amountInCents:number; sharePercent:number;
+};
+export type MerchantReport = { merchant:string; amountInCents:number; transactionCount:number };
+export type DailyReportPoint = { date:string; amountInCents:number; cumulativeInCents:number };
+export type GoalProgress = {
+  targetId:string; kind:"savings"|"category"; categoryId?:string; label:string;
+  targetInCents:number; actualInCents:number; remainingInCents:number; progressPercent:number;
+  projectedInCents:number; projectedToExceed:boolean;
+};
+export type FinancialTarget = {
+  id:string; kind:"savings"|"category"; categoryId?:string; categoryName?:string;
+  amountInCents:number; enabled:boolean;
+  overrides:{month:string;amountInCents:number}[];
+};
+export type FinancialTargetInput = Omit<FinancialTarget,"id"|"categoryName"|"overrides">&{id?:string};
+export type FinancialReport = {
+  summary:ReportSummary; previousSummary:ReportSummary; monthly:MonthlyReportPoint[];
+  categories:CategoryReport[]; merchants:MerchantReport[]; daily:DailyReportPoint[];
+  sources:{source:"bank"|"credit_card";amountInCents:number;sharePercent:number}[];
+  goals:GoalProgress[]; invoices:{openCount:number;paidCount:number;openTotalInCents:number};
+  uncategorizedCount:number; uncategorizedInCents:number; highestSpendingDay?:DailyReportPoint;
+  monthlyAverageInCents:number; cardSharePercent:number; alerts:string[];
+};

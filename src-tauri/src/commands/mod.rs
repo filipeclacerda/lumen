@@ -8,6 +8,8 @@ use uuid::Uuid;
 
 mod credit_card;
 pub use credit_card::*;
+mod reports;
+pub use reports::*;
 
 use crate::{
     application::state::{AppState, ImportSession},

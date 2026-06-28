@@ -39,11 +39,14 @@ pub fn run() {
             commands::set_import_candidate_category, commands::commit_import,
             commands::detect_import_kind, commands::create_credit_card_account,
             commands::preview_credit_card_import, commands::update_credit_card_import,
-            commands::commit_credit_card_import, commands::list_credit_card_invoices,
+            commands::commit_credit_card_import, commands::list_credit_card_invoices, commands::set_invoice_status,
             commands::get_credit_card_invoice_items, commands::find_invoice_payment_matches,
             commands::link_invoice_payment, commands::unlink_invoice_payment,
             commands::find_card_payment_matches, commands::link_card_payment, commands::unlink_card_payment,
-            commands::set_credit_card_invoice_deleted
+            commands::set_credit_card_invoice_deleted,
+            commands::list_financial_targets, commands::save_financial_target,
+            commands::save_financial_target_override, commands::delete_financial_target,
+            commands::generate_financial_report
         ])
         .run(tauri::generate_context!())
         .expect("erro ao executar Finança");

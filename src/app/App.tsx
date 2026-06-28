@@ -8,6 +8,7 @@ import { CategoriesRules } from "../features/categories/CategoriesRules";
 import { Onboarding } from "../features/onboarding/Onboarding";
 import { SettingsPage } from "../features/settings/SettingsPage";
 import { AccountsCards } from "../features/accounts/AccountsCards";
+import { Reports } from "../features/reports/Reports";
 import { api } from "../shared/api";
 
 const nav = [
@@ -45,6 +46,7 @@ export function App() {
       <Route path="/import" element={<ImportPage/>}/>
       <Route path="/accounts" element={<AccountsCards/>}/>
       <Route path="/categories" element={<CategoriesRules/>}/>
+      <Route path="/reports" element={<Reports/>}/>
       <Route path="/settings" element={<SettingsPage/>}/>
       <Route path="*" element={<Empty/>}/>
     </Routes></main>
