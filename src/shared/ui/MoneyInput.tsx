@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { centsToInput, parseMoneyToCents } from "../format";
+import { centsToInput, parseMoneyToCents, maskCurrency } from "../format";
 
 type MoneyInputProps = {
   defaultCents?: number;
@@ -22,8 +22,9 @@ export function MoneyInput({ defaultCents = 0, onChange, autoFocus, id }: MoneyI
         value={text}
         placeholder="0,00"
         onChange={e => {
-          setText(e.target.value);
-          onChange(e.target.value.trim() === "" ? null : parseMoneyToCents(e.target.value));
+          const masked = maskCurrency(e.target.value);
+          setText(masked);
+          onChange(masked === "" ? null : parseMoneyToCents(masked));
         }}
       />
     </div>

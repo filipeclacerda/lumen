@@ -7,7 +7,7 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, AppError> {
     let pool = SqlitePoolOptions::new().max_connections(5).connect(&url).await?;
     sqlx::query("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;").execute(&pool).await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
-    // Touched to force recompile for migrations
+    // Touched to force recompile for migrations!
     Ok(pool)
 }
 

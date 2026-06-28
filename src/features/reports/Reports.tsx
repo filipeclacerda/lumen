@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowDownRight, ArrowUpRight, CalendarRange, CreditCard, Landmark, Plus, Target, Trash2, TrendingUp } from "lucide-react";
 import { api } from "../../shared/api";
-import { money, shortDate } from "../../shared/format";
+import { money, maskCurrency, shortDate, parseMoneyToCents, centsToInput } from "../../shared/format";
 import type { FinancialReport, FinancialTarget, ReportSource } from "../../shared/types";
 
 const currentMonth=new Date().toISOString().slice(0,7);
@@ -24,7 +24,7 @@ function centsInput(value:number){return (value/100).toFixed(2).replace(".",",")
 function parseMoney(value:string){const n=Number(value.replace(/\./g,"").replace(",","."));return Number.isFinite(n)?Math.round(n*100):0}
 
 export function Reports(){
-  const [preset,setPreset]=useState("6");
+  const [preset,setPreset]=useState("1");
   const [startMonth,setStartMonth]=useState(shiftMonth(currentMonth,-5));
   const [endMonth,setEndMonth]=useState(currentMonth);
   const [source,setSource]=useState<ReportSource>("all");
@@ -217,12 +217,12 @@ function TargetEditor({target,month,categories,onClose,onSaved}:{
 }){
   const [kind,setKind]=useState<"savings"|"category">(target.kind);
   const [categoryId,setCategoryId]=useState(target.categoryId??"");
-  const [amount,setAmount]=useState(centsInput(target.amountInCents));
+  const [amount,setAmount]=useState(centsToInput(target.amountInCents));
   const [monthlyOnly,setMonthlyOnly]=useState(false);
   const [error,setError]=useState("");
   async function save(){
     try{
-      const amountInCents=parseMoney(amount);if(amountInCents<=0){setError("Informe um valor positivo.");return}
+      const amountInCents=parseMoneyToCents(amount);if(!amountInCents || amountInCents<=0){setError("Informe um valor positivo.");return}
       if(target.id&&monthlyOnly){await api.saveFinancialTargetOverride(target.id,month,amountInCents)}
       else await api.saveFinancialTarget({id:target.id||undefined,kind,categoryId:kind==="category"?categoryId:undefined,amountInCents,enabled:true});
       onSaved();
@@ -234,7 +234,7 @@ function TargetEditor({target,month,categories,onClose,onSaved}:{
       <option value="category">Limite por categoria</option><option value="savings">Economia mensal</option></select></label>
     {kind==="category"&&<label>Categoria<select value={categoryId} onChange={e=>setCategoryId(e.target.value)}>
       <option value="">Selecione</option>{categories.map(c=><option key={c.id} value={c.id}>{c.parentId?"↳ ":""}{c.name}</option>)}</select></label>}
-    <label>Valor mensal<div className="money-input"><span>R$</span><input value={amount} onChange={e=>setAmount(e.target.value)}/></div></label>
+        <label>Valor mensal<div className="money-input"><span>R$</span><input inputMode="decimal" value={amount} onChange={e=>setAmount(maskCurrency(e.target.value))}/></div></label>
     {target.id&&<label className="check-label"><input type="checkbox" checked={monthlyOnly} onChange={e=>setMonthlyOnly(e.target.checked)}/>
       Alterar somente para {monthLabel(month)}</label>}
     {error&&<p className="form-error">{error}</p>}

@@ -126,7 +126,10 @@ export function CategoriesRules() {
       <article className="panel rule-editor"><div className="panel-title"><h2>{categoryDraft.id?"Editar categoria":"Nova categoria"}</h2>{categoryDraft.id&&<button className="text-button" onClick={()=>setCategoryDraft({name:"",kind:"expense",color:"#497ca5",sortOrder:0})}>Cancelar</button>}</div>
         <label>Nome<input value={categoryDraft.name} onChange={e=>setCategoryDraft({...categoryDraft,name:e.target.value})}/></label>
         <label>Tipo<select value={categoryDraft.kind} onChange={e=>setCategoryDraft({...categoryDraft,kind:e.target.value as CategoryKind})}>
-          <option value="expense">Despesa</option><option value="income">Receita</option><option value="transfer">Transferência</option>
+          <option value="expense">Despesa</option>
+          <option value="income">Receita</option>
+          <option value="transfer">Transferência</option>
+          <option value="investment">Investimento</option>
         </select></label>
         <label>Categoria superior<select value={categoryDraft.parentId??""} onChange={e=>setCategoryDraft({...categoryDraft,parentId:e.target.value||undefined})}><option value="">Nenhuma</option>
           {categories.filter(c=>c.id!==categoryDraft.id).map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
@@ -151,6 +154,6 @@ export function CategoriesRules() {
 function operatorLabel(value:RuleOperator){return value==="contains"?"contém":value==="starts_with"?"começa com":"regex"}
 function CategoryRow({category,parent,onEdit,onArchive}:{category:Category;parent?:Category;onEdit:()=>void;onArchive:()=>void}){
   return <div className="category-row"><span className="category-swatch" style={{background:category.color??"#789"}}/><div><b>{category.name}</b>
-    <small>{parent?`${parent.name} · `:""}{category.kind==="expense"?"Despesa":category.kind==="income"?"Receita":"Transferência"}</small></div>
+    <small>{parent?`${parent.name} · `:""}{category.kind==="expense"?"Despesa":category.kind==="income"?"Receita":category.kind==="investment"?"Investimento":"Transferência"}</small></div>
     {category.isSystem&&<span className="system-label">padrão</span>}<button className="icon-button" onClick={onEdit}>Editar</button><button className="icon-button" onClick={onArchive}><Archive size={14}/></button></div>
 }

@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { CreditCard, Download, FileUp, ShieldCheck, TableProperties } from "lucide-react";
+import { CreditCard, Download, FileText, FileUp, Plus, ShieldCheck, TableProperties, X } from "lucide-react";
 import { api } from "../../shared/api";
-import { money } from "../../shared/format";
+import { money, centsToInput, parseMoneyToCents, maskCurrency } from "../../shared/format";
 import type {
   CreditCardImportPreview,
   CsvColumnRole,
@@ -50,12 +50,36 @@ export function ImportPage() {
   const client = useQueryClient();
   const [bankPreview, setBankPreview] = useState<ImportPreview>();
   const [cardPreview, setCardPreview] = useState<CreditCardImportPreview>();
+  const [learning, setLearning] = useState<{sourceRow: number; categoryId: string; pattern: string; amountInCents: number; kind: 'bank'|'card'}>();
   const [mappingState, setMappingState] = useState<MappingState>();
   const [mappingError, setMappingError] = useState("");
   const [pendingCardPath, setPendingCardPath] = useState("");
   const [cardAccountId, setCardAccountId] = useState("");
   const [newCardName, setNewCardName] = useState("");
+  const [creatingCard, setCreatingCard] = useState(false);
+  const [cardDueDate, setCardDueDate] = useState("");
+
+  useEffect(() => {
+    if (pendingCardPath) {
+      const match = pendingCardPath.match(/\d{4}-\d{2}-\d{2}/);
+      if (match) setCardDueDate(match[0]);
+    }
+  }, [pendingCardPath]);
+
   const [message, setMessage] = useState("");
+  const [showTroubleMenu, setShowTroubleMenu] = useState(false);
+  const [openUpwards, setOpenUpwards] = useState(false);
+  const troubleMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (showTroubleMenu && troubleMenuRef.current) {
+      const rect = troubleMenuRef.current.getBoundingClientRect();
+      setOpenUpwards(rect.bottom > window.innerHeight - 20);
+    } else {
+      setOpenUpwards(false);
+    }
+  }, [showTroubleMenu]);
+
   const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: api.categories });
   const { data: accounts = [] } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
   const bankAccount = accounts.find((account) => account.kind !== "credit_card");
@@ -130,11 +154,12 @@ export function ImportPage() {
     await client.invalidateQueries({ queryKey: ["accounts"] });
     setCardAccountId(id);
     setNewCardName("");
+    setCreatingCard(false);
   }
 
   async function previewCard() {
     if (!pendingCardPath || !cardAccountId) return;
-    setCardPreview(await api.previewCreditCardImport(pendingCardPath, cardAccountId));
+    setCardPreview(await api.previewCreditCardImport(pendingCardPath, cardAccountId, cardDueDate || undefined));
     setPendingCardPath("");
   }
 
@@ -196,8 +221,17 @@ export function ImportPage() {
 
   async function changeBankCategory(sourceRow: number, categoryId: string) {
     if (!bankPreview) return;
+    const candidate = bankPreview.candidates.find((c) => c.sourceRow === sourceRow);
+    const oldCategoryId = candidate?.suggestedCategoryId;
     await api.setImportCategory(bankPreview.sessionId, sourceRow, categoryId || undefined);
     const category = categories.find((item) => item.id === categoryId);
+    
+    if (categoryId && oldCategoryId !== categoryId && candidate) {
+      setLearning({
+        sourceRow, categoryId, pattern: candidate.description, amountInCents: candidate.amountInCents, kind: 'bank'
+      });
+    }
+
     setBankPreview({
       ...bankPreview,
       candidates: bankPreview.candidates.map((candidate) => candidate.sourceRow === sourceRow ? {
@@ -225,6 +259,10 @@ export function ImportPage() {
 
   async function updateCard(sourceRow: number, included: boolean, categoryId?: string, dueDate?: string) {
     if (!cardPreview) return;
+    
+    const item = cardPreview.items.find(i => i.candidate.sourceRow === sourceRow);
+    const oldCategoryId = item?.candidate.suggestedCategoryId;
+
     setCardPreview(await api.updateCreditCardImport(
       cardPreview.sessionId,
       sourceRow,
@@ -232,6 +270,52 @@ export function ImportPage() {
       categoryId,
       dueDate,
     ));
+
+    if (categoryId && oldCategoryId !== categoryId && item) {
+      setLearning({
+        sourceRow, categoryId, pattern: item.candidate.description, amountInCents: item.candidate.amountInCents, kind: 'card'
+      });
+    }
+  }
+
+  async function createRule() {
+    if (!learning) return;
+    const selectedCategory = categories.find((c) => c.id === learning.categoryId);
+    await api.saveRule({
+      name: `Reconhecer ${learning.pattern}`,
+      priority: 100,
+      enabled: true,
+      operator: "contains",
+      pattern: learning.pattern,
+      movementType: selectedCategory?.kind === "transfer" ? "transfer" : learning.amountInCents >= 0 ? "income" : "expense",
+      categoryId: learning.categoryId,
+    });
+    
+    const p = learning.pattern.toLowerCase();
+
+    if (learning.kind === 'bank' && bankPreview) {
+      const updates = bankPreview.candidates.filter(c => c.description.toLowerCase().includes(p) && c.suggestedCategoryId !== learning.categoryId);
+      for (const u of updates) {
+        await api.setImportCategory(bankPreview.sessionId, u.sourceRow, learning.categoryId);
+      }
+      setBankPreview({
+        ...bankPreview,
+        candidates: bankPreview.candidates.map(c => 
+          c.description.toLowerCase().includes(p) ? { ...c, suggestedCategoryId: learning.categoryId, suggestedCategoryName: selectedCategory?.name } : c
+        )
+      });
+    }
+
+    if (learning.kind === 'card' && cardPreview) {
+      let currentPreview = cardPreview;
+      const updates = cardPreview.items.filter(i => i.candidate.description.toLowerCase().includes(p) && i.candidate.suggestedCategoryId !== learning.categoryId);
+      for (const u of updates) {
+        currentPreview = await api.updateCreditCardImport(cardPreview.sessionId, u.candidate.sourceRow, u.included, learning.categoryId, undefined);
+      }
+      setCardPreview(currentPreview);
+    }
+
+    setLearning(undefined);
   }
 
   function setDraft(next: CsvMappingDraft) {
@@ -246,27 +330,60 @@ export function ImportPage() {
       <FileUp size={42} /><h2>Selecione um arquivo financeiro</h2>
       <p>O aplicativo reconhece automaticamente extratos e o CSV de fatura de cartão. Para outros CSVs, você pode mapear as colunas e salvar o layout.</p>
       <button onClick={choose}>Escolher arquivo</button>
-      <div className="editor-actions import-template-actions">
-        <button className="secondary" onClick={() => exportTemplate("bank")}><Download size={15} /> Template conta</button>
-        <button className="secondary" onClick={() => exportTemplate("credit_card")}><Download size={15} /> Template cartão</button>
+      <div style={{ position: "relative", display: "inline-block", margin: "0 auto 22px" }}>
+        <button className="text-button" onClick={() => setShowTroubleMenu(!showTroubleMenu)}>Enfrentando problemas?</button>
+        {showTroubleMenu && <div ref={troubleMenuRef} style={{ position: "absolute", top: openUpwards ? "auto" : "calc(100% + 8px)", bottom: openUpwards ? "calc(100% + 8px)" : "auto", left: "50%", transform: "translateX(-50%)", background: "var(--surface)", border: "1px solid var(--border-strong)", padding: "14px", borderRadius: "14px", boxShadow: "var(--shadow-md)", display: "flex", flexDirection: "column", zIndex: 10, minWidth: "240px", animation: openUpwards ? "slideUp 0.2s ease-out" : "slideDown 0.2s ease-out" }}>
+          <button className="icon-button" style={{ position: "absolute", top: "4px", right: "4px", background: "transparent", margin: 0 }} onClick={() => setShowTroubleMenu(false)}><X size={14} /></button>
+          <p style={{ margin: "6px 20px 12px 0", fontSize: "12px", color: "var(--text-muted)", textAlign: "left", lineHeight: 1.4, fontWeight: 500 }}>Baixe nossos templates vazios em CSV e preencha com seus dados de onde estiver.</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+            <button className="secondary" style={{ justifyContent: "flex-start", width: "100%", padding: "10px 14px", borderRadius: "9px", margin: 0 }} onClick={() => { setShowTroubleMenu(false); exportTemplate("bank"); }}><Download size={15} /> Template de conta</button>
+            <button className="secondary" style={{ justifyContent: "flex-start", width: "100%", padding: "10px 14px", borderRadius: "9px", margin: 0 }} onClick={() => { setShowTroubleMenu(false); exportTemplate("credit_card"); }}><Download size={15} /> Template de cartão</button>
+          </div>
+        </div>}
       </div>
       <small><ShieldCheck size={15} /> Nenhum dado financeiro é enviado para a internet.</small>
     </article>}
 
-    {pendingCardPath && <article className="panel card-import-setup">
-      <div className="panel-title"><div><p className="eyebrow">FATURA DETECTADA</p><h2>Em qual cartão importar?</h2></div><CreditCard /></div>
-      {cards.length > 0 && <label>Cartão
-        <select value={cardAccountId} onChange={(event) => setCardAccountId(event.target.value)}>
-          {cards.map((card) => <option key={card.id} value={card.id}>{card.name}</option>)}
-        </select>
-      </label>}
-      <div className="inline-create">
-        <label>Novo cartão<input value={newCardName} onChange={(event) => setNewCardName(event.target.value)} placeholder="Ex.: Sicoob Mastercard" /></label>
-        <button className="secondary" onClick={createCard}>Criar cartão</button>
+    {pendingCardPath && (
+      <article className="panel card-import-setup">
+        <div className="panel-title">
+          <div>
+            <p className="eyebrow">FATURA DETECTADA</p>
+            <h2>Em qual cartão importar?</h2>
+          </div>
+          <div className="metric-icon blue"><CreditCard /></div>
+        </div>
+        <div className="file-banner">
+          <FileText size={16} />
+          <span>{pendingCardPath.split(/[\\/]/).pop()}</span>
+        </div>
+        <div className="card-import-form">
+        <div style={{ display: "flex", gap: "10px", alignItems: "flex-end" }}>
+          <div style={{ flex: 1 }}>
+            {cards.length > 0 ? (
+              <label>Cartão
+                <select value={cardAccountId} onChange={(event) => setCardAccountId(event.target.value)}>
+                  {cards.map((card) => <option key={card.id} value={card.id}>{card.name}</option>)}
+                </select>
+              </label>
+            ) : (
+              <p className="form-error" style={{ margin: 0, paddingBottom: 8 }}>Nenhum cartão cadastrado.</p>
+            )}
+          </div>
+          <button className="icon-button" style={{ height: 40, width: 40, minWidth: 40, padding: 0 }} onClick={() => setCreatingCard(true)} title="Novo cartão">
+            <Plus size={18} />
+          </button>
+        </div>
+      <label>Vencimento da fatura (caso não conste no arquivo)
+        <input type="date" value={cardDueDate} onChange={(e) => setCardDueDate(e.target.value)} />
+      </label>
+        <div className="editor-actions">
+          <button className="secondary" onClick={resetFlow}>Cancelar</button>
+          <button disabled={!cardAccountId} onClick={previewCard}>Revisar fatura</button>
+        </div>
       </div>
-      <div className="editor-actions"><button className="secondary" onClick={resetFlow}>Cancelar</button>
-        <button disabled={!cardAccountId} onClick={previewCard}>Revisar fatura</button></div>
-    </article>}
+    </article>
+    )}
 
     {mappingState && <article className="panel import-mapping-panel">
       <div className="panel-title"><div><p className="eyebrow">CSV PERSONALIZADO</p><h2>Mapeie as colunas do arquivo</h2>
@@ -395,6 +512,35 @@ export function ImportPage() {
         <button onClick={commitCard}>Confirmar fatura</button></div>
     </article>}
     {message && <p className="notice">{message}</p>}
+    
+    {learning&&<div className="modal-backdrop"><article className="modal"><h2>Usar esta correção no futuro?</h2><p className="muted">Você pode criar uma regra local ou manter a alteração somente nesta importação.</p>
+      <label>Descrição contém<input value={learning.pattern} onChange={e=>setLearning({...learning,pattern:e.target.value})}/></label>
+      <div className="editor-actions"><button className="secondary" onClick={()=>setLearning(undefined)}>Somente nesta importação</button><button onClick={createRule}>Criar regra</button></div>
+    </article></div>}
+
+    {creatingCard && (
+      <div className="modal-backdrop" onClick={() => setCreatingCard(false)}>
+        <article className="modal" onClick={e => e.stopPropagation()}>
+          <h2>Novo cartão</h2>
+          <p className="muted">Cadastre um novo cartão de crédito.</p>
+          <label style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "16px", fontSize: 13, color: "var(--text-muted)", fontWeight: 600 }}>
+            Nome do cartão
+            <input 
+              style={{ border: "1px solid var(--border-strong)", borderRadius: 8, padding: 10, background: "var(--surface)", color: "var(--text)", font: "inherit" }}
+              value={newCardName} 
+              onChange={e => setNewCardName(e.target.value)} 
+              placeholder="Ex.: Sicoob Mastercard" 
+              autoFocus 
+              onKeyDown={e => e.key === "Enter" && createCard()} 
+            />
+          </label>
+          <div className="editor-actions" style={{ marginTop: "24px" }}>
+            <button className="secondary" onClick={() => setCreatingCard(false)}>Cancelar</button>
+            <button disabled={!newCardName.trim()} onClick={createCard}>Salvar cartão</button>
+          </div>
+        </article>
+      </div>
+    )}
   </section>;
 }
 
@@ -475,18 +621,16 @@ function CategorySelect({ value, categories, onChange }: {
 }
 
 function MoneyEditor({ value, disabled, onCommit }: { value: number; disabled?: boolean; onCommit: (value: number) => void }) {
-  const [text, setText] = useState((value / 100).toFixed(2).replace(".", ","));
+  const [text, setText] = useState(centsToInput(value));
   function commit() {
-    const normalized = text.trim().replace(/\./g, "").replace(",", ".");
-    const parsed = Number(normalized);
-    if (!Number.isFinite(parsed) || parsed === 0) {
-      setText((value / 100).toFixed(2).replace(".", ","));
+    const cents = parseMoneyToCents(text);
+    if (cents === null || cents === 0) {
+      setText(centsToInput(value));
       return;
     }
-    const cents = Math.round(parsed * 100);
-    setText((cents / 100).toFixed(2).replace(".", ","));
+    setText(centsToInput(cents));
     if (cents !== value) onCommit(cents);
   }
-  return <div className="editable-money"><span>R$</span><input aria-label="Valor da transação" value={text} disabled={disabled}
-    onChange={(event) => setText(event.target.value)} onBlur={commit} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /></div>;
+  return <div className="editable-money"><span>R$</span><input inputMode="decimal" aria-label="Valor da transação" value={text} disabled={disabled}
+    onChange={(event) => setText(maskCurrency(event.target.value))} onBlur={commit} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /></div>;
 }

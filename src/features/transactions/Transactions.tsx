@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CreditCard, Landmark, Pencil, Plus, Search, Tags, Trash2, Undo2 } from "lucide-react";
+import { CreditCard, Landmark, Pencil, Plus, Search, Tags, Trash2, Undo2, ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { useState } from "react";
 import { api } from "../../shared/api";
 import { money, shortDate } from "../../shared/format";
@@ -52,7 +52,10 @@ export function Transactions() {
       pattern:learning.pattern,movementType:selectedCategory?.kind==="transfer"?"transfer":learning.transaction.amountInCents>=0?"income":"expense",
       categoryId:learning.categoryId
     });
-    setLearning(undefined); await client.invalidateQueries({queryKey:["rules"]});
+    setLearning(undefined);
+    await api.applyRules(false);
+    await client.invalidateQueries({queryKey:["rules"]});
+    await refresh();
   }
   async function applyBulkCategory() {
     const ids=[...selected]; if(!ids.length)return;
@@ -85,7 +88,19 @@ export function Transactions() {
         {rows.map(t=><tr key={t.id} className={selected.has(t.id)?"selected-row":""}>
           <td className="select-cell"><input type="checkbox" aria-label={`Selecionar ${t.description}`} checked={selected.has(t.id)} onChange={()=>toggle(t.id)}/></td>
           <td style={{whiteSpace:"nowrap", color: "#66706c"}}>{shortDate(t.date)}</td>
-          <td><div style={{display:"flex", alignItems:"center", gap:"12px"}}><div className="tx-icon">{t.description[0]}</div> <b>{t.description}</b></div></td>
+          <td><div style={{display:"flex", alignItems:"center", gap:"12px"}}>
+            {(() => {
+              const c = categories.find(cat => cat.id === t.categoryId);
+              const isInv = c?.kind === "investment";
+              const isInc = t.amountInCents > 0;
+              const bg = isInv ? "#eaf1f8" : isInc ? "#e8f5ef" : "#fff0ed";
+              const col = isInv ? "#3d6f9a" : isInc ? "#16825c" : "#c76155";
+              return <div className="tx-icon" style={{background: bg, color: col}}>
+                {isInc || isInv ? <ArrowUpRight size={20} /> : <ArrowDownRight size={20} />}
+              </div>;
+            })()}
+            <b>{t.description}</b>
+          </div></td>
           <td><span className={`origin-tag ${t.accountKind==="credit_card"?"card-origin":"bank-origin"}`}>
             {t.accountKind==="credit_card"?<CreditCard size={13}/>:<Landmark size={13}/>}
             <span>{t.accountKind==="credit_card"?"Cartão de crédito":"Conta bancária"}<small>{t.accountName}</small></span>

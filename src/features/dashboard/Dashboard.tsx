@@ -24,10 +24,10 @@ export function Dashboard() {
   return <section>
     <header>
       <div>
-        <p className="eyebrow" style={{display: "flex", alignItems: "center", gap: "10px"}}>
-          {currentMonthName} 
-          <input type="month" value={month} onChange={e => setMonth(e.target.value)} style={{fontSize: "12px", padding: "4px", borderRadius: "5px", border: "1px solid #dce2de", color: "#52605b", cursor: "pointer"}} />
-        </p>
+        <div className="eyebrow" style={{display:"flex", alignItems:"center", gap: "10px", marginBottom: "8px"}}>
+          {currentMonthName}
+          <input type="month" className="month-picker" value={month} onChange={e => setMonth(e.target.value)} />
+        </div>
         <h1>Olá, {profile?.displayName.split(" ")[0] ?? "você"} 👋</h1>
         <p className="muted">Aqui está o retrato do seu mês.</p>
       </div>
