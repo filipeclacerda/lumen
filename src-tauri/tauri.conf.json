@@ -13,5 +13,15 @@
     "windows": [{ "title": "Lúmen", "width": 1280, "height": 800, "minWidth": 900, "minHeight": 650 }],
     "security": { "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost" }
   },
-  "bundle": { "active": true, "targets": ["msi", "nsis"], "icon": [] }
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico",
+      "icons/icon.icns"
+    ]
+  }
 }
