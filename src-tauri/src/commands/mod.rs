@@ -6,6 +6,9 @@ use std::path::PathBuf;
 use tauri::State;
 use uuid::Uuid;
 
+mod credit_card;
+pub use credit_card::*;
+
 use crate::{
     application::state::{AppState, ImportSession},
     domain::{
@@ -20,10 +23,55 @@ use crate::{
 #[serde(rename_all = "camelCase")]
 pub struct Account { id: String, name: String, kind: String, balance_in_cents: i64 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserProfile {
+    display_name: String,
+    monthly_income_in_cents: Option<i64>,
+    income_day: Option<i64>,
+    financial_goal: Option<String>,
+    onboarding_completed_at: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileInput {
+    display_name: String,
+    monthly_income_in_cents: Option<i64>,
+    income_day: Option<i64>,
+    financial_goal: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OnboardingInput {
+    display_name: String,
+    monthly_income_in_cents: Option<i64>,
+    income_day: Option<i64>,
+    financial_goal: Option<String>,
+    account_name: String,
+    account_kind: String,
+    opening_balance_in_cents: Option<i64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppBootstrap {
+    profile: Option<UserProfile>,
+    onboarding_completed: bool,
+    account: Option<Account>,
+    has_transactions: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OnboardingResult { profile: UserProfile, account_id: String }
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Transaction {
-    id: String, account_id: String, date: String, description: String,
+    id: String, account_id: String, account_name: String, account_kind: String,
+    date: String, description: String,
     amount_in_cents: i64, category_id: Option<String>, category: Option<String>,
     category_source: Option<String>, status: String,
 }
@@ -104,7 +152,7 @@ fn rule_from_row(row: SqliteRow) -> CategorizationRule {
     }
 }
 
-async fn load_rules(db: &SqlitePool) -> Result<Vec<CategorizationRule>, AppError> {
+pub(super) async fn load_rules(db: &SqlitePool) -> Result<Vec<CategorizationRule>, AppError> {
     let rows = sqlx::query(
         "SELECT r.*, c.name category_name FROM categorization_rules r
          JOIN categories c ON c.id=r.category_id
@@ -143,6 +191,142 @@ fn normalize_transaction_ids(ids: Vec<String>) -> Result<Vec<String>, AppError> 
     Ok(normalized)
 }
 
+fn validate_profile(
+    display_name: &str,
+    monthly_income_in_cents: Option<i64>,
+    income_day: Option<i64>,
+    financial_goal: Option<&str>,
+) -> Result<(), AppError> {
+    let name_length = display_name.trim().chars().count();
+    if !(2..=80).contains(&name_length) {
+        return Err(AppError::Validation("O nome deve ter entre 2 e 80 caracteres".into()));
+    }
+    if monthly_income_in_cents.is_some_and(|income| income < 0) {
+        return Err(AppError::Validation("A renda mensal não pode ser negativa".into()));
+    }
+    if income_day.is_some_and(|day| !(1..=31).contains(&day)) {
+        return Err(AppError::Validation("O dia de recebimento deve estar entre 1 e 31".into()));
+    }
+    if financial_goal.is_some_and(|goal| !["organize","emergency_fund","pay_debt","save","invest"].contains(&goal)) {
+        return Err(AppError::Validation("Objetivo financeiro inválido".into()));
+    }
+    Ok(())
+}
+
+fn profile_from_row(row: SqliteRow) -> UserProfile {
+    UserProfile {
+        display_name: row.get("display_name"),
+        monthly_income_in_cents: row.get("monthly_income_cents"),
+        income_day: row.get("income_day"),
+        financial_goal: row.get("financial_goal"),
+        onboarding_completed_at: row.get("onboarding_completed_at"),
+    }
+}
+
+async fn load_profile(db: &SqlitePool) -> Result<Option<UserProfile>, AppError> {
+    Ok(sqlx::query(
+        "SELECT display_name,monthly_income_cents,income_day,financial_goal,onboarding_completed_at
+         FROM user_profiles WHERE id='primary'"
+    ).fetch_optional(db).await?.map(profile_from_row))
+}
+
+#[tauri::command]
+pub async fn get_app_bootstrap(state: State<'_, AppState>) -> Result<AppBootstrap, AppError> {
+    let profile = load_profile(&state.db).await?;
+    let account_row = sqlx::query(
+        "SELECT id,name,kind,(SELECT COALESCE(SUM(amount_cents),0) FROM transactions t
+         WHERE t.account_id=a.id AND t.deleted_at IS NULL) balance
+         FROM accounts a WHERE deleted_at IS NULL ORDER BY created_at LIMIT 1"
+    ).fetch_optional(&state.db).await?;
+    let account = account_row.map(|r| Account {
+        id:r.get("id"),name:r.get("name"),kind:r.get("kind"),balance_in_cents:r.get("balance"),
+    });
+    let has_transactions = sqlx::query_scalar::<_,i64>(
+        "SELECT COUNT(*) FROM transactions WHERE deleted_at IS NULL"
+    ).fetch_one(&state.db).await? > 0;
+    Ok(AppBootstrap { onboarding_completed: profile.is_some(), profile, account, has_transactions })
+}
+
+#[tauri::command]
+pub async fn get_profile(state: State<'_, AppState>) -> Result<Option<UserProfile>, AppError> {
+    load_profile(&state.db).await
+}
+
+#[tauri::command]
+pub async fn save_profile(input: ProfileInput, state: State<'_, AppState>) -> Result<UserProfile, AppError> {
+    validate_profile(&input.display_name, input.monthly_income_in_cents, input.income_day, input.financial_goal.as_deref())?;
+    let result = sqlx::query(
+        "UPDATE user_profiles SET display_name=?,monthly_income_cents=?,income_day=?,
+         financial_goal=?,updated_at=datetime('now') WHERE id='primary'"
+    ).bind(input.display_name.trim()).bind(input.monthly_income_in_cents).bind(input.income_day)
+        .bind(input.financial_goal).execute(&state.db).await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::Validation("Conclua o cadastro inicial antes de editar o perfil".into()));
+    }
+    load_profile(&state.db).await?.ok_or_else(|| AppError::Validation("Perfil não encontrado".into()))
+}
+
+#[tauri::command]
+pub async fn complete_onboarding(input: OnboardingInput, state: State<'_, AppState>) -> Result<OnboardingResult, AppError> {
+    complete_onboarding_impl(input, &state.db).await
+}
+
+async fn complete_onboarding_impl(input: OnboardingInput, db: &SqlitePool) -> Result<OnboardingResult, AppError> {
+    validate_profile(&input.display_name, input.monthly_income_in_cents, input.income_day, input.financial_goal.as_deref())?;
+    let account_name_length = input.account_name.trim().chars().count();
+    if !(2..=80).contains(&account_name_length) {
+        return Err(AppError::Validation("O nome da conta deve ter entre 2 e 80 caracteres".into()));
+    }
+    if !["checking","savings","cash"].contains(&input.account_kind.as_str()) {
+        return Err(AppError::Validation("Tipo de conta inválido".into()));
+    }
+    let has_transactions = sqlx::query_scalar::<_,i64>(
+        "SELECT COUNT(*) FROM transactions WHERE deleted_at IS NULL"
+    ).fetch_one(db).await? > 0;
+    if has_transactions && input.opening_balance_in_cents.is_some_and(|value| value != 0) {
+        return Err(AppError::Validation("O saldo inicial não pode ser aplicado após existirem transações".into()));
+    }
+
+    let mut tx = db.begin().await?;
+    sqlx::query(
+        "INSERT INTO user_profiles(id,display_name,monthly_income_cents,income_day,financial_goal,onboarding_completed_at)
+         VALUES('primary',?,?,?,?,datetime('now'))
+         ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,
+         monthly_income_cents=excluded.monthly_income_cents,income_day=excluded.income_day,
+         financial_goal=excluded.financial_goal,onboarding_completed_at=excluded.onboarding_completed_at,
+         updated_at=datetime('now')"
+    ).bind(input.display_name.trim()).bind(input.monthly_income_in_cents).bind(input.income_day)
+        .bind(input.financial_goal).execute(&mut *tx).await?;
+
+    let account_id = sqlx::query_scalar::<_,String>(
+        "SELECT id FROM accounts WHERE deleted_at IS NULL ORDER BY created_at LIMIT 1"
+    ).fetch_optional(&mut *tx).await?.unwrap_or_else(|| Uuid::new_v4().to_string());
+    let account_exists = sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM accounts WHERE id=?")
+        .bind(&account_id).fetch_one(&mut *tx).await? > 0;
+    if account_exists {
+        sqlx::query("UPDATE accounts SET name=?,kind=? WHERE id=?")
+            .bind(input.account_name.trim()).bind(&input.account_kind).bind(&account_id).execute(&mut *tx).await?;
+    } else {
+        sqlx::query("INSERT INTO accounts(id,name,kind) VALUES(?,?,?)")
+            .bind(&account_id).bind(input.account_name.trim()).bind(&input.account_kind).execute(&mut *tx).await?;
+    }
+    if !has_transactions {
+        if let Some(balance) = input.opening_balance_in_cents.filter(|value| *value != 0) {
+            let transaction_id = Uuid::new_v4().to_string();
+            sqlx::query(
+                "INSERT INTO transactions(id,account_id,date,description,normalized_description,amount_cents,
+                 fingerprint,category_id,category_source,status) VALUES(?,?,?,?,?,?,?,?,?,?)"
+            ).bind(transaction_id).bind(&account_id).bind(chrono::Local::now().format("%Y-%m-%d").to_string())
+                .bind("Saldo inicial").bind("SALDO INICIAL").bind(balance)
+                .bind(format!("onboarding:opening-balance:{account_id}")).bind("opening-balance")
+                .bind("manual").bind("cleared").execute(&mut *tx).await?;
+        }
+    }
+    tx.commit().await?;
+    let profile = load_profile(db).await?.ok_or_else(|| AppError::Validation("Perfil não encontrado".into()))?;
+    Ok(OnboardingResult { profile, account_id })
+}
+
 #[tauri::command]
 pub async fn list_accounts(state: State<'_, AppState>) -> Result<Vec<Account>, AppError> {
     let rows = sqlx::query("SELECT id,name,kind,(SELECT COALESCE(SUM(amount_cents),0) FROM transactions t WHERE t.account_id=a.id AND t.deleted_at IS NULL) balance FROM accounts a WHERE deleted_at IS NULL ORDER BY name").fetch_all(&state.db).await?;
@@ -151,10 +335,12 @@ pub async fn list_accounts(state: State<'_, AppState>) -> Result<Vec<Account>, A
 
 #[tauri::command]
 pub async fn list_transactions(month: Option<String>, state: State<'_, AppState>) -> Result<Vec<Transaction>, AppError> {
-    let mut q = "SELECT t.id,t.account_id,t.date,t.description,t.amount_cents,t.category_id,
+    let mut q = "SELECT t.id,t.account_id,a.name account_name,a.kind account_kind,t.date,t.description,t.amount_cents,t.category_id,
                  COALESCE(c.name,'Sem categoria') category,t.category_source,t.status
-                 FROM transactions t LEFT JOIN categories c ON c.id=t.category_id
-                 WHERE t.deleted_at IS NULL".to_string();
+                 FROM transactions t JOIN accounts a ON a.id=t.account_id
+                 LEFT JOIN categories c ON c.id=t.category_id
+                 WHERE t.deleted_at IS NULL
+                 AND NOT (a.kind='credit_card' AND t.amount_cents>0 AND t.category_id='credit-card-payment')".to_string();
     if month.is_some() {
         q.push_str(" AND strftime('%Y-%m', t.date) = ?");
     }
@@ -165,7 +351,8 @@ pub async fn list_transactions(month: Option<String>, state: State<'_, AppState>
     let rows = query.fetch_all(&state.db).await?;
     
     Ok(rows.into_iter().map(|r| Transaction {
-        id:r.get("id"), account_id:r.get("account_id"), date:r.get("date"),
+        id:r.get("id"), account_id:r.get("account_id"), account_name:r.get("account_name"),
+        account_kind:r.get("account_kind"), date:r.get("date"),
         description:r.get("description"), amount_in_cents:r.get("amount_cents"),
         category_id:r.get("category_id"), category:r.get("category"),
         category_source:r.get("category_source"), status:r.get("status"),
@@ -396,6 +583,40 @@ pub async fn update_transaction_category(transaction_id: String, category_id: Op
 }
 
 #[tauri::command]
+pub async fn update_transaction_amount(
+    transaction_id: String, amount_in_cents: i64, state: State<'_, AppState>
+) -> Result<(), AppError> {
+    if amount_in_cents == 0 {
+        return Err(AppError::Validation("O valor da transação não pode ser zero".into()));
+    }
+    let row = sqlx::query(
+        "SELECT account_id,date,description,normalized_description,external_id
+         FROM transactions WHERE id=? AND deleted_at IS NULL"
+    ).bind(&transaction_id).fetch_optional(&state.db).await?
+        .ok_or_else(|| AppError::Validation("Transação não encontrada".into()))?;
+    let candidate = ImportCandidate {
+        source_row: 0,
+        date: row.get("date"),
+        description: row.get("description"),
+        normalized_description: row.get("normalized_description"),
+        amount_in_cents,
+        external_id: row.get("external_id"),
+        suggested_category_id: None,
+        suggested_category_name: None,
+        suggested_rule_id: None,
+        suggested_rule_name: None,
+        duplicate_status: crate::domain::import::DuplicateStatus::New,
+        warnings: vec![],
+        included: true,
+    };
+    let account_id: String = row.get("account_id");
+    sqlx::query("UPDATE transactions SET amount_cents=?,fingerprint=? WHERE id=?")
+        .bind(amount_in_cents).bind(fingerprint(&account_id,&candidate)).bind(transaction_id)
+        .execute(&state.db).await?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn bulk_update_transaction_category(
     transaction_ids: Vec<String>, category_id: Option<String>, state: State<'_, AppState>
 ) -> Result<usize, AppError> {
@@ -453,6 +674,7 @@ pub async fn preview_import(path: String, account_id: String, state: State<'_, A
         if sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM transactions WHERE fingerprint=? OR (external_id IS NOT NULL AND external_id=?)")
             .bind(fp).bind(&candidate.external_id).fetch_one(&state.db).await? > 0 {
             candidate.duplicate_status = crate::domain::import::DuplicateStatus::Exact;
+            candidate.included = false;
         }
         if let Some(rule) = first_match(&rules, &CategorizationInput {
             account_id:&account_id, normalized_description:&candidate.normalized_description,
@@ -468,6 +690,34 @@ pub async fn preview_import(path: String, account_id: String, state: State<'_, A
     let file_name = path.file_name().and_then(|x|x.to_str()).unwrap_or("arquivo").to_string();
     state.sessions.lock().await.insert(session_id.clone(), ImportSession { account_id, file_name:file_name.clone(), candidates:candidates.clone() });
     Ok(ImportPreview { session_id, file_name, candidates })
+}
+
+#[tauri::command]
+pub async fn update_import_candidate(
+    session_id: String, source_row: usize, amount_in_cents: i64, included: bool,
+    state: State<'_, AppState>
+) -> Result<ImportCandidate, AppError> {
+    if amount_in_cents == 0 {
+        return Err(AppError::Validation("O valor da transação não pode ser zero".into()));
+    }
+    let mut sessions = state.sessions.lock().await;
+    let session = sessions.get_mut(&session_id).ok_or(AppError::SessionExpired)?;
+    let account_id = session.account_id.clone();
+    let candidate = session.candidates.iter_mut().find(|c| c.source_row == source_row)
+        .ok_or_else(|| AppError::Validation("Lançamento não encontrado na sessão".into()))?;
+    candidate.amount_in_cents = amount_in_cents;
+    let fp = fingerprint(&account_id, candidate);
+    let duplicate = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM transactions WHERE deleted_at IS NULL
+         AND (fingerprint=? OR (external_id IS NOT NULL AND external_id=?))"
+    ).bind(fp).bind(&candidate.external_id).fetch_one(&state.db).await? > 0;
+    candidate.duplicate_status = if duplicate {
+        crate::domain::import::DuplicateStatus::Exact
+    } else {
+        crate::domain::import::DuplicateStatus::New
+    };
+    candidate.included = included && !duplicate;
+    Ok(candidate.clone())
 }
 
 #[tauri::command]
@@ -498,7 +748,7 @@ pub async fn commit_import(session_id: String, state: State<'_, AppState>) -> Re
     sqlx::query("INSERT INTO import_batches(id,file_name,created_at) VALUES(?,?,datetime('now'))").bind(&batch_id).bind(session.file_name).execute(&mut *tx).await.map_err(|e| { println!("DB ERROR: {:?}", e); e })?;
     let mut count = 0;
     for candidate in session.candidates {
-        if matches!(candidate.duplicate_status, crate::domain::import::DuplicateStatus::Exact) { continue; }
+        if !candidate.included || matches!(candidate.duplicate_status, crate::domain::import::DuplicateStatus::Exact) { continue; }
         let source = if candidate.suggested_rule_id.is_some() { Some("rule") } else if candidate.suggested_category_id.is_some() { Some("manual") } else { None };
         sqlx::query(
             "INSERT INTO transactions(id,account_id,date,description,normalized_description,amount_cents,external_id,fingerprint,
@@ -526,5 +776,46 @@ mod tests {
         assert_eq!(normalize_transaction_ids(vec!["a".into(), "a".into(), "b".into()]).unwrap(), vec!["a", "b"]);
         assert!(normalize_transaction_ids(vec![]).is_err());
         assert!(normalize_transaction_ids((0..1001).map(|i| i.to_string()).collect()).is_err());
+    }
+
+    #[test]
+    fn profile_validation_rejects_invalid_values() {
+        assert!(validate_profile("A", None, None, None).is_err());
+        assert!(validate_profile("Nome válido", Some(-1), None, None).is_err());
+        assert!(validate_profile("Nome válido", None, Some(32), None).is_err());
+        assert!(validate_profile("Nome válido", None, None, Some("unknown")).is_err());
+        assert!(validate_profile("Nome válido", Some(500_000), Some(5), Some("organize")).is_ok());
+    }
+
+    #[tokio::test]
+    async fn onboarding_persists_profile_account_and_single_opening_balance() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = crate::infrastructure::database::connect(&directory.path().join("onboarding.db")).await.unwrap();
+        let input = OnboardingInput {
+            display_name:"Pessoa Teste".into(),monthly_income_in_cents:Some(500_000),
+            income_day:Some(5),financial_goal:Some("organize".into()),
+            account_name:"Minha conta".into(),account_kind:"checking".into(),
+            opening_balance_in_cents:Some(123_456),
+        };
+        let result = complete_onboarding_impl(input, &db).await.unwrap();
+        assert_eq!(result.profile.display_name, "Pessoa Teste");
+        let account_name: String = sqlx::query_scalar("SELECT name FROM accounts WHERE id=?")
+            .bind(result.account_id).fetch_one(&db).await.unwrap();
+        assert_eq!(account_name, "Minha conta");
+        let opening_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM transactions t JOIN categories c ON c.id=t.category_id
+             WHERE c.kind='transfer' AND t.normalized_description='SALDO INICIAL'"
+        ).fetch_one(&db).await.unwrap();
+        assert_eq!(opening_count, 1);
+
+        let duplicate = OnboardingInput {
+            display_name:"Pessoa Teste".into(),monthly_income_in_cents:None,income_day:None,
+            financial_goal:None,account_name:"Minha conta".into(),account_kind:"checking".into(),
+            opening_balance_in_cents:Some(100),
+        };
+        assert!(complete_onboarding_impl(duplicate, &db).await.is_err());
+        let final_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM transactions WHERE normalized_description='SALDO INICIAL'")
+            .fetch_one(&db).await.unwrap();
+        assert_eq!(final_count, 1);
     }
 }

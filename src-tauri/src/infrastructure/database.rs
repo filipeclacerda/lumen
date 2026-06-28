@@ -22,7 +22,16 @@ mod tests {
             .fetch_one(&pool).await.unwrap();
         let rule_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM categorization_rules WHERE enabled=1")
             .fetch_one(&pool).await.unwrap();
+        let profile_table: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='user_profiles'")
+            .fetch_one(&pool).await.unwrap();
+        let opening_category: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM categories WHERE id='opening-balance' AND kind='transfer'")
+            .fetch_one(&pool).await.unwrap();
+        let invoice_table: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='credit_card_invoices'")
+            .fetch_one(&pool).await.unwrap();
         assert!(category_count >= 20);
         assert!(rule_count >= 9);
+        assert_eq!(profile_table, 1);
+        assert_eq!(opening_category, 1);
+        assert_eq!(invoice_table, 1);
     }
 }

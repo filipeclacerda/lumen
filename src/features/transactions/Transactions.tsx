@@ -1,8 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Search, Tags, Trash2, Undo2 } from "lucide-react";
+import { CreditCard, Landmark, Search, Tags, Trash2, Undo2 } from "lucide-react";
 import { useState } from "react";
 import { api } from "../../shared/api";
-import { money, shortDate } from "../../shared/format";
+import { shortDate } from "../../shared/format";
 import type { Transaction } from "../../shared/types";
 
 export function Transactions() {
@@ -36,6 +36,19 @@ export function Transactions() {
     await refresh();
     if(categoryId) setLearning({transaction,categoryId,pattern:transaction.description.toUpperCase()});
   }
+  async function changeAmount(transactionId:string,amountInCents:number) {
+    try {
+      await api.updateTransactionAmount(transactionId,amountInCents);
+      setNotice("Valor da transação atualizado."); await refresh();
+    } catch(e:any) {
+      setNotice(`Não foi possível atualizar: ${e?.message||e}`);
+    }
+  }
+  async function deleteOne(id:string) {
+    const count=await api.deleteTransactions([id]);
+    setUndoIds([id]); setNotice(`${count} transação movida para a lixeira.`);
+    setSelected(current=>{const next=new Set(current);next.delete(id);return next}); await refresh();
+  }
   async function createRule() {
     if(!learning)return;
     const selectedCategory=categories.find(c=>c.id===learning.categoryId);
@@ -68,19 +81,24 @@ export function Transactions() {
         <option value="">Sem categoria</option>{categories.map(c=><option key={c.id} value={c.id}>{c.parentId?"↳ ":""}{c.name}</option>)}</select>
         <button className="secondary" onClick={applyBulkCategory}><Tags size={15}/> Categorizar</button>
         <button className="danger" onClick={()=>setConfirmDelete(true)}><Trash2 size={15}/> Excluir</button></div>}</div>
-      <table><thead><tr><th className="select-cell"><input type="checkbox" aria-label="Selecionar transações visíveis" checked={allVisibleSelected} onChange={toggleAll}/></th><th>Data</th><th>Descrição</th><th>Categoria</th><th>Status</th><th>Valor</th></tr></thead>
+      <table><thead><tr><th className="select-cell"><input type="checkbox" aria-label="Selecionar transações visíveis" checked={allVisibleSelected} onChange={toggleAll}/></th><th>Data</th><th>Descrição</th><th>Origem</th><th>Categoria</th><th>Status</th><th>Valor editável</th><th></th></tr></thead>
       <tbody>
-        {rows.length === 0 && <tr><td colSpan={6} style={{textAlign:"center", padding:"60px 20px", color:"#87908c"}}>Nenhuma transação encontrada para este filtro.</td></tr>}
+        {rows.length === 0 && <tr><td colSpan={8} style={{textAlign:"center", padding:"60px 20px", color:"#87908c"}}>Nenhuma transação encontrada para este filtro.</td></tr>}
         {rows.map(t=><tr key={t.id} className={selected.has(t.id)?"selected-row":""}>
           <td className="select-cell"><input type="checkbox" aria-label={`Selecionar ${t.description}`} checked={selected.has(t.id)} onChange={()=>toggle(t.id)}/></td>
           <td style={{whiteSpace:"nowrap", color: "#66706c"}}>{shortDate(t.date)}</td>
           <td><div style={{display:"flex", alignItems:"center", gap:"12px"}}><div className="tx-icon">{t.description[0]}</div> <b>{t.description}</b></div></td>
+          <td><span className={`origin-tag ${t.accountKind==="credit_card"?"card-origin":"bank-origin"}`}>
+            {t.accountKind==="credit_card"?<CreditCard size={13}/>:<Landmark size={13}/>}
+            <span>{t.accountKind==="credit_card"?"Cartão de crédito":"Conta bancária"}<small>{t.accountName}</small></span>
+          </span></td>
           <td><select className="category-select" aria-label={`Categoria de ${t.description}`} value={t.categoryId??""} onChange={e=>changeCategory(t,e.target.value)}>
             <option value="">Sem categoria</option>{categories.map(c=><option key={c.id} value={c.id}>{c.parentId?"↳ ":""}{c.name}</option>)}</select>
             {t.categorySource&&<small className="source-label" style={{marginTop:"6px"}}>{t.categorySource==="rule"?"categorizado por regra":"selecionado manualmente"}</small>}
           </td>
           <td><span className="badge" style={t.status === 'cleared' ? undefined : {background:"#fbf3e5", color:"#a96a1a"}}>{t.status === "cleared" ? "Confirmada" : "Pendente"}</span></td>
-          <td className={t.amountInCents > 0 ? "positive amount" : "amount"}>{money(t.amountInCents)}</td>
+          <td><TransactionAmountEditor value={t.amountInCents} onCommit={value=>changeAmount(t.id,value)}/></td>
+          <td><button className="danger icon-button" title="Excluir transação" aria-label={`Excluir ${t.description}`} onClick={()=>deleteOne(t.id)}><Trash2 size={15}/></button></td>
         </tr>)}
       </tbody></table>
     </article>
@@ -93,4 +111,17 @@ export function Transactions() {
       <div className="editor-actions"><button className="secondary" onClick={()=>setConfirmDelete(false)}>Cancelar</button><button className="danger" onClick={deleteSelected}><Trash2 size={15}/> Mover para lixeira</button></div>
     </article></div>}
   </section>
+}
+
+function TransactionAmountEditor({value,onCommit}:{value:number;onCommit:(value:number)=>void}) {
+  const [text,setText]=useState((value/100).toFixed(2).replace(".",","));
+  function commit() {
+    const parsed=Number(text.trim().replace(/\./g,"").replace(",","."));
+    if(!Number.isFinite(parsed)||parsed===0){setText((value/100).toFixed(2).replace(".",","));return}
+    const cents=Math.round(parsed*100);
+    setText((cents/100).toFixed(2).replace(".",","));
+    if(cents!==value)onCommit(cents);
+  }
+  return <div className="editable-money"><span>R$</span><input value={text} aria-label="Editar valor"
+    onChange={e=>setText(e.target.value)} onBlur={commit} onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur()}}/></div>
 }

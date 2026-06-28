@@ -1,7 +1,32 @@
 export type AccountType = "checking" | "savings" | "cash" | "credit_card";
 export type Account = { id: string; name: string; kind: AccountType; balanceInCents: number };
+export type FinancialGoal = "organize" | "emergency_fund" | "pay_debt" | "save" | "invest";
+export type UserProfile = {
+  displayName: string;
+  monthlyIncomeInCents?: number;
+  incomeDay?: number;
+  financialGoal?: FinancialGoal;
+  onboardingCompletedAt: string;
+};
+export type OnboardingInput = {
+  displayName: string;
+  monthlyIncomeInCents?: number;
+  incomeDay?: number;
+  financialGoal?: FinancialGoal;
+  accountName: string;
+  accountKind: Exclude<AccountType, "credit_card">;
+  openingBalanceInCents?: number;
+};
+export type AppBootstrap = {
+  profile?: UserProfile;
+  onboardingCompleted: boolean;
+  account?: Account;
+  hasTransactions: boolean;
+};
+export type OnboardingResult = { profile: UserProfile; accountId: string };
 export type Transaction = {
-  id: string; accountId: string; date: string; description: string;
+  id: string; accountId: string; accountName: string; accountKind: AccountType;
+  date: string; description: string;
   amountInCents: number; categoryId?: string; category?: string;
   categorySource?: "manual" | "rule"; status: "cleared" | "pending";
 };
@@ -33,6 +58,64 @@ export type ImportCandidate = {
   sourceRow: number; date: string; description: string; normalizedDescription: string;
   amountInCents: number; externalId?: string; suggestedCategoryId?: string;
   suggestedCategoryName?: string; suggestedRuleId?: string; suggestedRuleName?: string;
-  duplicateStatus: "new" | "probable" | "exact"; warnings: string[];
+  duplicateStatus: "new" | "probable" | "exact"; warnings: string[]; included: boolean;
 };
 export type ImportPreview = { sessionId: string; fileName: string; candidates: ImportCandidate[] };
+export type CreditCardImportItem = {
+  candidate: ImportCandidate;
+  holder?: string;
+  installment?: string;
+  rawAmountInCents: number;
+  included: boolean;
+  isPayment: boolean;
+};
+export type CreditCardImportPreview = {
+  sessionId: string;
+  fileName: string;
+  accountId: string;
+  dueDate: string;
+  purchasesInCents: number;
+  creditsInCents: number;
+  totalInCents: number;
+  items: CreditCardImportItem[];
+};
+export type CreditCardInvoice = {
+  id: string;
+  accountId: string;
+  accountName: string;
+  dueDate: string;
+  purchasesInCents: number;
+  creditsInCents: number;
+  totalInCents: number;
+  status: "open" | "paid";
+  paymentTransactionId?: string;
+  paymentDescription?: string;
+  paymentDate?: string;
+};
+export type CreditCardInvoiceItem = {
+  transactionId: string;
+  date: string;
+  description: string;
+  amountInCents: number;
+  categoryId?: string;
+  categoryName?: string;
+  holder?: string;
+  installment?: string;
+  sourceRow: number;
+  isPayment: boolean;
+  isLinked: boolean;
+};
+export type PaymentMatchCandidate = {
+  transactionId: string;
+  accountName: string;
+  date: string;
+  description: string;
+  amountInCents: number;
+  distanceInDays: number;
+};
+export type TransactionLink = {
+  id: string;
+  debitTransactionId: string;
+  creditTransactionId?: string;
+  invoiceId?: string;
+};

@@ -16,6 +16,7 @@ pub struct ImportCandidate {
     pub suggested_rule_name: Option<String>,
     pub duplicate_status: DuplicateStatus,
     pub warnings: Vec<String>,
+    pub included: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -14,6 +14,8 @@ Este repositório implementa a fundação e a primeira fatia vertical:
 - categorização automática por regras locais, com prioridade e revisão;
 - categorias brasileiras hierárquicas e distinção de transferências;
 - aprendizado opcional após correções e aplicação retroativa com prévia;
+- onboarding local com perfil, renda de referência e configuração da primeira conta;
+- edição posterior do perfil e comparação da renda planejada no dashboard;
 - permissões mínimas do seletor nativo;
 - testes TypeScript/Rust e CI para Windows.
 

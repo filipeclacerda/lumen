@@ -1,7 +1,11 @@
 use std::{fs, path::Path};
 use chrono::NaiveDate;
 use regex::Regex;
-use crate::{domain::{import::{normalize_description, DuplicateStatus, ImportCandidate}, money::parse_brl}, error::AppError};
+use crate::{domain::{
+    credit_card::{CreditCardImportItem, ParsedCreditCardInvoice},
+    import::{normalize_description, DuplicateStatus, ImportCandidate},
+    money::parse_brl
+}, error::AppError};
 
 pub fn parse_file(path: &Path) -> Result<Vec<ImportCandidate>, AppError> {
     match path.extension().and_then(|x| x.to_str()).unwrap_or("").to_lowercase().as_str() {
@@ -10,6 +14,69 @@ pub fn parse_file(path: &Path) -> Result<Vec<ImportCandidate>, AppError> {
         "pdf" => parse_sicoob_pdf(path),
         _ => Err(AppError::UnsupportedFormat)
     }
+}
+
+pub fn is_credit_card_csv(path: &Path) -> Result<bool, AppError> {
+    if path.extension().and_then(|x| x.to_str()).unwrap_or("").to_lowercase() != "csv" {
+        return Ok(false);
+    }
+    let content = fs::read_to_string(path)?;
+    let first = content.lines().next().unwrap_or("").trim_start_matches('\u{feff}');
+    let headers: Vec<String> = first.split(';').map(|value| value.trim().to_lowercase()).collect();
+    Ok(headers == ["data", "estabelecimento", "portador", "valor", "parcela"])
+}
+
+pub fn parse_credit_card_csv(path: &Path) -> Result<ParsedCreditCardInvoice, AppError> {
+    if !is_credit_card_csv(path)? {
+        return Err(AppError::Validation(
+            "CSV de fatura inválido; esperado: Data;Estabelecimento;Portador;Valor;Parcela".into()
+        ));
+    }
+    let content = fs::read_to_string(path)?;
+    let mut reader = csv::ReaderBuilder::new().delimiter(b';').flexible(false).from_reader(content.as_bytes());
+    let mut items = Vec::new();
+    for (row, record) in reader.records().enumerate() {
+        let record = record.map_err(|e| AppError::Validation(e.to_string()))?;
+        let description = record.get(1).unwrap_or("").trim().to_string();
+        if description.is_empty() {
+            return Err(AppError::Validation(format!("Estabelecimento ausente na linha {}", row + 2)));
+        }
+        let raw_amount = parse_brl(record.get(3).unwrap_or(""))?;
+        let normalized_description = normalize_description(&description);
+        let is_payment = normalized_description.contains("PAGAMENTO DE FATURA");
+        items.push(CreditCardImportItem {
+            candidate: ImportCandidate {
+                source_row: row + 2,
+                date: parse_date(record.get(0).unwrap_or(""))?,
+                description,
+                normalized_description,
+                amount_in_cents: -raw_amount,
+                external_id: None,
+                suggested_category_id: None,
+                suggested_category_name: None,
+                suggested_rule_id: None,
+                suggested_rule_name: None,
+                duplicate_status: DuplicateStatus::New,
+                warnings: vec![],
+                included: true,
+            },
+            holder: record.get(2).map(str::trim).filter(|x| !x.is_empty()).map(String::from),
+            installment: record.get(4).map(str::trim).filter(|x| !x.is_empty() && *x != "-").map(String::from),
+            raw_amount_in_cents: raw_amount,
+            included: true,
+            is_payment,
+        });
+    }
+    if items.is_empty() {
+        return Err(AppError::Validation("A fatura não contém lançamentos".into()));
+    }
+    let file_name = path.file_name().and_then(|x| x.to_str()).unwrap_or("");
+    let due_date = Regex::new(r"(?i)Fatura(\d{4})-(\d{2})-(\d{2})")
+        .unwrap()
+        .captures(file_name)
+        .and_then(|c| NaiveDate::parse_from_str(&format!("{}-{}-{}", &c[1], &c[2], &c[3]), "%Y-%m-%d").ok())
+        .map(|date| date.format("%Y-%m-%d").to_string());
+    Ok(ParsedCreditCardInvoice { due_date, items })
 }
 
 fn parse_sicoob_pdf(path: &Path) -> Result<Vec<ImportCandidate>, AppError> {
@@ -74,6 +141,7 @@ fn parse_sicoob_text(text: &str) -> Result<Vec<ImportCandidate>, AppError> {
             suggested_rule_name: None,
             duplicate_status: DuplicateStatus::New,
             warnings: vec!["Importado de PDF textual do Sicoob; confira a prévia antes de confirmar.".into()],
+            included: true,
         });
         Ok(())
     };
@@ -169,7 +237,7 @@ fn parse_csv(content: &str) -> Result<Vec<ImportCandidate>, AppError> {
             external_id: id_i.and_then(|i| record.get(i)).filter(|x| !x.is_empty()).map(String::from),
             suggested_category_id: None, suggested_category_name: None,
             suggested_rule_id: None, suggested_rule_name: None,
-            duplicate_status: DuplicateStatus::New, warnings: vec![]
+            duplicate_status: DuplicateStatus::New, warnings: vec![], included: true
         })
     }).collect()
 }
@@ -190,7 +258,7 @@ fn parse_ofx(content: &str) -> Result<Vec<ImportCandidate>, AppError> {
             amount_in_cents: parse_brl(&tag(block, "TRNAMT").ok_or_else(|| AppError::Validation("OFX sem valor".into()))?)?,
             external_id: tag(block, "FITID"), suggested_category_id: None,
             suggested_category_name: None, suggested_rule_id: None, suggested_rule_name: None,
-            duplicate_status: DuplicateStatus::New, warnings: vec![] })
+            duplicate_status: DuplicateStatus::New, warnings: vec![], included: true })
     }).collect()
 }
 
@@ -234,5 +302,36 @@ RESUMO
         assert_eq!(rows.len(), 14);
         assert!(rows.iter().all(|row| row.amount_in_cents != 0));
         assert!(rows.iter().all(|row| !row.description.to_uppercase().contains("SALDO")));
+    }
+
+    #[test]
+    fn parses_credit_card_invoice_and_inverts_signs() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("Fatura2026-06-10.csv");
+        fs::write(&path, concat!(
+            "Data;Estabelecimento;Portador;Valor;Parcela\n",
+            "01/05/2026;SUPERMERCADO;FILIPE;R$ 100,00;-\n",
+            "05/05/2026;Pagamento de fatura;FILIPE;R$ -80,00; de 1\n"
+        )).unwrap();
+        let invoice = parse_credit_card_csv(&path).unwrap();
+        assert_eq!(invoice.due_date.as_deref(), Some("2026-06-10"));
+        assert_eq!(invoice.items[0].candidate.amount_in_cents, -10000);
+        assert_eq!(invoice.items[1].candidate.amount_in_cents, 8000);
+        assert!(invoice.items[1].is_payment);
+        assert_eq!(invoice.items[1].installment.as_deref(), Some("de 1"));
+    }
+
+    #[test]
+    fn parses_real_credit_card_fixture_when_configured() {
+        let Ok(path) = std::env::var("CREDIT_CARD_TEST_CSV") else { return };
+        let invoice = parse_credit_card_csv(Path::new(&path)).unwrap();
+        let purchases: i64 = invoice.items.iter().filter(|x| x.raw_amount_in_cents > 0)
+            .map(|x| x.raw_amount_in_cents).sum();
+        let credits: i64 = -invoice.items.iter().filter(|x| x.raw_amount_in_cents < 0)
+            .map(|x| x.raw_amount_in_cents).sum::<i64>();
+        assert_eq!(invoice.items.len(), 50);
+        assert_eq!(purchases, 449_330);
+        assert_eq!(credits, 342_853);
+        assert_eq!(purchases - credits, 106_477);
     }
 }
