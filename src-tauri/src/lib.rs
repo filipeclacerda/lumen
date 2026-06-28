@@ -47,10 +47,15 @@ pub fn run() {
             commands::update_transaction_category, commands::update_transaction_amount,
             commands::bulk_update_transaction_category,
             commands::delete_transactions, commands::restore_transactions,
+            commands::inspect_import_file, commands::list_csv_mapping_profiles,
+            commands::save_csv_mapping_profile, commands::delete_csv_mapping_profile,
+            commands::export_import_template,
             commands::preview_import, commands::update_import_candidate,
             commands::set_import_candidate_category, commands::commit_import,
+            commands::preview_mapped_bank_import,
             commands::detect_import_kind, commands::create_credit_card_account,
             commands::preview_credit_card_import, commands::update_credit_card_import,
+            commands::preview_mapped_credit_card_import,
             commands::commit_credit_card_import, commands::list_credit_card_invoices, commands::set_invoice_status,
             commands::get_credit_card_invoice_items, commands::find_invoice_payment_matches,
             commands::link_invoice_payment, commands::unlink_invoice_payment,
@@ -62,5 +67,5 @@ pub fn run() {
             commands::export_transactions_csv, commands::backup_database, commands::restore_database
         ])
         .run(tauri::generate_context!())
-        .expect("erro ao executar Finança");
+        .expect("erro ao executar Lúmen");
 }

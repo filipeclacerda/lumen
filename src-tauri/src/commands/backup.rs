@@ -62,7 +62,7 @@ pub async fn backup_database(app: AppHandle, path: String, state: State<'_, AppS
 pub async fn restore_database(app: AppHandle, path: String) -> Result<(), AppError> {
     let bytes = std::fs::read(&path)?;
     if !bytes.starts_with(SQLITE_HEADER) {
-        return Err(AppError::Validation("O arquivo selecionado não é um backup válido do Finança".into()));
+        return Err(AppError::Validation("O arquivo selecionado não é um backup válido do Lúmen".into()));
     }
     // Stage the file; it is swapped in on the next startup, before the pool opens,
     // to avoid corrupting the database that is currently in use.

@@ -5,16 +5,19 @@ use std::path::PathBuf;
 use tauri::State;
 use uuid::Uuid;
 
-use super::load_rules;
+use super::{list_matching_profiles, load_rules, validate_mapping_draft};
 use crate::{
     application::state::{AppState, CreditCardImportSession},
     domain::{
         categorization::{first_match, CategorizationInput},
+        import::{CsvMappingDraft, ImportSourceKind},
         credit_card::{item_fingerprint, CreditCardImportItem},
         import::DuplicateStatus,
     },
     error::AppError,
-    infrastructure::importer::{is_credit_card_csv, parse_credit_card_csv},
+    infrastructure::importer::{
+        detect_import_kind as detect_import_kind_from_file, parse_credit_card_csv, parse_mapped_credit_card_csv,
+    },
 };
 
 #[derive(Serialize)]
@@ -96,38 +99,13 @@ fn validate_date(value: &str) -> Result<(), AppError> {
         .map_err(|_| AppError::Validation("Vencimento inválido".into()))
 }
 
-#[tauri::command]
-pub async fn detect_import_kind(path: String) -> Result<String, AppError> {
-    Ok(if is_credit_card_csv(&PathBuf::from(path))? { "credit_card" } else { "bank" }.into())
-}
-
-#[tauri::command]
-pub async fn create_credit_card_account(name: String, state: State<'_, AppState>) -> Result<String, AppError> {
-    if !(2..=80).contains(&name.trim().chars().count()) {
-        return Err(AppError::Validation("O nome do cartão deve ter entre 2 e 80 caracteres".into()));
-    }
-    let id = Uuid::new_v4().to_string();
-    sqlx::query("INSERT INTO accounts(id,name,kind) VALUES(?,?,'credit_card')")
-        .bind(&id).bind(name.trim()).execute(&state.db).await?;
-    Ok(id)
-}
-
-#[tauri::command]
-pub async fn preview_credit_card_import(
-    path: String,
+async fn build_credit_card_preview(
+    mut parsed: crate::domain::credit_card::ParsedCreditCardInvoice,
+    path: PathBuf,
     account_id: String,
     due_date: Option<String>,
-    state: State<'_, AppState>,
+    state: &State<'_, AppState>,
 ) -> Result<CreditCardImportPreview, AppError> {
-    let account_kind = sqlx::query_scalar::<_, String>(
-        "SELECT kind FROM accounts WHERE id=? AND deleted_at IS NULL"
-    ).bind(&account_id).fetch_optional(&state.db).await?
-        .ok_or_else(|| AppError::Validation("Cartão não encontrado".into()))?;
-    if account_kind != "credit_card" {
-        return Err(AppError::Validation("Selecione uma conta do tipo cartão".into()));
-    }
-    let path = PathBuf::from(path);
-    let mut parsed = parse_credit_card_csv(&path)?;
     let due_date = due_date.or(parsed.due_date.take())
         .ok_or_else(|| AppError::Validation("Informe o vencimento da fatura".into()))?;
     validate_date(&due_date)?;
@@ -164,10 +142,80 @@ pub async fn preview_credit_card_import(
         items: parsed.items.clone(),
     });
     Ok(CreditCardImportPreview {
-        session_id, file_name, account_id, due_date,
-        purchases_in_cents: purchases, credits_in_cents: credits, total_in_cents: total,
+        session_id,
+        file_name,
+        account_id,
+        due_date,
+        purchases_in_cents: purchases,
+        credits_in_cents: credits,
+        total_in_cents: total,
         items: parsed.items,
     })
+}
+
+#[tauri::command]
+pub async fn detect_import_kind(path: String, state: State<'_, AppState>) -> Result<String, AppError> {
+    let path = PathBuf::from(path);
+    let extension = path.extension().and_then(|value| value.to_str()).unwrap_or("").to_lowercase();
+    if extension == "csv" {
+        let inspection = crate::infrastructure::importer::inspect_csv_file(&path)?;
+        let matched = list_matching_profiles(&state.db, &inspection.headers, &inspection.delimiter).await?;
+        if let Some(profile) = matched.first() {
+            return Ok(match profile.source_kind {
+                ImportSourceKind::Bank => "known_bank",
+                ImportSourceKind::CreditCard => "known_credit_card",
+            }.into());
+        }
+    }
+    Ok(detect_import_kind_from_file(&path)?.as_str().into())
+}
+
+#[tauri::command]
+pub async fn create_credit_card_account(name: String, state: State<'_, AppState>) -> Result<String, AppError> {
+    if !(2..=80).contains(&name.trim().chars().count()) {
+        return Err(AppError::Validation("O nome do cartão deve ter entre 2 e 80 caracteres".into()));
+    }
+    let id = Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO accounts(id,name,kind) VALUES(?,?,'credit_card')")
+        .bind(&id).bind(name.trim()).execute(&state.db).await?;
+    Ok(id)
+}
+
+#[tauri::command]
+pub async fn preview_credit_card_import(
+    path: String,
+    account_id: String,
+    due_date: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<CreditCardImportPreview, AppError> {
+    let account_kind = sqlx::query_scalar::<_, String>(
+        "SELECT kind FROM accounts WHERE id=? AND deleted_at IS NULL"
+    ).bind(&account_id).fetch_optional(&state.db).await?
+        .ok_or_else(|| AppError::Validation("Cartão não encontrado".into()))?;
+    if account_kind != "credit_card" {
+        return Err(AppError::Validation("Selecione uma conta do tipo cartão".into()));
+    }
+    let path = PathBuf::from(path);
+    build_credit_card_preview(parse_credit_card_csv(&path)?, path, account_id, due_date, &state).await
+}
+
+#[tauri::command]
+pub async fn preview_mapped_credit_card_import(
+    path: String,
+    account_id: String,
+    mapping: CsvMappingDraft,
+    state: State<'_, AppState>,
+) -> Result<CreditCardImportPreview, AppError> {
+    let account_kind = sqlx::query_scalar::<_, String>(
+        "SELECT kind FROM accounts WHERE id=? AND deleted_at IS NULL"
+    ).bind(&account_id).fetch_optional(&state.db).await?
+        .ok_or_else(|| AppError::Validation("Cartão não encontrado".into()))?;
+    if account_kind != "credit_card" {
+        return Err(AppError::Validation("Selecione uma conta do tipo cartão".into()));
+    }
+    validate_mapping_draft(&mapping)?;
+    let path = PathBuf::from(path);
+    build_credit_card_preview(parse_mapped_credit_card_csv(&path, &mapping)?, path, account_id, None, &state).await
 }
 
 #[tauri::command]

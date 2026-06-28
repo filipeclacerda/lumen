@@ -1,7 +1,13 @@
-# Finança
+# Lúmen
 
 Gestor financeiro desktop local-first para Windows, feito com Tauri 2, React,
 TypeScript, Rust e SQLite.
+
+## 🚀 Download / Instalação
+
+Para usar o aplicativo sem precisar compilar o código fonte, basta acessar a aba de **Releases** deste repositório e baixar a versão mais recente do arquivo `.exe` para o seu computador.
+
+Se o Windows exibir um alerta de "Fornecedor desconhecido" (SmartScreen), clique em "Mais informações" e depois em "Executar assim mesmo".
 
 ## Estado atual
 

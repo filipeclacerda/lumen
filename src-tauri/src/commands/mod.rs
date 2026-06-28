@@ -17,10 +17,16 @@ use crate::{
     application::state::{AppState, ImportSession},
     domain::{
         categorization::{first_match, CategorizationInput, CategorizationRule, MovementType, RuleOperator},
-        import::{fingerprint, normalize_description, ImportCandidate},
+        import::{
+            fingerprint, mapping_signature, normalize_description, CsvColumnMapping, CsvMappingDraft,
+            CsvMappingProfile, ImportCandidate, ImportSourceKind,
+        },
     },
     error::AppError,
-    infrastructure::importer::parse_file,
+    infrastructure::importer::{
+        detect_import_kind as detect_import_kind_from_file, inspect_csv_file, parse_file,
+        parse_mapped_bank_csv,
+    },
 };
 
 #[derive(Serialize)]
@@ -139,6 +145,22 @@ pub struct RuleImpact { count: usize, sample: Vec<RuleImpactItem> }
 #[serde(rename_all = "camelCase")]
 pub struct ImportPreview { session_id: String, file_name: String, candidates: Vec<ImportCandidate> }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportFileInspection {
+    file_name: String,
+    detected_kind: String,
+    delimiter: Option<String>,
+    headers: Vec<String>,
+    sample_rows: Vec<Vec<String>>,
+    matched_profiles: Vec<CsvMappingProfile>,
+    suggested_source_kind: Option<ImportSourceKind>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TemplateKind { Bank, CreditCard }
+
 fn operator_from(value: &str) -> RuleOperator {
     match value { "starts_with" => RuleOperator::StartsWith, "regex" => RuleOperator::Regex, _ => RuleOperator::Contains }
 }
@@ -174,6 +196,73 @@ pub(super) async fn load_rules(db: &SqlitePool) -> Result<Vec<CategorizationRule
          WHERE r.deleted_at IS NULL ORDER BY r.priority, r.created_at"
     ).fetch_all(db).await?;
     Ok(rows.into_iter().map(rule_from_row).collect())
+}
+
+fn source_kind_str(value: ImportSourceKind) -> &'static str {
+    match value {
+        ImportSourceKind::Bank => "bank",
+        ImportSourceKind::CreditCard => "credit_card",
+    }
+}
+
+fn template_contents(kind: &TemplateKind) -> &'static str {
+    match kind {
+        TemplateKind::Bank => concat!(
+            "source_kind;date;description;amount;external_id;balance\n",
+            "bank;2026-06-01;SALARIO;3500,00;folha-001;3500,00\n",
+            "bank;2026-06-02;SUPERMERCADO;-245,90;compra-001;3254,10\n",
+        ),
+        TemplateKind::CreditCard => concat!(
+            "source_kind;purchase_date;description;amount;row_kind;holder;installment;due_date;external_id\n",
+            "credit_card;2026-06-01;SUPERMERCADO;245,90;purchase;TITULAR;1/1;2026-07-10;fatura-001\n",
+            "credit_card;2026-06-05;PAGAMENTO FATURA;245,90;payment;TITULAR;;2026-07-10;pagamento-001\n",
+        ),
+    }
+}
+
+fn validate_mapping_draft(mapping: &CsvMappingDraft) -> Result<(), AppError> {
+    if mapping.columns.is_empty() {
+        return Err(AppError::Validation("Mapeie ao menos uma coluna".into()));
+    }
+    if mapping.delimiter.chars().count() != 1 {
+        return Err(AppError::Validation("Escolha um delimitador válido".into()));
+    }
+    Ok(())
+}
+
+fn mapping_profile_from_row(row: SqliteRow) -> Result<CsvMappingProfile, AppError> {
+    let columns = serde_json::from_str::<Vec<CsvColumnMapping>>(&row.get::<String, _>("columns_json"))
+        .map_err(|_| AppError::Validation("Perfil de layout inválido".into()))?;
+    Ok(CsvMappingProfile {
+        id: row.get("id"),
+        name: row.get("name"),
+        source_kind: if row.get::<String, _>("source_kind") == "credit_card" {
+            ImportSourceKind::CreditCard
+        } else {
+            ImportSourceKind::Bank
+        },
+        delimiter: row.get("delimiter"),
+        date_format: row.get("date_format"),
+        decimal_separator: row.get("decimal_separator"),
+        signature: row.get("signature"),
+        columns,
+    })
+}
+
+async fn list_matching_profiles(
+    db: &SqlitePool,
+    headers: &[String],
+    delimiter: &str,
+) -> Result<Vec<CsvMappingProfile>, AppError> {
+    let bank_signature = mapping_signature(headers, delimiter, ImportSourceKind::Bank);
+    let card_signature = mapping_signature(headers, delimiter, ImportSourceKind::CreditCard);
+    let rows = sqlx::query(
+        "SELECT id,name,source_kind,delimiter,date_format,decimal_separator,signature,columns_json
+         FROM csv_mapping_profiles
+         WHERE signature IN (?,?)
+         ORDER BY created_at"
+    ).bind(bank_signature).bind(card_signature).fetch_all(db).await?;
+    rows.into_iter().map(mapping_profile_from_row).collect()
 }
 
 fn validate_rule(input: &RuleInput) -> Result<(), AppError> {
@@ -868,6 +957,87 @@ pub async fn restore_transactions(transaction_ids: Vec<String>, state: State<'_,
 }
 
 #[tauri::command]
+pub async fn inspect_import_file(path: String, state: State<'_, AppState>) -> Result<ImportFileInspection, AppError> {
+    let path = PathBuf::from(&path);
+    let file_name = path.file_name().and_then(|value| value.to_str()).unwrap_or("arquivo").to_string();
+    let extension = path.extension().and_then(|value| value.to_str()).unwrap_or("").to_lowercase();
+    if extension != "csv" {
+        let detected_kind = detect_import_kind_from_file(&path)?.as_str().to_string();
+        return Ok(ImportFileInspection {
+            file_name,
+            detected_kind,
+            delimiter: None,
+            headers: vec![],
+            sample_rows: vec![],
+            matched_profiles: vec![],
+            suggested_source_kind: Some(ImportSourceKind::Bank),
+        });
+    }
+    let inspection = inspect_csv_file(&path)?;
+    let matched_profiles = list_matching_profiles(&state.db, &inspection.headers, &inspection.delimiter).await?;
+    let suggested_source_kind = matched_profiles.first().map(|profile| profile.source_kind);
+    Ok(ImportFileInspection {
+        file_name,
+        detected_kind: detect_import_kind_from_file(&path)?.as_str().to_string(),
+        delimiter: Some(inspection.delimiter),
+        headers: inspection.headers,
+        sample_rows: inspection.sample_rows,
+        matched_profiles,
+        suggested_source_kind,
+    })
+}
+
+#[tauri::command]
+pub async fn list_csv_mapping_profiles(state: State<'_, AppState>) -> Result<Vec<CsvMappingProfile>, AppError> {
+    let rows = sqlx::query(
+        "SELECT id,name,source_kind,delimiter,date_format,decimal_separator,signature,columns_json
+         FROM csv_mapping_profiles ORDER BY created_at"
+    ).fetch_all(&state.db).await?;
+    rows.into_iter().map(mapping_profile_from_row).collect()
+}
+
+#[tauri::command]
+pub async fn save_csv_mapping_profile(mapping: CsvMappingDraft, state: State<'_, AppState>) -> Result<String, AppError> {
+    validate_mapping_draft(&mapping)?;
+    let id = Uuid::new_v4().to_string();
+    let signature = mapping_signature(
+        &mapping.columns.iter().map(|column| column.header.clone()).collect::<Vec<_>>(),
+        &mapping.delimiter,
+        mapping.source_kind,
+    );
+    let name = mapping.profile_name.clone().unwrap_or_else(|| match mapping.source_kind {
+        ImportSourceKind::Bank => "Layout conta bancária".into(),
+        ImportSourceKind::CreditCard => "Layout cartão de crédito".into(),
+    });
+    let result = sqlx::query(
+        "INSERT INTO csv_mapping_profiles(id,name,source_kind,delimiter,date_format,decimal_separator,signature,columns_json,updated_at)
+         VALUES(?,?,?,?,?,?,?,?,datetime('now'))"
+    ).bind(&id).bind(name.trim()).bind(source_kind_str(mapping.source_kind)).bind(&mapping.delimiter)
+        .bind(&mapping.date_format).bind(&mapping.decimal_separator).bind(signature)
+        .bind(serde_json::to_string(&mapping.columns).map_err(|_| AppError::Validation("Layout inválido".into()))?)
+        .execute(&state.db).await;
+    match result {
+        Ok(_) => Ok(id),
+        Err(sqlx::Error::Database(error)) if error.is_unique_violation() => {
+            Err(AppError::Validation("Já existe um layout salvo para esse conjunto de colunas e tipo".into()))
+        }
+        Err(error) => Err(AppError::Database(error)),
+    }
+}
+
+#[tauri::command]
+pub async fn delete_csv_mapping_profile(profile_id: String, state: State<'_, AppState>) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM csv_mapping_profiles WHERE id=?").bind(profile_id).execute(&state.db).await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn export_import_template(path: String, template_kind: TemplateKind) -> Result<(), AppError> {
+    std::fs::write(path, template_contents(&template_kind))?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn preview_import(path: String, account_id: String, state: State<'_, AppState>) -> Result<ImportPreview, AppError> {
     let path = PathBuf::from(path);
     let mut candidates = parse_file(&path)?;
@@ -892,6 +1062,46 @@ pub async fn preview_import(path: String, account_id: String, state: State<'_, A
     let session_id = Uuid::new_v4().to_string();
     let file_name = path.file_name().and_then(|x|x.to_str()).unwrap_or("arquivo").to_string();
     state.sessions.lock().await.insert(session_id.clone(), ImportSession { account_id, file_name:file_name.clone(), candidates:candidates.clone() });
+    Ok(ImportPreview { session_id, file_name, candidates })
+}
+
+#[tauri::command]
+pub async fn preview_mapped_bank_import(
+    path: String,
+    account_id: String,
+    mapping: CsvMappingDraft,
+    state: State<'_, AppState>,
+) -> Result<ImportPreview, AppError> {
+    validate_mapping_draft(&mapping)?;
+    let path = PathBuf::from(path);
+    let mut candidates = parse_mapped_bank_csv(&path, &mapping)?;
+    let rules = load_rules(&state.db).await?;
+    for candidate in &mut candidates {
+        let fp = fingerprint(&account_id, candidate);
+        if sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM transactions WHERE fingerprint=? OR (external_id IS NOT NULL AND external_id=?)"
+        ).bind(fp).bind(&candidate.external_id).fetch_one(&state.db).await? > 0 {
+            candidate.duplicate_status = crate::domain::import::DuplicateStatus::Exact;
+            candidate.included = false;
+        }
+        if let Some(rule) = first_match(&rules, &CategorizationInput {
+            account_id: &account_id,
+            normalized_description: &candidate.normalized_description,
+            amount_in_cents: candidate.amount_in_cents,
+        }) {
+            candidate.suggested_category_id = Some(rule.category_id.clone());
+            candidate.suggested_category_name = rule.category_name.clone();
+            candidate.suggested_rule_id = Some(rule.id.clone());
+            candidate.suggested_rule_name = Some(rule.name.clone());
+        }
+    }
+    let session_id = Uuid::new_v4().to_string();
+    let file_name = path.file_name().and_then(|value| value.to_str()).unwrap_or("arquivo").to_string();
+    state.sessions.lock().await.insert(session_id.clone(), ImportSession {
+        account_id,
+        file_name: file_name.clone(),
+        candidates: candidates.clone(),
+    });
     Ok(ImportPreview { session_id, file_name, candidates })
 }
 

@@ -55,7 +55,7 @@ export function Onboarding({bootstrap,onFinished}:{bootstrap:AppBootstrap;onFini
   </div></div>;
 
   return <div className="onboarding-shell"><div className="onboarding-card">
-    <div className="onboarding-brand"><span>F</span><b>Finança</b></div>
+    <div className="onboarding-brand"><span>L</span><b>Lúmen</b></div>
     <div className="step-indicator"><i className={step>=1?"active":""}/><i className={step>=2?"active":""}/><i className={step>=3?"active":""}/></div>
     {step===1&&<div className="onboarding-content welcome">
       <div className="onboarding-illustration"><Landmark/></div><p className="eyebrow">BEM-VINDO</p><h1>Seu dinheiro, mais claro</h1>

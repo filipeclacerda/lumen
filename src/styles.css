@@ -254,3 +254,13 @@ textarea:focus-visible,[role="button"]:focus-visible,[tabindex]:focus-visible{
 .monthly-spending-bars>div>b{order:1;font-size:8px;margin-bottom:6px;white-space:nowrap;color:var(--text-muted)}
 .monthly-spending-bars>div>small{order:3;margin-top:7px;color:var(--text-muted);font-size:9px;white-space:nowrap}
 @media(max-width:650px){.monthly-spending-bars{gap:5px;overflow-x:auto}.monthly-spending-bars>div{min-width:44px}.category-bar-heading{align-items:flex-start}.category-bar-heading>b{text-align:right}}
+.import-template-actions{justify-content:center;margin:16px 0 10px}
+.import-mapping-panel .rules-layout{grid-template-columns:minmax(320px,.95fr) minmax(320px,1.05fr)}
+.mapping-row{display:grid;grid-template-columns:minmax(150px,1fr) minmax(170px,.85fr);gap:12px;align-items:center}
+.mapping-row span{display:flex;flex-direction:column;gap:3px}
+.mapping-row b{font-size:12px;color:var(--text)}
+.mapping-row small{color:var(--text-muted);font-size:10px}
+.mapping-row select{border:1px solid var(--border);border-radius:8px;background:var(--surface);padding:9px 10px;font:inherit;color:var(--text)}
+.mapping-sample-panel table{font-size:12px}
+.mapping-sample-panel td{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:1000px){.import-mapping-panel .rules-layout{grid-template-columns:1fr}}

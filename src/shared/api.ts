@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Account, AccountType, AppBootstrap, Category, CategorizationRule, CreditCardImportPreview, CreditCardInvoice, CreditCardInvoiceItem, DashboardSummary, FinancialReport, FinancialTarget, FinancialTargetInput, ImportPreview, OnboardingInput, OnboardingResult, PaymentMatchCandidate, ReportFilter, RuleImpact, RuleInput, Transaction, TransactionInput, TransactionLink, UserProfile } from "./types";
+import type { Account, AccountType, AppBootstrap, Category, CategorizationRule, CreditCardImportPreview, CreditCardInvoice, CreditCardInvoiceItem, CsvMappingDraft, CsvMappingProfile, DashboardSummary, FinancialReport, FinancialTarget, FinancialTargetInput, ImportFileInspection, ImportPreview, OnboardingInput, OnboardingResult, PaymentMatchCandidate, ReportFilter, RuleImpact, RuleInput, TemplateKind, Transaction, TransactionInput, TransactionLink, UserProfile } from "./types";
 
 const demoTransactions: Transaction[] = [
   { id: "1", accountId: "card", accountName:"Cartão principal", accountKind:"credit_card", date: "2026-06-26", description: "Supermercado Aurora", amountInCents: -28490, categoryId: "groceries", category: "Supermercado", categorySource: "rule", status: "cleared" },
@@ -81,17 +81,27 @@ export const api = {
   exportTransactionsCsv: (path: string): Promise<number> => invoke("export_transactions_csv", { path }),
   backupDatabase: (path: string): Promise<void> => invoke("backup_database", { path }),
   restoreDatabase: (path: string): Promise<void> => invoke("restore_database", { path }),
+  inspectImportFile: (path: string): Promise<ImportFileInspection> => invoke("inspect_import_file", { path }),
+  csvMappingProfiles: (): Promise<CsvMappingProfile[]> => invoke("list_csv_mapping_profiles"),
+  saveCsvMappingProfile: (mapping: CsvMappingDraft): Promise<string> => invoke("save_csv_mapping_profile", { mapping }),
+  deleteCsvMappingProfile: (profileId: string): Promise<void> => invoke("delete_csv_mapping_profile", { profileId }),
+  exportImportTemplate: (path: string, templateKind: TemplateKind): Promise<void> =>
+    invoke("export_import_template", { path, templateKind }),
   previewImport: (path: string, accountId: string): Promise<ImportPreview> => invoke("preview_import", { path, accountId }),
+  previewMappedBankImport: (path: string, accountId: string, mapping: CsvMappingDraft): Promise<ImportPreview> =>
+    invoke("preview_mapped_bank_import", { path, accountId, mapping }),
   updateImportCandidate: (sessionId: string, sourceRow: number, amountInCents: number, included: boolean): Promise<ImportPreview["candidates"][number]> =>
     invoke("update_import_candidate", { sessionId, sourceRow, amountInCents, included }),
   setImportCategory: (sessionId: string, sourceRow: number, categoryId?: string): Promise<void> =>
     invoke("set_import_candidate_category", { sessionId, sourceRow, categoryId: categoryId || null }),
   commitImport: (sessionId: string): Promise<number> => invoke("commit_import", { sessionId })
   ,
-  detectImportKind: (path: string): Promise<"bank" | "credit_card"> => invoke("detect_import_kind", { path }),
+  detectImportKind: (path: string): Promise<"known_bank" | "known_credit_card" | "unknown_csv"> => invoke("detect_import_kind", { path }),
   createCreditCardAccount: (name: string): Promise<string> => invoke("create_credit_card_account", { name }),
   previewCreditCardImport: (path: string, accountId: string, dueDate?: string): Promise<CreditCardImportPreview> =>
     invoke("preview_credit_card_import", { path, accountId, dueDate: dueDate || null }),
+  previewMappedCreditCardImport: (path: string, accountId: string, mapping: CsvMappingDraft): Promise<CreditCardImportPreview> =>
+    invoke("preview_mapped_credit_card_import", { path, accountId, mapping }),
   updateCreditCardImport: (
     sessionId: string, sourceRow: number, included: boolean, categoryId?: string, dueDate?: string
   ): Promise<CreditCardImportPreview> =>

@@ -40,7 +40,7 @@ export function App() {
   }}/>;
   return <div className="shell">
     <aside>
-      <div className="brand"><span>F</span><div>Finança<br/><small>seu dinheiro, claro</small></div></div>
+      <div className="brand"><span>L</span><div>Lúmen<br/><small>iluminando suas finanças</small></div></div>
       <nav>{nav.map(([to, label, Icon]) => <NavLink key={to} to={to} end={to === "/"}><Icon size={18}/>{label}</NavLink>)}</nav>
       <div className="sidebar-footer">
         <button className="theme-toggle" onClick={toggleTheme} aria-label={theme==="dark"?"Ativar tema claro":"Ativar tema escuro"} title={theme==="dark"?"Tema claro":"Tema escuro"}>

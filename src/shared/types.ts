@@ -64,6 +64,53 @@ export type ImportCandidate = {
   suggestedCategoryName?: string; suggestedRuleId?: string; suggestedRuleName?: string;
   duplicateStatus: "new" | "probable" | "exact"; warnings: string[]; included: boolean;
 };
+export type ImportSourceKind = "bank" | "credit_card";
+export type CsvColumnRole =
+  | "ignore" | "date" | "description" | "signed_amount" | "debit_amount" | "credit_amount"
+  | "external_id" | "balance" | "purchase_date" | "holder" | "installment" | "row_kind" | "due_date";
+export type CsvColumnMapping = { index: number; header: string; role: CsvColumnRole };
+export type CsvMappingDraft = {
+  sourceKind: ImportSourceKind;
+  delimiter: string;
+  dateFormat?: string;
+  decimalSeparator?: "comma" | "dot";
+  defaultDueDate?: string;
+  profileName?: string;
+  columns: CsvColumnMapping[];
+};
+export type CsvMappingProfile = {
+  id: string;
+  name: string;
+  sourceKind: ImportSourceKind;
+  delimiter: string;
+  dateFormat?: string;
+  decimalSeparator?: "comma" | "dot";
+  signature: string;
+  columns: CsvColumnMapping[];
+};
+export type NormalizedImportRow = {
+  sourceRow: number;
+  sourceKind: ImportSourceKind;
+  date: string;
+  description: string;
+  amountInCents: number;
+  externalId?: string;
+  rowKind?: string;
+  holder?: string;
+  installment?: string;
+  dueDate?: string;
+  warnings: string[];
+};
+export type ImportFileInspection = {
+  fileName: string;
+  detectedKind: "known_bank" | "known_credit_card" | "unknown_csv";
+  delimiter?: string;
+  headers: string[];
+  sampleRows: string[][];
+  matchedProfiles: CsvMappingProfile[];
+  suggestedSourceKind?: ImportSourceKind;
+};
+export type TemplateKind = "bank" | "credit_card";
 export type ImportPreview = { sessionId: string; fileName: string; candidates: ImportCandidate[] };
 export type CreditCardImportItem = {
   candidate: ImportCandidate;

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { Database, Download, RotateCcw, Save, ShieldCheck, UserRound } from "lucide-react";
 import { api } from "../../shared/api";
@@ -39,18 +40,20 @@ export function SettingsPage(){
   }
   async function backup(){
     try {
-      const path=await save({defaultPath:"financa-backup.db",filters:[{name:"Backup do Finança",extensions:["db"]}]});
-      if(!path)return;
-      await api.backupDatabase(path);
-      toast("Backup salvo com sucesso.");
-    } catch(e) { toast((e as {message?:string})?.message??"Falha ao gerar o backup.","error"); }
+      const path=await save({defaultPath:"lumen-backup.db",filters:[{name:"Backup do Lúmen",extensions:["db"]}]});
+      if(path){
+        await invoke("backup_database",{path});
+        toast("Backup salvo com sucesso!");
+      }
+    }catch(e){toast((e as {message?:string})?.message??"Falha ao gerar o backup.","error");}
   }
   async function restore(){
-    try {
-      const path=await open({multiple:false,filters:[{name:"Backup do Finança",extensions:["db"]}]});
-      if(typeof path!=="string")return;
-      await api.restoreDatabase(path);
-      toast("Backup carregado. Reinicie o Finança para concluir a restauração.");
+    try{
+      const path=await open({multiple:false,filters:[{name:"Backup do Lúmen",extensions:["db"]}]});
+      if(path){
+        await invoke("restore_database",{path:path as string});
+        toast("Backup carregado. Reinicie o Lúmen para concluir a restauração.");
+      }
     } catch(e) { toast((e as {message?:string})?.message??"Falha ao restaurar.","error"); }
   }
   return <section><header><div><p className="eyebrow">PREFERÊNCIAS</p><h1>Configurações</h1><p className="muted">Atualize seus dados de planejamento.</p></div></header>

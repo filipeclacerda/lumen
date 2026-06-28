@@ -1,5 +1,5 @@
 [package]
-name = "gestor-financeiro"
+name = "lumen"
 version = "0.1.0"
 description = "Gestor financeiro pessoal local-first"
 edition = "2021"
