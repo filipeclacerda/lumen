@@ -395,6 +395,115 @@ nav a span {
   flex-direction: column;
   gap: 18px;
 }
+.form-row-top {
+  align-items: start;
+}
+.card-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.card-picker-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.card-picker-row {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+}
+.card-picker-row select {
+  flex: 1;
+  min-width: 0;
+  /* Match the 12px scale of label-wrapped selects so the height lines up. */
+  font-size: 12px;
+}
+.card-picker-add {
+  flex: 0 0 auto;
+  width: 42px;
+  min-width: 42px;
+  padding: 0;
+  align-self: stretch;
+}
+.card-picker-hint {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.import-flow-hint {
+  margin: -6px 0 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 70ch;
+}
+.req {
+  color: var(--danger);
+  font-weight: 700;
+}
+.req-legend {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.impact .impact-hint {
+  display: block;
+  margin: -2px 0 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.mapping-checklist {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 18px;
+  font-size: 12px;
+}
+.mapping-checklist.ready {
+  background: var(--brand-soft);
+  border-color: var(--brand);
+}
+.mapping-checklist-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+.mapping-checklist.ready .mapping-checklist-head {
+  color: var(--brand);
+}
+.mapping-checklist ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 8px 18px;
+}
+.mapping-checklist li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mapping-checklist li svg {
+  flex: 0 0 auto;
+}
+.mapping-checklist li.done {
+  color: var(--brand);
+}
+.mapping-checklist li.done span {
+  color: var(--text-muted);
+}
+.mapping-checklist li.pending {
+  color: var(--text-soft);
+}
+.mapping-checklist li.pending span {
+  color: var(--text);
+  font-weight: 600;
+}
 .inline-create {
   display: grid;
   grid-template-columns: 1fr auto;

@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { CreditCard, Download, FileText, FileUp, Plus, ShieldCheck, TableProperties, X } from "lucide-react";
+import { Check, CheckCircle2, Circle, CreditCard, Download, FileText, FileUp, ListChecks, Plus, ShieldCheck, TableProperties, X } from "lucide-react";
 import { api } from "../../shared/api";
+import { Modal } from "../../shared/ui/Modal";
 import { money, centsToInput, parseMoneyToCents, maskCurrency } from "../../shared/format";
 import type {
   CreditCardImportPreview,
@@ -24,10 +25,10 @@ type MappingState = {
 };
 
 const bankRoles: { value: CsvColumnRole; label: string }[] = [
-  { value: "ignore", label: "Ignorar" },
   { value: "date", label: "Data" },
+  { value: "signed_amount", label: "Valor" },
   { value: "description", label: "Descrição" },
-  { value: "signed_amount", label: "Valor com sinal" },
+  { value: "ignore", label: "Ignorar" },
   { value: "debit_amount", label: "Débito" },
   { value: "credit_amount", label: "Crédito" },
   { value: "external_id", label: "ID externo" },
@@ -35,10 +36,10 @@ const bankRoles: { value: CsvColumnRole; label: string }[] = [
 ];
 
 const cardRoles: { value: CsvColumnRole; label: string }[] = [
-  { value: "ignore", label: "Ignorar" },
   { value: "purchase_date", label: "Data da compra" },
-  { value: "description", label: "Descrição" },
   { value: "signed_amount", label: "Valor" },
+  { value: "description", label: "Descrição" },
+  { value: "ignore", label: "Ignorar" },
   { value: "row_kind", label: "Tipo da linha" },
   { value: "holder", label: "Portador" },
   { value: "installment", label: "Parcela" },
@@ -85,9 +86,23 @@ export function ImportPage() {
   const bankAccount = accounts.find((account) => account.kind !== "credit_card");
   const cards = accounts.filter((account) => account.kind === "credit_card");
 
+  // Keep the selected card valid: a <select> with a value that matches no
+  // option shows the first option visually but leaves cardAccountId empty.
+  // Default to the first card so the pre-filled selection counts as chosen.
   useEffect(() => {
-    if (!mappingState || !bankAccount) return;
-    if (!isMappingReady(mappingState.draft)) {
+    const cardList = accounts.filter((account) => account.kind === "credit_card");
+    if (cardList.length === 0) return;
+    if (!cardList.some((card) => card.id === cardAccountId)) {
+      setCardAccountId(cardList[0].id);
+    }
+  }, [accounts, cardAccountId]);
+
+  useEffect(() => {
+    if (!mappingState) return;
+    const draft = mappingState.draft;
+    // A bank import needs a bank account; a card import needs a destination card.
+    const accountReady = draft.sourceKind === "bank" ? Boolean(bankAccount) : Boolean(cardAccountId);
+    if (!isMappingReady(draft) || !accountReady) {
       setBankPreview(undefined);
       setCardPreview(undefined);
       setMappingError("");
@@ -95,12 +110,12 @@ export function ImportPage() {
     }
     const timer = setTimeout(async () => {
       try {
-        if (mappingState.draft.sourceKind === "bank") {
+        if (draft.sourceKind === "bank" && bankAccount) {
           setCardPreview(undefined);
-          setBankPreview(await api.previewMappedBankImport(mappingState.path, bankAccount.id, mappingState.draft));
-        } else if (cardAccountId) {
+          setBankPreview(await api.previewMappedBankImport(mappingState.path, bankAccount.id, draft));
+        } else if (draft.sourceKind === "credit_card" && cardAccountId) {
           setBankPreview(undefined);
-          setCardPreview(await api.previewMappedCreditCardImport(mappingState.path, cardAccountId, mappingState.draft));
+          setCardPreview(await api.previewMappedCreditCardImport(mappingState.path, cardAccountId, draft));
         }
         setMappingError("");
       } catch (error: any) {
@@ -149,12 +164,17 @@ export function ImportPage() {
   }
 
   async function createCard() {
-    if (newCardName.trim().length < 2) return;
-    const id = await api.createCreditCardAccount(newCardName.trim());
-    await client.invalidateQueries({ queryKey: ["accounts"] });
-    setCardAccountId(id);
-    setNewCardName("");
-    setCreatingCard(false);
+    const name = newCardName.trim();
+    if (name.length < 2) return;
+    try {
+      const id = await api.createCreditCardAccount(name);
+      await client.invalidateQueries({ queryKey: ["accounts"] });
+      setCardAccountId(id);
+      setNewCardName("");
+      setCreatingCard(false);
+    } catch (error: any) {
+      setMessage(`Não foi possível cadastrar o cartão: ${error?.message || error}`);
+    }
   }
 
   async function previewCard() {
@@ -358,22 +378,7 @@ export function ImportPage() {
           <span>{pendingCardPath.split(/[\\/]/).pop()}</span>
         </div>
         <div className="card-import-form">
-        <div style={{ display: "flex", gap: "10px", alignItems: "flex-end" }}>
-          <div style={{ flex: 1 }}>
-            {cards.length > 0 ? (
-              <label>Cartão
-                <select value={cardAccountId} onChange={(event) => setCardAccountId(event.target.value)}>
-                  {cards.map((card) => <option key={card.id} value={card.id}>{card.name}</option>)}
-                </select>
-              </label>
-            ) : (
-              <p className="form-error" style={{ margin: 0, paddingBottom: 8 }}>Nenhum cartão cadastrado.</p>
-            )}
-          </div>
-          <button className="icon-button" style={{ height: 40, width: 40, minWidth: 40, padding: 0 }} onClick={() => setCreatingCard(true)} title="Novo cartão">
-            <Plus size={18} />
-          </button>
-        </div>
+        <CardPicker label="Cartão" required cards={cards} value={cardAccountId} onChange={setCardAccountId} onCreate={() => setCreatingCard(true)} />
       <label>Vencimento da fatura (caso não conste no arquivo)
         <input type="date" value={cardDueDate} onChange={(e) => setCardDueDate(e.target.value)} />
       </label>
@@ -388,9 +393,9 @@ export function ImportPage() {
     {mappingState && <article className="panel import-mapping-panel">
       <div className="panel-title"><div><p className="eyebrow">CSV PERSONALIZADO</p><h2>Mapeie as colunas do arquivo</h2>
         <small>{mappingState.inspection.fileName}</small></div><TableProperties /></div>
+      <p className="muted import-flow-hint">Confira o tipo do arquivo, indique o que cada coluna representa e escolha o destino. Assim que todos os passos abaixo estiverem completos, a prévia aparece embaixo para você revisar antes de confirmar.</p>
       {mappingState.matchedProfile && <p className="notice">Layout salvo detectado: <b>{mappingState.matchedProfile.name}</b>. Você pode revisar antes de importar.</p>}
-      {!bankAccount && mappingState.draft.sourceKind === "bank" && <p className="form-error">Cadastre uma conta bancária antes de revisar este extrato.</p>}
-      {mappingState.draft.sourceKind === "credit_card" && cards.length === 0 && <p className="form-error">Cadastre um cartão antes de revisar esta fatura.</p>}
+      <MappingChecklist draft={mappingState.draft} hasBankAccount={Boolean(bankAccount)} hasCard={Boolean(cardAccountId)} />
       <div className="rules-layout">
         <div className="rule-editor">
           <div className="form-row">
@@ -427,26 +432,25 @@ export function ImportPage() {
               </select>
             </label>
           </div>
-          {mappingState.draft.sourceKind === "credit_card" && <>
-            {cards.length > 0 && <label>Cartão de destino
-              <select value={cardAccountId} onChange={(event) => setCardAccountId(event.target.value)}>
-                {cards.map((card) => <option key={card.id} value={card.id}>{card.name}</option>)}
-              </select>
-            </label>}
-            <label>Vencimento padrão da fatura
+          {mappingState.draft.sourceKind === "credit_card" && <div className="form-row form-row-top">
+            <CardPicker label="Cartão de destino" required cards={cards} value={cardAccountId} onChange={setCardAccountId} onCreate={() => setCreatingCard(true)} />
+            <label><span>Vencimento padrão da fatura <span className="req">*</span></span>
               <input type="date" value={mappingState.draft.defaultDueDate ?? ""} onChange={(event) => setDraft({ ...mappingState.draft, defaultDueDate: event.target.value || undefined })} />
             </label>
-          </>}
+          </div>}
           <label className="check-label"><input
             type="checkbox"
             checked={mappingState.saveProfile}
             onChange={(event) => setMappingState((current) => current ? { ...current, saveProfile: event.target.checked } : current)}
           />Salvar este layout para próximas importações</label>
-          {mappingState.saveProfile && <label>Nome do layout
+          {mappingState.saveProfile && <label><span>Nome do layout <span className="req">*</span></span>
             <input value={mappingState.draft.profileName ?? ""} onChange={(event) => setDraft({ ...mappingState.draft, profileName: event.target.value })} placeholder="Ex.: CSV Nubank crédito" />
           </label>}
           <div className="impact">
             <b>Colunas encontradas</b>
+            <small className="impact-hint">{mappingState.draft.sourceKind === "credit_card"
+              ? "Atribua, no mínimo, data da compra, descrição e valor."
+              : "Atribua, no mínimo, data, descrição e valor."}</small>
             {mappingState.draft.columns.map((column, index) => <div key={`${column.header}-${index}`} className="mapping-row">
               <span><b>{column.header}</b><small>{sampleValue(mappingState.inspection, column.index)}</small></span>
               <select value={column.role} onChange={(event) => setDraft({
@@ -459,6 +463,7 @@ export function ImportPage() {
               </select>
             </div>)}
           </div>
+          <p className="req-legend"><span className="req">*</span> Campos obrigatórios para liberar a prévia.</p>
           <div className="editor-actions">
             <button className="secondary" onClick={resetFlow}>Cancelar</button>
             {mappingState.matchedProfile && <button className="secondary" onClick={() => setDraft(draftFromProfile(mappingState.matchedProfile!))}>Reaplicar layout salvo</button>}
@@ -519,27 +524,23 @@ export function ImportPage() {
     </article></div>}
 
     {creatingCard && (
-      <div className="modal-backdrop" onClick={() => setCreatingCard(false)}>
-        <article className="modal" onClick={e => e.stopPropagation()}>
-          <h2>Novo cartão</h2>
-          <p className="muted">Cadastre um novo cartão de crédito.</p>
-          <label style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "16px", fontSize: 13, color: "var(--text-muted)", fontWeight: 600 }}>
-            Nome do cartão
-            <input 
-              style={{ border: "1px solid var(--border-strong)", borderRadius: 8, padding: 10, background: "var(--surface)", color: "var(--text)", font: "inherit" }}
-              value={newCardName} 
-              onChange={e => setNewCardName(e.target.value)} 
-              placeholder="Ex.: Itaú Mastercard" 
-              autoFocus 
-              onKeyDown={e => e.key === "Enter" && createCard()} 
+      <Modal title="Novo cartão" onClose={() => setCreatingCard(false)}>
+        <p className="muted">Cadastre um cartão de crédito para vincular a esta fatura.</p>
+        <div className="modal-form">
+          <label>Nome do cartão
+            <input
+              value={newCardName}
+              onChange={e => setNewCardName(e.target.value)}
+              placeholder="Ex.: Itaú Mastercard"
+              onKeyDown={e => e.key === "Enter" && createCard()}
             />
           </label>
-          <div className="editor-actions" style={{ marginTop: "24px" }}>
-            <button className="secondary" onClick={() => setCreatingCard(false)}>Cancelar</button>
-            <button disabled={!newCardName.trim()} onClick={createCard}>Salvar cartão</button>
-          </div>
-        </article>
-      </div>
+        </div>
+        <div className="editor-actions" style={{ marginTop: "24px" }}>
+          <button className="secondary" onClick={() => setCreatingCard(false)}>Cancelar</button>
+          <button disabled={newCardName.trim().length < 2} onClick={createCard}>Salvar cartão</button>
+        </div>
+      </Modal>
     )}
   </section>;
 }
@@ -609,6 +610,73 @@ function isMappingReady(draft: CsvMappingDraft) {
 
 function sampleValue(inspection: ImportFileInspection, columnIndex: number) {
   return inspection.sampleRows.find((row) => row[columnIndex])?.[columnIndex] || "Sem exemplo";
+}
+
+type ChecklistItem = { label: string; done: boolean };
+
+function mappingChecklist(draft: CsvMappingDraft, hasBankAccount: boolean, hasCard: boolean): ChecklistItem[] {
+  const has = (role: CsvColumnRole) => draft.columns.some((column) => column.role === role);
+  if (draft.sourceKind === "bank") {
+    return [
+      { label: "Mapear a coluna de data", done: has("date") },
+      { label: "Mapear a coluna de descrição", done: has("description") },
+      { label: "Mapear a coluna de valor (com sinal, débito ou crédito)", done: has("signed_amount") || has("debit_amount") || has("credit_amount") },
+      { label: "Ter uma conta bancária cadastrada", done: hasBankAccount },
+    ];
+  }
+  return [
+    { label: "Mapear a coluna de data da compra", done: has("purchase_date") || has("date") },
+    { label: "Mapear a coluna de descrição (estabelecimento)", done: has("description") },
+    { label: "Mapear a coluna de valor", done: has("signed_amount") },
+    { label: "Selecionar o cartão de destino", done: hasCard },
+    { label: "Definir o vencimento da fatura", done: has("due_date") || Boolean(draft.defaultDueDate) },
+  ];
+}
+
+function MappingChecklist({ draft, hasBankAccount, hasCard }: {
+  draft: CsvMappingDraft; hasBankAccount: boolean; hasCard: boolean;
+}) {
+  const items = mappingChecklist(draft, hasBankAccount, hasCard);
+  const pending = items.filter((item) => !item.done).length;
+  const ready = pending === 0;
+  return <div className={`mapping-checklist${ready ? " ready" : ""}`}>
+    <div className="mapping-checklist-head">
+      {ready
+        ? <><CheckCircle2 size={16} /> Tudo pronto! Confira a prévia da fatura logo abaixo.</>
+        : <><ListChecks size={16} /> Faltam {pending} {pending === 1 ? "passo" : "passos"} para liberar a prévia:</>}
+    </div>
+    <ul>
+      {items.map((item, index) => <li key={index} className={item.done ? "done" : "pending"}>
+        {item.done ? <Check size={14} /> : <Circle size={14} />}
+        <span>{item.label}</span>
+      </li>)}
+    </ul>
+  </div>;
+}
+
+function CardPicker({ label, cards, value, onChange, onCreate, required }: {
+  label: string;
+  cards: { id: string; name: string }[];
+  value: string;
+  onChange: (id: string) => void;
+  onCreate: () => void;
+  required?: boolean;
+}) {
+  const empty = cards.length === 0;
+  return <div className="card-picker">
+    <span className="card-picker-label">{label}{required && <span className="req"> *</span>}</span>
+    <div className="card-picker-row">
+      <select value={value} onChange={(event) => onChange(event.target.value)} disabled={empty} aria-label={label}>
+        {empty
+          ? <option value="">Nenhum cartão cadastrado</option>
+          : cards.map((card) => <option key={card.id} value={card.id}>{card.name}</option>)}
+      </select>
+      <button type="button" className="icon-button card-picker-add" onClick={onCreate} title="Cadastrar novo cartão" aria-label="Cadastrar novo cartão">
+        <Plus size={18} />
+      </button>
+    </div>
+    {empty && <small className="card-picker-hint">Você ainda não tem cartões. Toque em <b>+</b> para cadastrar o primeiro.</small>}
+  </div>;
 }
 
 function CategorySelect({ value, categories, onChange }: {

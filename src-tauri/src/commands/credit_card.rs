@@ -5,12 +5,12 @@ use std::path::PathBuf;
 use tauri::State;
 use uuid::Uuid;
 
-use super::{list_matching_profiles, load_rules, validate_mapping_draft};
+use super::{load_rules, validate_mapping_draft};
 use crate::{
     application::state::{AppState, CreditCardImportSession},
     domain::{
         categorization::{first_match, CategorizationInput},
-        import::{CsvMappingDraft, ImportSourceKind},
+        import::CsvMappingDraft,
         credit_card::{item_fingerprint, CreditCardImportItem},
         import::DuplicateStatus,
     },
@@ -154,19 +154,13 @@ async fn build_credit_card_preview(
 }
 
 #[tauri::command]
-pub async fn detect_import_kind(path: String, state: State<'_, AppState>) -> Result<String, AppError> {
+pub async fn detect_import_kind(path: String) -> Result<String, AppError> {
+    // Only report the official/legacy formats here. A CSV that merely matches a
+    // saved custom mapping profile must NOT be reported as "known_*": that would
+    // route it to the official template parser. Such files fall through to
+    // "unknown_csv" so the frontend opens the mapping flow, where the saved
+    // profile is applied and parsed with the mapped importer.
     let path = PathBuf::from(path);
-    let extension = path.extension().and_then(|value| value.to_str()).unwrap_or("").to_lowercase();
-    if extension == "csv" {
-        let inspection = crate::infrastructure::importer::inspect_csv_file(&path)?;
-        let matched = list_matching_profiles(&state.db, &inspection.headers, &inspection.delimiter).await?;
-        if let Some(profile) = matched.first() {
-            return Ok(match profile.source_kind {
-                ImportSourceKind::Bank => "known_bank",
-                ImportSourceKind::CreditCard => "known_credit_card",
-            }.into());
-        }
-    }
     Ok(detect_import_kind_from_file(&path)?.as_str().into())
 }
 

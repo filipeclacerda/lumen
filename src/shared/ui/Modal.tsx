@@ -7,12 +7,19 @@ type ModalProps = { title: string; onClose: () => void; children: ReactNode; wid
  *  and restores focus to the trigger on unmount. */
 export function Modal({ title, onClose, children, wide }: ModalProps) {
   const ref = useRef<HTMLDivElement>(null);
+  // Focus the first real field once on open — never the close button — and
+  // restore focus to the trigger on unmount. Runs only on mount so typing
+  // (which re-renders the parent) never yanks focus back into the dialog.
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
+    ref.current?.querySelector<HTMLElement>("input,select,textarea,button:not([aria-label='Fechar'])")?.focus();
+    return () => previous?.focus();
+  }, []);
+  // Close on Escape; re-bind only when the handler identity changes.
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", onKey);
-    ref.current?.querySelector<HTMLElement>("input,select,textarea,button")?.focus();
-    return () => { document.removeEventListener("keydown", onKey); previous?.focus(); };
+    return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
   return (
     <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
