@@ -1,1 +1,59 @@
-<div id="root"></div><script type="module" src="/src/main.tsx"></script>
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lúmen</title>
+    <style>
+      body {
+        margin: 0;
+        background: #f7f8f5;
+      }
+      .initial-loader {
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        color: #155c47;
+        font-family: "Segoe UI", system-ui, sans-serif;
+      }
+      .initial-loader-content {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 16px;
+        animation: pulse 1.5s ease-in-out infinite;
+      }
+      .initial-loader-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 14px;
+        background: #155c47;
+        color: white;
+        display: grid;
+        place-items: center;
+        font-size: 26px;
+        font-weight: 700;
+      }
+      @keyframes pulse {
+        0%, 100% { opacity: 0.5; transform: scale(0.98); }
+        50% { opacity: 1; transform: scale(1); }
+      }
+      
+      @media (prefers-color-scheme: dark) {
+        body { background: #131a18; }
+        .initial-loader { color: #f7f8f5; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div class="initial-loader">
+        <div class="initial-loader-content">
+          <div class="initial-loader-icon">L</div>
+          <strong>Carregando Lúmen...</strong>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
