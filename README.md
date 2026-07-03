@@ -8,6 +8,13 @@
   </p>
 
   <p>
+    <a href="https://github.com/filipeclacerda/lumen/actions"><img src="https://img.shields.io/github/actions/workflow/status/filipeclacerda/lumen/ci.yml?branch=main&logo=github&label=CI" alt="CI Status"/></a>
+    <a href="https://github.com/filipeclacerda/lumen/releases"><img src="https://img.shields.io/github/v/release/filipeclacerda/lumen?logo=github&label=version" alt="Version"/></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"/></a>
+    <a href="https://github.com/filipeclacerda/lumen/stargazers"><img src="https://img.shields.io/github/stars/filipeclacerda/lumen?logo=github" alt="Stars"/></a>
+  </p>
+
+  <p>
     Um gerenciador financeiro desktop moderno, local-first e 100% open source.
     Sem nuvem, sem assinatura e sem coleta de dados.
   </p>
@@ -171,7 +178,7 @@ No Windows, também é necessário ter o ambiente MSVC configurado, incluindo o 
 Clone o repositório:
 
 ```bash
-git clone https://github.com/seu-usuario/lumen.git
+git clone https://github.com/filipeclacerda/lumen.git
 cd lumen
 ```
 
