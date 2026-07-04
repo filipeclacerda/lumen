@@ -487,7 +487,10 @@ export function ImportPage() {
           <td><input type="checkbox" checked={candidate.included} disabled={candidate.duplicateStatus === "exact"}
             onChange={(event) => updateBankCandidate(candidate.sourceRow, candidate.amountInCents, event.target.checked)} /></td>
           <td>{candidate.date}</td>
-          <td>{candidate.description}{candidate.suggestedRuleName && <small className="source-label">por {candidate.suggestedRuleName}</small>}</td>
+          <td>{candidate.description}
+            {candidate.suggestionSource==="rule"&&candidate.suggestedRuleName&&<small className="source-label">por {candidate.suggestedRuleName}</small>}
+            {candidate.suggestionSource==="history"&&<small className="source-label history-label">pelo seu histórico</small>}
+          </td>
           <td><CategorySelect value={candidate.suggestedCategoryId} categories={categories} onChange={(value) => changeBankCategory(candidate.sourceRow, value)} /></td>
           <td><MoneyEditor value={candidate.amountInCents} disabled={!candidate.included}
             onCommit={(value) => updateBankCandidate(candidate.sourceRow, value, candidate.included)} /></td>
@@ -507,7 +510,10 @@ export function ImportPage() {
         <tbody>{cardPreview.items.map((item) => <tr key={item.candidate.sourceRow} className={!item.included ? "excluded-row" : ""}>
           <td><input type="checkbox" checked={item.included} disabled={item.candidate.duplicateStatus === "exact"}
             onChange={(event) => updateCard(item.candidate.sourceRow, event.target.checked, item.candidate.suggestedCategoryId)} /></td>
-          <td>{item.candidate.date}</td><td>{item.candidate.description}{item.isPayment && <small className="source-label">transferência</small>}</td>
+          <td>{item.candidate.date}</td><td>{item.candidate.description}
+            {item.isPayment && <small className="source-label">transferência</small>}
+            {!item.isPayment&&item.candidate.suggestionSource==="history"&&<small className="source-label history-label">pelo seu histórico</small>}
+          </td>
           <td>{item.holder ?? "—"}</td><td>{item.installment ?? "—"}</td>
           <td><CategorySelect value={item.candidate.suggestedCategoryId} categories={categories}
             onChange={(value) => updateCard(item.candidate.sourceRow, item.included, value)} /></td>
@@ -518,9 +524,13 @@ export function ImportPage() {
     </article>}
     {message && <p className="notice">{message}</p>}
     
-    {learning&&<div className="modal-backdrop"><article className="modal"><h2>Usar esta correção no futuro?</h2><p className="muted">Você pode criar uma regra local ou manter a alteração somente nesta importação.</p>
+    {learning&&<div className="modal-backdrop"><article className="modal"><h2>Usar esta correção no futuro?</h2><p className="muted">Você pode criar uma regra local, deixar que o histórico aprenda sozinho ou manter a alteração somente nesta importação.</p>
       <label>Descrição contém<input value={learning.pattern} onChange={e=>setLearning({...learning,pattern:e.target.value})}/></label>
-      <div className="editor-actions"><button className="secondary" onClick={()=>setLearning(undefined)}>Somente nesta importação</button><button onClick={createRule}>Criar regra</button></div>
+      <div className="editor-actions">
+        <button className="secondary" onClick={()=>setLearning(undefined)}>Somente nesta importação</button>
+        <button className="secondary" onClick={()=>setLearning(undefined)}>Não perguntar de novo para este estabelecimento</button>
+        <button onClick={createRule}>Criar regra</button>
+      </div>
     </article></div>}
 
     {creatingCard && (

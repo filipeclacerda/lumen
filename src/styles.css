@@ -148,6 +148,7 @@ main{min-width:0}
 .insight-list span,.goal-card>div:first-child small,.invoice-report>span,
 .invoice-report p,.panel-title>div>small,.chart-legend,.uses,.source-label,
 .report-kpis small,.goal-card p{color:var(--text-muted)}
+.history-label{color:var(--accent-green)!important;font-style:italic}
 .svg-chart text{fill:var(--text-muted)}
 
 /* Acessibilidade: foco visível e consistente */

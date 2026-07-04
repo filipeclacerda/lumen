@@ -14,10 +14,15 @@ pub struct ImportCandidate {
     pub suggested_category_name: Option<String>,
     pub suggested_rule_id: Option<String>,
     pub suggested_rule_name: Option<String>,
+    pub suggestion_source: Option<SuggestionSource>,
     pub duplicate_status: DuplicateStatus,
     pub warnings: Vec<String>,
     pub included: bool,
 }
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SuggestionSource { Rule, History }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

@@ -23,9 +23,10 @@ use crate::{
         categorization::{first_match, CategorizationInput, CategorizationRule, MovementType, RuleOperator},
         import::{
             fingerprint, mapping_signature, normalize_description, CsvColumnMapping, CsvMappingDraft,
-            CsvMappingProfile, ImportCandidate, ImportSourceKind,
+            CsvMappingProfile, ImportCandidate, ImportSourceKind, SuggestionSource,
         },
         merchant::merchant_key,
+        suggestion::{suggest_from_history, MerchantCategoryStat},
     },
     error::AppError,
     infrastructure::importer::{
@@ -211,6 +212,86 @@ pub(super) async fn load_rules(db: &SqlitePool) -> Result<Vec<CategorizationRule
          WHERE r.deleted_at IS NULL ORDER BY r.priority, r.created_at"
     ).fetch_all(db).await?;
     Ok(rows.into_iter().map(rule_from_row).collect())
+}
+
+/// Fetches, in a single batched query, the categorization history for every merchant in
+/// `merchant_keys` (previews have hundreds of rows; one query per row would be far too slow —
+/// see Etapa 2 critério de aceite de performance).
+pub(super) async fn load_merchant_category_stats(
+    db: &SqlitePool, merchant_keys: &[String],
+) -> Result<HashMap<String, Vec<MerchantCategoryStat>>, AppError> {
+    let mut result: HashMap<String, Vec<MerchantCategoryStat>> = HashMap::new();
+    if merchant_keys.is_empty() {
+        return Ok(result);
+    }
+    let placeholders = merchant_keys.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "SELECT t.merchant_key, t.category_id, c.name category_name, c.kind category_kind,
+         COUNT(*) n, MAX(t.date) last_used
+         FROM transactions t JOIN categories c ON c.id=t.category_id
+         WHERE t.merchant_key IN ({placeholders}) AND t.deleted_at IS NULL
+         AND t.category_source IN ('manual','rule')
+         GROUP BY t.merchant_key, t.category_id"
+    );
+    let mut query = sqlx::query(&sql);
+    for key in merchant_keys { query = query.bind(key); }
+    let rows = query.fetch_all(db).await?;
+    for row in rows {
+        let merchant_key: String = row.get("merchant_key");
+        result.entry(merchant_key).or_default().push(MerchantCategoryStat {
+            category_id: row.get("category_id"), category_name: row.get("category_name"),
+            category_kind: row.get("category_kind"), count: row.get("n"), last_used: row.get("last_used"),
+        });
+    }
+    Ok(result)
+}
+
+/// Applies rule matches first (regra explícita sempre vence histórico), then — only for
+/// candidates a rule didn't touch — looks up the merchant's categorization history in one
+/// batched query and suggests a category when confident enough (`suggest_from_history`).
+pub(super) async fn apply_category_suggestions(
+    db: &SqlitePool, account_id: &str, rules: &[CategorizationRule], candidates: &mut [ImportCandidate],
+) -> Result<(), AppError> {
+    apply_category_suggestions_to(db, account_id, rules, candidates.iter_mut()).await
+}
+
+/// Same as `apply_category_suggestions`, but generic over any mutable iterator of candidates —
+/// lets credit card import items (which wrap `ImportCandidate` inside a bigger struct) reuse it.
+pub(super) async fn apply_category_suggestions_to<'a>(
+    db: &SqlitePool, account_id: &str, rules: &[CategorizationRule],
+    candidates: impl Iterator<Item = &'a mut ImportCandidate>,
+) -> Result<(), AppError> {
+    let mut candidates: Vec<&mut ImportCandidate> = candidates.collect();
+    for candidate in candidates.iter_mut() {
+        if let Some(rule) = first_match(rules, &CategorizationInput {
+            account_id, normalized_description: &candidate.normalized_description,
+            amount_in_cents: candidate.amount_in_cents,
+        }) {
+            candidate.suggested_category_id = Some(rule.category_id.clone());
+            candidate.suggested_category_name = rule.category_name.clone();
+            candidate.suggested_rule_id = Some(rule.id.clone());
+            candidate.suggested_rule_name = Some(rule.name.clone());
+            candidate.suggestion_source = Some(SuggestionSource::Rule);
+        }
+    }
+    let mut merchant_keys: Vec<String> = candidates.iter()
+        .filter(|c| c.suggestion_source.is_none())
+        .map(|c| merchant_key(&c.normalized_description))
+        .collect();
+    merchant_keys.sort();
+    merchant_keys.dedup();
+    let stats_by_merchant = load_merchant_category_stats(db, &merchant_keys).await?;
+    for candidate in candidates.iter_mut() {
+        if candidate.suggestion_source.is_some() { continue; }
+        let key = merchant_key(&candidate.normalized_description);
+        let Some(stats) = stats_by_merchant.get(&key) else { continue };
+        if let Some(suggestion) = suggest_from_history(stats, candidate.amount_in_cents) {
+            candidate.suggested_category_id = Some(suggestion.category_id);
+            candidate.suggested_category_name = suggestion.category_name;
+            candidate.suggestion_source = Some(SuggestionSource::History);
+        }
+    }
+    Ok(())
 }
 
 fn source_kind_str(value: ImportSourceKind) -> &'static str {
@@ -795,6 +876,7 @@ fn manual_fingerprint(account_id: &str, date: &str, description: &str, normalize
         suggested_category_name: None,
         suggested_rule_id: None,
         suggested_rule_name: None,
+        suggestion_source: None,
         duplicate_status: crate::domain::import::DuplicateStatus::New,
         warnings: vec![],
         included: true,
@@ -958,6 +1040,7 @@ pub async fn update_transaction_amount(
         suggested_category_name: None,
         suggested_rule_id: None,
         suggested_rule_name: None,
+        suggestion_source: None,
         duplicate_status: crate::domain::import::DuplicateStatus::New,
         warnings: vec![],
         included: true,
@@ -1131,16 +1214,8 @@ pub async fn preview_import(path: String, account_id: String, state: State<'_, A
             candidate.duplicate_status = crate::domain::import::DuplicateStatus::Exact;
             candidate.included = false;
         }
-        if let Some(rule) = first_match(&rules, &CategorizationInput {
-            account_id:&account_id, normalized_description:&candidate.normalized_description,
-            amount_in_cents:candidate.amount_in_cents,
-        }) {
-            candidate.suggested_category_id = Some(rule.category_id.clone());
-            candidate.suggested_category_name = rule.category_name.clone();
-            candidate.suggested_rule_id = Some(rule.id.clone());
-            candidate.suggested_rule_name = Some(rule.name.clone());
-        }
     }
+    apply_category_suggestions(&state.db, &account_id, &rules, &mut candidates).await?;
     let session_id = Uuid::new_v4().to_string();
     let file_name = path.file_name().and_then(|x|x.to_str()).unwrap_or("arquivo").to_string();
     state.sessions.lock().await.insert(session_id.clone(), ImportSession { account_id, file_name:file_name.clone(), candidates:candidates.clone() });
@@ -1166,17 +1241,8 @@ pub async fn preview_mapped_bank_import(
             candidate.duplicate_status = crate::domain::import::DuplicateStatus::Exact;
             candidate.included = false;
         }
-        if let Some(rule) = first_match(&rules, &CategorizationInput {
-            account_id: &account_id,
-            normalized_description: &candidate.normalized_description,
-            amount_in_cents: candidate.amount_in_cents,
-        }) {
-            candidate.suggested_category_id = Some(rule.category_id.clone());
-            candidate.suggested_category_name = rule.category_name.clone();
-            candidate.suggested_rule_id = Some(rule.id.clone());
-            candidate.suggested_rule_name = Some(rule.name.clone());
-        }
     }
+    apply_category_suggestions(&state.db, &account_id, &rules, &mut candidates).await?;
     let session_id = Uuid::new_v4().to_string();
     let file_name = path.file_name().and_then(|value| value.to_str()).unwrap_or("arquivo").to_string();
     state.sessions.lock().await.insert(session_id.clone(), ImportSession {
@@ -1232,6 +1298,7 @@ pub async fn set_import_candidate_category(
     candidate.suggested_category_name = category_name;
     candidate.suggested_rule_id = None;
     candidate.suggested_rule_name = None;
+    candidate.suggestion_source = None;
     Ok(())
 }
 
@@ -1244,7 +1311,12 @@ pub async fn commit_import(session_id: String, state: State<'_, AppState>) -> Re
     let mut count = 0;
     for candidate in session.candidates {
         if !candidate.included || matches!(candidate.duplicate_status, crate::domain::import::DuplicateStatus::Exact) { continue; }
-        let source = if candidate.suggested_rule_id.is_some() { Some("rule") } else if candidate.suggested_category_id.is_some() { Some("manual") } else { None };
+        let source = match candidate.suggestion_source {
+            Some(SuggestionSource::Rule) => Some("rule"),
+            Some(SuggestionSource::History) => Some("history"),
+            None if candidate.suggested_category_id.is_some() => Some("manual"),
+            None => None,
+        };
         let merchant = merchant_key(&candidate.normalized_description);
         sqlx::query(
             "INSERT INTO transactions(id,account_id,date,description,normalized_description,merchant_key,amount_cents,external_id,fingerprint,
@@ -1382,5 +1454,87 @@ mod tests {
             from_account_id:from_account, to_account_id:to_account,
             date:"2026-06-10".into(), amount_in_cents:10_000, description:None,
         }, &db).await.is_err());
+    }
+
+    async fn suggestion_test_setup() -> (tempfile::TempDir, SqlitePool, String) {
+        let directory = tempfile::tempdir().unwrap();
+        let db = crate::infrastructure::database::connect(&directory.path().join("suggestion.db")).await.unwrap();
+        let onboarding = OnboardingInput {
+            display_name:"Pessoa Teste".into(),monthly_income_in_cents:None,income_day:None,
+            financial_goal:None,account_name:"Conta".into(),account_kind:"checking".into(),
+            opening_balance_in_cents:None,
+        };
+        let account_id = complete_onboarding_impl(onboarding, &db).await.unwrap().account_id;
+        (directory, db, account_id)
+    }
+
+    async fn insert_history(db:&SqlitePool, account_id:&str, id:&str, description:&str, category_id:&str, amount_in_cents:i64) {
+        let normalized = normalize_description(description);
+        let key = merchant_key(&normalized);
+        sqlx::query(
+            "INSERT INTO transactions(id,account_id,date,description,normalized_description,merchant_key,amount_cents,fingerprint,category_id,category_source,status)
+             VALUES(?,?,?,?,?,?,?,?,?,'manual','cleared')"
+        ).bind(id).bind(account_id).bind("2026-05-01").bind(description).bind(&normalized).bind(&key)
+            .bind(amount_in_cents).bind(format!("fp-{id}")).bind(category_id).execute(db).await.unwrap();
+    }
+
+    fn candidate(description:&str, amount_in_cents:i64) -> ImportCandidate {
+        let normalized = normalize_description(description);
+        ImportCandidate {
+            source_row: 0, date:"2026-06-01".into(), description:description.into(),
+            normalized_description: normalized, amount_in_cents, external_id: None,
+            suggested_category_id: None, suggested_category_name: None,
+            suggested_rule_id: None, suggested_rule_name: None, suggestion_source: None,
+            duplicate_status: crate::domain::import::DuplicateStatus::New, warnings: vec![], included: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn explicit_rule_always_wins_over_history_suggestion() {
+        let (_directory, db, account_id) = suggestion_test_setup().await;
+        for i in 0..3 { insert_history(&db, &account_id, &format!("h{i}"), "SUPERMERCADO BH LTDA", "food", -1000).await; }
+        let rule = CategorizationRule {
+            id:"r1".into(), name:"Saúde no mercado".into(), priority:10, enabled:true,
+            operator:RuleOperator::Contains, pattern:"SUPERMERCADO".into(), account_id:None,
+            movement_type:MovementType::Expense, min_amount_in_cents:None, max_amount_in_cents:None,
+            category_id:"health".into(), category_name:Some("Saúde".into()), use_count:0, is_system:false,
+        };
+        let mut candidates = vec![candidate("SUPERMERCADO BH LTDA", -2000)];
+        apply_category_suggestions(&db, &account_id, &[rule], &mut candidates).await.unwrap();
+        assert_eq!(candidates[0].suggested_category_id.as_deref(), Some("health"));
+        assert!(matches!(candidates[0].suggestion_source, Some(crate::domain::import::SuggestionSource::Rule)));
+    }
+
+    #[tokio::test]
+    async fn history_suggestion_applies_when_no_rule_matches() {
+        let (_directory, db, account_id) = suggestion_test_setup().await;
+        for i in 0..3 { insert_history(&db, &account_id, &format!("h{i}"), "FARMACIA DROGASIL", "health", -3000).await; }
+        let mut candidates = vec![candidate("FARMACIA DROGASIL", -4000)];
+        apply_category_suggestions(&db, &account_id, &[], &mut candidates).await.unwrap();
+        assert_eq!(candidates[0].suggested_category_id.as_deref(), Some("health"));
+        assert!(matches!(candidates[0].suggestion_source, Some(crate::domain::import::SuggestionSource::History)));
+    }
+
+    #[tokio::test]
+    async fn split_history_does_not_suggest() {
+        let (_directory, db, account_id) = suggestion_test_setup().await;
+        insert_history(&db, &account_id, "h1", "MERCADO MISTO", "food", -1000).await;
+        insert_history(&db, &account_id, "h2", "MERCADO MISTO", "health", -1000).await;
+        let mut candidates = vec![candidate("MERCADO MISTO", -1500)];
+        apply_category_suggestions(&db, &account_id, &[], &mut candidates).await.unwrap();
+        assert_eq!(candidates[0].suggested_category_id, None);
+        assert_eq!(candidates[0].suggestion_source, None);
+    }
+
+    #[tokio::test]
+    async fn batched_suggestion_lookup_handles_500_candidates_quickly() {
+        let (_directory, db, account_id) = suggestion_test_setup().await;
+        for i in 0..3 { insert_history(&db, &account_id, &format!("h{i}"), "FARMACIA DROGASIL", "health", -3000).await; }
+        let mut candidates: Vec<_> = (0..500).map(|_| candidate("FARMACIA DROGASIL", -4000)).collect();
+        let start = std::time::Instant::now();
+        apply_category_suggestions(&db, &account_id, &[], &mut candidates).await.unwrap();
+        let elapsed = start.elapsed();
+        assert!(elapsed.as_millis() < 200, "preview categorization took {elapsed:?}, expected < 200ms");
+        assert!(candidates.iter().all(|c| c.suggested_category_id.as_deref() == Some("health")));
     }
 }

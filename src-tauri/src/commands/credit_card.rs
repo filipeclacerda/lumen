@@ -5,14 +5,13 @@ use std::path::PathBuf;
 use tauri::State;
 use uuid::Uuid;
 
-use super::{load_rules, validate_mapping_draft};
+use super::{apply_category_suggestions_to, load_rules, validate_mapping_draft};
 use crate::{
     application::state::{AppState, CreditCardImportSession},
     domain::{
-        categorization::{first_match, CategorizationInput},
         import::CsvMappingDraft,
         credit_card::{item_fingerprint, CreditCardImportItem},
-        import::DuplicateStatus,
+        import::{DuplicateStatus, SuggestionSource},
         merchant::merchant_key,
     },
     error::AppError,
@@ -122,17 +121,12 @@ async fn build_credit_card_preview(
         if item.is_payment {
             item.candidate.suggested_category_id = Some("credit-card-payment".into());
             item.candidate.suggested_category_name = Some("Pagamento de fatura".into());
-        } else if let Some(rule) = first_match(&rules, &CategorizationInput {
-            account_id: &account_id,
-            normalized_description: &item.candidate.normalized_description,
-            amount_in_cents: item.candidate.amount_in_cents,
-        }) {
-            item.candidate.suggested_category_id = Some(rule.category_id.clone());
-            item.candidate.suggested_category_name = rule.category_name.clone();
-            item.candidate.suggested_rule_id = Some(rule.id.clone());
-            item.candidate.suggested_rule_name = Some(rule.name.clone());
         }
     }
+    apply_category_suggestions_to(
+        &state.db, &account_id, &rules,
+        parsed.items.iter_mut().filter(|item| !item.is_payment).map(|item| &mut item.candidate),
+    ).await?;
     let (purchases, credits, total) = totals(&parsed.items);
     let session_id = Uuid::new_v4().to_string();
     let file_name = path.file_name().and_then(|x| x.to_str()).unwrap_or("fatura.csv").to_string();
@@ -242,6 +236,7 @@ pub async fn update_credit_card_import(
     item.candidate.suggested_category_name = category_name;
     item.candidate.suggested_rule_id = None;
     item.candidate.suggested_rule_name = None;
+    item.candidate.suggestion_source = None;
     let (purchases, credits, total) = totals(&session.items);
     Ok(CreditCardImportPreview {
         session_id,
@@ -280,8 +275,12 @@ pub async fn commit_credit_card_import(
         .bind(&batch_id).execute(&mut *tx).await?;
     for item in included {
         let transaction_id = Uuid::new_v4().to_string();
-        let source = if item.candidate.suggested_rule_id.is_some() { Some("rule") }
-            else if item.candidate.suggested_category_id.is_some() { Some("manual") } else { None };
+        let source = match item.candidate.suggestion_source {
+            Some(SuggestionSource::Rule) => Some("rule"),
+            Some(SuggestionSource::History) => Some("history"),
+            None if item.candidate.suggested_category_id.is_some() => Some("manual"),
+            None => None,
+        };
         let merchant = merchant_key(&item.candidate.normalized_description);
         sqlx::query(
             "INSERT INTO transactions(id,account_id,date,description,normalized_description,merchant_key,amount_cents,fingerprint,

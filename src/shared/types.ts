@@ -66,6 +66,7 @@ export type ImportCandidate = {
   sourceRow: number; date: string; description: string; normalizedDescription: string;
   amountInCents: number; externalId?: string; suggestedCategoryId?: string;
   suggestedCategoryName?: string; suggestedRuleId?: string; suggestedRuleName?: string;
+  suggestionSource?: "rule" | "history";
   duplicateStatus: "new" | "probable" | "exact"; warnings: string[]; included: boolean;
 };
 export type ImportSourceKind = "bank" | "credit_card";
