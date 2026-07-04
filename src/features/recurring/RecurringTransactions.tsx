@@ -5,6 +5,7 @@ import { api } from "../../shared/api";
 import { maskCurrency, centsToInput, money, parseMoneyToCents } from "../../shared/format";
 import { currentMonth } from "../../shared/period";
 import { useToast } from "../../shared/ui/toast";
+import { CategorySelect } from "../../shared/ui/CategorySelect";
 import type { RecurringTransaction, RecurringTransactionInput } from "../../shared/types";
 
 const emptyDraft: RecurringTransactionInput = {
@@ -23,7 +24,6 @@ export function RecurringTransactions() {
   const [amountText, setAmountText] = useState("");
   const [error, setError] = useState("");
   const editing = Boolean(draft.id);
-  const relevantCategories = categories.filter(c => (type === "income" ? c.kind === "income" : c.kind !== "income"));
 
   async function refresh() {
     await Promise.all([
@@ -108,10 +108,14 @@ export function RecurringTransactions() {
           <label>Conta<select value={draft.accountId || accounts[0]?.id || ""} onChange={e => setDraft({ ...draft, accountId: e.target.value })}>
             {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select></label>
-          <label>Categoria<select value={draft.categoryId ?? ""} onChange={e => setDraft({ ...draft, categoryId: e.target.value || undefined })}>
-            <option value="">Sem categoria</option>
-            {relevantCategories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select></label>
+          <CategorySelect
+            value={draft.categoryId}
+            onChange={id => setDraft({ ...draft, categoryId: id })}
+            categories={categories}
+            movementType={type}
+            allowEmpty
+            emptyLabel="Sem categoria"
+          />
         </div>
         <div className="form-row">
           <label>Começa em<input type="month" value={draft.startMonth} onChange={e => setDraft({ ...draft, startMonth: e.target.value })} /></label>

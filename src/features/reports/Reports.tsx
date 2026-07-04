@@ -8,6 +8,7 @@ import { currentMonth as curMonth, monthLabel, shiftMonth } from "../../shared/p
 import type { FinancialReport, FinancialTarget, ReportSource } from "../../shared/types";
 import { CategoryDonut } from "./CategoryDonut";
 import { CategoryTrendChart } from "./CategoryTrendChart";
+import { CategorySelect } from "../../shared/ui/CategorySelect";
 
 const currentMonth=curMonth();
 function changeLabel(value?:number|null, inverse=false){
@@ -282,12 +283,18 @@ function TargetEditor({target,month,categories,onClose,onSaved}:{
       onSaved();
     }catch(e:any){setError(e?.message||String(e))}
   }
-  return <div className="modal-backdrop"><article className="modal target-modal"><h2>{target.id?"Editar meta":"Nova meta financeira"}</h2>
+  return <div className="modal-backdrop"><article className="modal target-modal"><h2>{target.id?"Editar meta":"Nova meta financeira"}</h2"}</h2>
     <p className="muted">Defina um objetivo recorrente e acompanhe a projeção ao longo do mês.</p>
     <label>Tipo<select value={kind} onChange={e=>setKind(e.target.value as typeof kind)}>
       <option value="category">Limite por categoria</option><option value="savings">Economia mensal</option></select></label>
-    {kind==="category"&&<label>Categoria<select value={categoryId} onChange={e=>setCategoryId(e.target.value)}>
-      <option value="">Selecione</option>{categories.map(c=><option key={c.id} value={c.id}>{c.parentId?"↳ ":""}{c.name}</option>)}</select></label>}
+    {kind==="category"&&<CategorySelect
+        value={categoryId}
+        onChange={setCategoryId}
+        categories={categories}
+        kind="expense"
+        allowEmpty
+        emptyLabel="Selecione"
+      />}
         <label>Valor mensal<div className="money-input"><span>R$</span><input inputMode="decimal" value={amount} onChange={e=>setAmount(maskCurrency(e.target.value))}/></div></label>
     {target.id&&<label className="check-label"><input type="checkbox" checked={monthlyOnly} onChange={e=>setMonthlyOnly(e.target.checked)}/>
       Alterar somente para {monthLabel(month)}</label>}

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../../shared/api";
 import { money, shortDate } from "../../shared/format";
+import { CategorySelect } from "../../shared/ui/CategorySelect";
 import type { Transaction } from "../../shared/types";
 import { TransactionForm } from "./TransactionForm";
 
@@ -106,8 +107,13 @@ export function Transactions() {
     {categoryFilter&&<div className="notice notice-action"><span>Filtrando por categoria: <b>{categoryFilterName??"Sem categoria"}</b></span>
       <button className="text-button" onClick={clearCategoryFilter}><X size={15}/> Remover filtro</button></div>}
     <article className="panel"><div className="transactions-toolbar"><div className="toolbar"><Search size={18}/><input aria-label="Buscar transações" placeholder="Buscar por descrição…" value={search} onChange={e=>setSearch(e.target.value)}/></div>
-      {selected.size>0&&<div className="bulk-actions"><b>{selected.size} selecionada{selected.size>1?"s":""}</b><select aria-label="Categoria em massa" value={bulkCategory} onChange={e=>setBulkCategory(e.target.value)}>
-        <option value="">Sem categoria</option>{categories.map(c=><option key={c.id} value={c.id}>{c.parentId?"↳ ":""}{c.name}</option>)}</select>
+      {selected.size>0&&<div className="bulk-actions"><b>{selected.size} selecionada{selected.size>1?"s":""}</b><CategorySelect
+          value={bulkCategory}
+          onChange={setBulkCategory}
+          categories={categories}
+          allowEmpty
+          emptyLabel="Sem categoria"
+        />
         <button className="secondary" onClick={applyBulkCategory}><Tags size={15}/> Categorizar</button>
         <button className="danger" onClick={()=>setConfirmDelete(true)}><Trash2 size={15}/> Excluir</button></div>}</div>
       <div className="table-scroll"><table><thead><tr><th className="select-cell"><input type="checkbox" aria-label="Selecionar transações visíveis" checked={allVisibleSelected} onChange={toggleAll}/></th><th>Data</th><th>Descrição</th><th>Origem</th><th>Categoria</th><th>Status</th><th className="amount">Valor</th><th></th></tr></thead>
@@ -133,8 +139,14 @@ export function Transactions() {
             {t.accountKind==="credit_card"?<CreditCard size={13}/>:<Landmark size={13}/>}
             <span>{t.accountKind==="credit_card"?"Cartão de crédito":"Conta bancária"}<small>{t.accountName}</small></span>
           </span></td>
-          <td><select className="category-select" aria-label={`Categoria de ${t.description}`} value={t.categoryId??""} onChange={e=>changeCategory(t,e.target.value)}>
-            <option value="">Sem categoria</option>{categories.map(c=><option key={c.id} value={c.id}>{c.parentId?"↳ ":""}{c.name}</option>)}</select>
+          <td><CategorySelect
+            value={t.categoryId}
+            onChange={id => changeCategory(t, id || undefined)}
+            categories={categories}
+            allowEmpty
+            emptyLabel="Sem categoria"
+            className="category-select"
+          />
             {t.categorySource&&<small className="source-label" style={{marginTop:"6px"}}>{t.categorySource==="rule"?"categorizado por regra":"selecionado manualmente"}</small>}
           </td>
           <td><span className="badge" style={t.status === 'cleared' ? undefined : {background:"#fbf3e5", color:"#a96a1a"}}>{t.status === "cleared" ? "Confirmada" : "Pendente"}</span></td>

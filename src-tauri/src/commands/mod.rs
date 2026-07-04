@@ -649,7 +649,7 @@ pub async fn list_categories(state: State<'_, AppState>) -> Result<Vec<Category>
 
 #[tauri::command]
 pub async fn save_category(input: CategoryInput, state: State<'_, AppState>) -> Result<String, AppError> {
-    if input.name.trim().is_empty() || !["income","expense","transfer"].contains(&input.kind.as_str()) {
+    if input.name.trim().is_empty() || !["income","expense","transfer","investment"].contains(&input.kind.as_str()) {
         return Err(AppError::Validation("Nome e tipo válidos são obrigatórios".into()));
     }
     let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());

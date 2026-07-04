@@ -44,7 +44,7 @@ export type Category = {
   kind: CategoryKind; sortOrder: number; isSystem: boolean;
 };
 export type RuleOperator = "contains" | "starts_with" | "regex";
-export type MovementType = "any" | "income" | "expense" | "transfer" | "investment";
+export type MovementType = "any" | "income" | "expense" | "transfer";
 export type RuleCondition = {
   operator: RuleOperator; pattern: string; accountId?: string; movementType: MovementType;
   minAmountInCents?: number; maxAmountInCents?: number;

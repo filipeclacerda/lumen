@@ -626,3 +626,13 @@ nav a span {
 .danger-zone{border-color:var(--danger-soft)}
 .danger-zone h2{color:var(--danger)}
 .danger-zone p{margin-bottom:14px}
+
+/* Category groups and kind badges */
+.category-group{margin-bottom:16px}
+.category-group-title{font-size:11px;font-weight:700;color:var(--brand);text-transform:uppercase;letter-spacing:.5px;margin:0 0 8px;padding:4px 8px;background:var(--brand-soft);border-radius:6px;display:inline-block}
+.kind-badge{display:inline-block;padding:2px 6px;border-radius:4px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;margin-left:8px}
+.kind-badge.income{background:var(--brand-soft);color:var(--brand)}
+.kind-badge.expense{background:#fff0ed;color:#c76155}
+.kind-badge.investment{background:#eaf1f8;color:#3d6f9a}
+.kind-badge.transfer{background:#f3f7f4;color:#547067}
+.category-row .kind-badge{font-size:9px;padding:1px 5px}

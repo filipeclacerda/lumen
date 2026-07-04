@@ -1,10 +1,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, ArrowDown, ArrowUp, Check, Pencil, Plus, Save, Sparkles, TestTube2, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { api } from "../../shared/api";
 import type { Category, CategoryKind, CategorizationRule, MovementType, RuleImpact, RuleInput, RuleOperator } from "../../shared/types";
 import { shortDate, money } from "../../shared/format";
 import { currentMonth as curMonth, shiftMonth } from "../../shared/period";
+import { CategorySelect } from "../../shared/ui/CategorySelect";
 
 const emptyRule: RuleInput = {
   name: "", priority: 100, enabled: true, operator: "contains", pattern: "",
@@ -23,6 +24,20 @@ export function CategoriesRules() {
   const [message, setMessage] = useState("");
   const [categoryDraft, setCategoryDraft] = useState<{id?:string;parentId?:string;name:string;kind:CategoryKind;color:string;sortOrder:number}>({name:"",kind:"expense",color:"#497ca5",sortOrder:0});
   const categoryMap = useMemo(() => new Map(categories.map(c=>[c.id,c])), [categories]);
+
+  // Herdar kind/color do pai quando parentId muda
+  useEffect(() => {
+    if (categoryDraft.parentId) {
+      const parent = categoryMap.get(categoryDraft.parentId);
+      if (parent) {
+        setCategoryDraft(prev => ({
+          ...prev,
+          kind: parent.kind,
+          color: prev.color === "#497ca5" || prev.color === parent.color ? parent.color : prev.color,
+        }));
+      }
+    }
+  }, [categoryDraft.parentId, categoryMap]);
 
   async function saveRule() {
     if (!rule.name || !rule.pattern || !rule.categoryId) { setMessage("Preencha nome, padrão e categoria."); return; }
@@ -99,8 +114,22 @@ export function CategoriesRules() {
           </select></label>
         </div>
         <label>Padrão<input value={rule.pattern} onChange={e=>setRule({...rule,pattern:e.target.value})} placeholder="SUPERMERCADO"/></label>
-        <label>Categoria<select value={rule.categoryId} onChange={e=>setRule({...rule,categoryId:e.target.value})}><option value="">Selecione…</option>
-          {categories.map(c=><option key={c.id} value={c.id}>{c.parentId?"↳ ":""}{c.name}</option>)}</select></label>
+        <CategorySelect
+          value={rule.categoryId}
+          onChange={id => setRule({...rule, categoryId: id})}
+          categories={categories}
+          movementType={rule.movementType}
+          allowEmpty
+          emptyLabel="Selecione…"
+        />
+        {rule.categoryId && rule.movementType !== "any" && (() => {
+          const cat = categoryMap.get(rule.categoryId);
+          const movementKind = rule.movementType === "expense" ? "expense" : rule.movementType === "income" ? "income" : rule.movementType === "transfer" ? "transfer" : null;
+          if (cat && movementKind && cat.kind !== movementKind) {
+            return <p className="form-error" style={{fontSize:12,marginTop:4}}>⚠️ Tipo da regra ({rule.movementType}) difere do tipo da categoria ({cat.kind}). A regra pode não funcionar como esperado.</p>;
+          }
+          return null;
+        })()}
         <label>Conta<select value={rule.accountId??""} onChange={e=>setRule({...rule,accountId:e.target.value||undefined})}><option value="">Todas as contas</option>
           {accounts.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
         <div className="form-row">
@@ -140,9 +169,27 @@ export function CategoriesRules() {
         <button onClick={saveCategory}><Plus size={16}/> {categoryDraft.id?"Salvar categoria":"Criar categoria"}</button>
       </article>
       <article className="panel"><div className="panel-title"><h2>Estrutura atual</h2><span>Transferências não contam como despesa</span></div>
-        {categories.map(c=><CategoryRow key={c.id} category={c} parent={c.parentId?categoryMap.get(c.parentId):undefined}
-          onEdit={()=>setCategoryDraft({id:c.id,parentId:c.parentId,name:c.name,kind:c.kind,color:c.color??"#497ca5",sortOrder:c.sortOrder})}
-          onArchive={()=>archiveCategory(c.id)}/>)}
+        {(() => {
+          const kinds: CategoryKind[] = ["income", "expense", "investment", "transfer"];
+          const kindLabels: Record<CategoryKind, string> = {
+            income: "Receitas",
+            expense: "Despesas",
+            investment: "Investimentos",
+            transfer: "Transferências",
+          };
+          return kinds.map(kind => {
+            const items = categories.filter(c => c.kind === kind).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+            if (items.length === 0) return null;
+            return (
+              <div key={kind} className="category-group">
+                <h3 className="category-group-title">{kindLabels[kind]} ({items.length})</h3>
+                {items.map(c => <CategoryRow key={c.id} category={c} parent={c.parentId ? categoryMap.get(c.parentId) : undefined}
+                  onEdit={() => setCategoryDraft({ id: c.id, parentId: c.parentId, name: c.name, kind: c.kind, color: c.color ?? "#497ca5", sortOrder: c.sortOrder })}
+                  onArchive={() => archiveCategory(c.id)} />)}
+              </div>
+            );
+          });
+        })()}
       </article>
     </div>}
     {tab==="merchants"&&<MerchantsTab/>}
@@ -193,7 +240,24 @@ function MerchantsTab(){
 
 function operatorLabel(value:RuleOperator){return value==="contains"?"contém":value==="starts_with"?"começa com":"regex"}
 function CategoryRow({category,parent,onEdit,onArchive}:{category:Category;parent?:Category;onEdit:()=>void;onArchive:()=>void}){
-  return <div className="category-row"><span className="category-swatch" style={{background:category.color??"#789"}}/><div><b>{category.name}</b>
-    <small>{parent?`${parent.name} · `:""}{category.kind==="expense"?"Despesa":category.kind==="income"?"Receita":category.kind==="investment"?"Investimento":"Transferência"}</small></div>
-    {category.isSystem&&<span className="system-label">padrão</span>}<button className="icon-button" onClick={onEdit}>Editar</button><button className="icon-button" onClick={onArchive}><Archive size={14}/></button></div>
+  const kindLabels: Record<CategoryKind, string> = {
+    income: "Receita",
+    expense: "Despesa",
+    investment: "Investimento",
+    transfer: "Transferência",
+  };
+  return <div className="category-row">
+    <span className="category-swatch" style={{background: category.color ?? "#789"}}/>
+    {category.icon && <span className="category-icon" style={{color: category.color ?? "#789"}}>{category.icon}</span>}
+    <div style={{display: "flex", alignItems: "center", gap: "8px", flex: 1}}>
+      <b>{category.name}</b>
+      <small>{parent ? `${parent.name} · ` : ""}{kindLabels[category.kind]}</small>
+      <span className={`kind-badge ${category.kind}`}>
+        {kindLabels[category.kind]}
+      </span>
+    </div>
+    {category.isSystem && <span className="system-label">padrão</span>}
+    <button className="icon-button" onClick={onEdit}>Editar</button>
+    <button className="icon-button" onClick={onArchive}><Archive size={14}/></button>
+  </div>;
 }
