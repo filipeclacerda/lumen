@@ -1,9 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, ArrowDown, ArrowUp, Plus, Save, Sparkles, TestTube2 } from "lucide-react";
+import { Archive, ArrowDown, ArrowUp, Check, Pencil, Plus, Save, Sparkles, TestTube2, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { api } from "../../shared/api";
 import type { Category, CategoryKind, CategorizationRule, MovementType, RuleImpact, RuleInput, RuleOperator } from "../../shared/types";
-import { shortDate } from "../../shared/format";
+import { shortDate, money } from "../../shared/format";
+import { currentMonth as curMonth, shiftMonth } from "../../shared/period";
 
 const emptyRule: RuleInput = {
   name: "", priority: 100, enabled: true, operator: "contains", pattern: "",
@@ -15,7 +16,7 @@ export function CategoriesRules() {
   const { data: categories = [] } = useQuery({ queryKey:["categories"], queryFn:api.categories });
   const { data: rules = [] } = useQuery({ queryKey:["rules"], queryFn:api.rules });
   const { data: accounts = [] } = useQuery({ queryKey:["accounts"], queryFn:api.accounts });
-  const [tab, setTab] = useState<"rules"|"categories">("rules");
+  const [tab, setTab] = useState<"rules"|"categories"|"merchants">("rules");
   const [rule, setRule] = useState<RuleInput>(emptyRule);
   const [impact, setImpact] = useState<RuleImpact>();
   const [historyImpact, setHistoryImpact] = useState<RuleImpact>();
@@ -81,7 +82,8 @@ export function CategoriesRules() {
       <button onClick={applyAll}><Sparkles size={17}/> Aplicar ao histórico</button>
     </header>
     <div className="tabs"><button className={tab==="rules"?"selected":""} onClick={()=>setTab("rules")}>Regras ({rules.length})</button>
-      <button className={tab==="categories"?"selected":""} onClick={()=>setTab("categories")}>Categorias ({categories.length})</button></div>
+      <button className={tab==="categories"?"selected":""} onClick={()=>setTab("categories")}>Categorias ({categories.length})</button>
+      <button className={tab==="merchants"?"selected":""} onClick={()=>setTab("merchants")}>Estabelecimentos</button></div>
     {message&&<p className="notice">{message}</p>}
 
     {tab==="rules"&&<div className="rules-layout">
@@ -143,12 +145,50 @@ export function CategoriesRules() {
           onArchive={()=>archiveCategory(c.id)}/>)}
       </article>
     </div>}
+    {tab==="merchants"&&<MerchantsTab/>}
     {historyImpact&&<div className="modal-backdrop"><article className="modal"><h2>Aplicar regras ao histórico?</h2>
       <p className="muted">{historyImpact.count} transações serão categorizadas. Categorias definidas manualmente serão preservadas.</p>
       <div className="impact">{historyImpact.sample.map(x=><div key={x.transactionId}><span>{shortDate(x.date)} · {x.description}</span><small>{x.currentCategory??"Sem categoria"} → {x.suggestedCategory}</small></div>)}</div>
       <div className="editor-actions"><button className="secondary" onClick={()=>setHistoryImpact(undefined)}>Cancelar</button><button onClick={confirmApplyAll}>Confirmar aplicação</button></div>
     </article></div>}
   </section>
+}
+
+function MerchantsTab(){
+  const client = useQueryClient();
+  const startMonth = shiftMonth(curMonth(), -11);
+  const filter = { startMonth, endMonth: curMonth(), source: "all" as const, accountId: undefined };
+  const { data: report } = useQuery({ queryKey:["financial-report", filter], queryFn:()=>api.financialReport(filter) });
+  const [editingKey, setEditingKey] = useState<string>();
+  const [draftName, setDraftName] = useState("");
+  const merchants = report?.merchants ?? [];
+
+  async function save(key:string){
+    if(!draftName.trim())return;
+    await api.saveMerchantAlias(key, draftName.trim());
+    setEditingKey(undefined);
+    await client.invalidateQueries({queryKey:["financial-report"]});
+  }
+
+  return <div className="rules-layout">
+    <article className="panel">
+      <div className="panel-title"><h2>Principais estabelecimentos</h2><span>Últimos 12 meses · renomeie para agrupar apelidos</span></div>
+      {merchants.length===0&&<p className="muted">Nenhum gasto encontrado nos últimos 12 meses.</p>}
+      <div className="rule-list">{merchants.map(m=><div className="rule-item" key={m.merchant}>
+        <span className="category-swatch" style={{background:"transparent"}}/>
+        {editingKey===m.merchantKey?<>
+          <input value={draftName} onChange={e=>setDraftName(e.target.value)} autoFocus/>
+          <span/>
+          <button className="icon-button" title="Salvar" onClick={()=>save(m.merchantKey!)}><Check size={14}/></button>
+          <button className="icon-button" title="Cancelar" onClick={()=>setEditingKey(undefined)}><X size={14}/></button>
+        </>:<>
+          <div><b>{m.merchant}</b><small>{m.transactionCount} lançamento{m.transactionCount===1?"":"s"}</small></div>
+          <span className="uses">{money(m.amountInCents)}</span>
+          {m.merchantKey&&<button className="icon-button" title="Renomear" onClick={()=>{setEditingKey(m.merchantKey);setDraftName(m.merchant)}}><Pencil size={14}/></button>}
+        </>}
+      </div>)}</div>
+    </article>
+  </div>
 }
 
 function operatorLabel(value:RuleOperator){return value==="contains"?"contém":value==="starts_with"?"começa com":"regex"}

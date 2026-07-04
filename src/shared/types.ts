@@ -188,7 +188,8 @@ export type MonthlyReportPoint = {
 export type CategoryReport = {
   categoryId?:string; category:string; color?:string; amountInCents:number; sharePercent:number;
 };
-export type MerchantReport = { merchant:string; amountInCents:number; transactionCount:number };
+export type MerchantReport = { merchant:string; merchantKey?:string; amountInCents:number; transactionCount:number };
+export type MerchantAlias = { id:string; merchantKey:string; displayName:string };
 export type DailyReportPoint = { date:string; amountInCents:number; cumulativeInCents:number };
 export type GoalProgress = {
   targetId:string; kind:"savings"|"category"; categoryId?:string; label:string;

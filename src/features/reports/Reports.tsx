@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDownRight, ArrowUpRight, CalendarRange, CreditCard, Landmark, Plus, Target, Trash2, TrendingUp, X } from "lucide-react";
+import { AlertTriangle, ArrowDownRight, ArrowUpRight, CalendarRange, CreditCard, Landmark, Pencil, Plus, Target, Trash2, TrendingUp, X } from "lucide-react";
 import { api } from "../../shared/api";
 import { money, maskCurrency, shortDate, parseMoneyToCents, centsToInput } from "../../shared/format";
 import { currentMonth as curMonth, monthLabel, shiftMonth } from "../../shared/period";
@@ -71,17 +71,18 @@ export function Reports(){
     {isLoading&&<article className="panel report-loading">Calculando seus relatórios…</article>}
     {error&&<p className="form-error">Não foi possível gerar o relatório: {String(error)}</p>}
     {report&&<ReportContent report={report} profileIncome={profile?.monthlyIncomeInCents} targets={targets}
-      onEdit={setEditing} onDelete={removeTarget}/>}
+      onEdit={setEditing} onDelete={removeTarget} onMerchantRenamed={refresh}/>}
     {editing&&<TargetEditor target={editing} month={endMonth} categories={categories.filter(c=>c.kind==="expense")}
       onClose={()=>setEditing(undefined)} onSaved={async()=>{setEditing(undefined);await refresh()}}/>}
   </section>
 }
 
-function ReportContent({report,profileIncome,targets,onEdit,onDelete}:{
+function ReportContent({report,profileIncome,targets,onEdit,onDelete,onMerchantRenamed}:{
   report:FinancialReport;profileIncome?:number;targets:FinancialTarget[];
-  onEdit:(target:FinancialTarget)=>void;onDelete:(id:string)=>void;
+  onEdit:(target:FinancialTarget)=>void;onDelete:(id:string)=>void;onMerchantRenamed:()=>void;
 }){
   const [selectedCategoryId,setSelectedCategoryId]=useState<string>();
+  const [renamingMerchant,setRenamingMerchant]=useState<{key:string;name:string}>();
   const summary=report.summary;
   const latest=report.latestMonthSummary;
   const topCategory=report.categories[0];
@@ -131,9 +132,13 @@ function ReportContent({report,profileIncome,targets,onEdit,onDelete}:{
         <CumulativeChart report={report}/></article>
       <article className="panel"><div className="panel-title"><div><h2>Principais estabelecimentos</h2><small>Somados no período selecionado</small></div></div>
         <div className="ranking-list">{report.merchants.length?report.merchants.slice(0,5).map((m,i)=><div key={m.merchant}><span className="rank">{i+1}</span>
-          <span><b>{m.merchant}</b><small>{m.transactionCount} lançamento{m.transactionCount===1?"":"s"}</small></span><strong>{money(m.amountInCents)}</strong></div>):
+          <span><b>{m.merchant}</b><small>{m.transactionCount} lançamento{m.transactionCount===1?"":"s"}</small></span><strong>{money(m.amountInCents)}</strong>
+          {m.merchantKey&&<button className="icon-button" aria-label={`Renomear ${m.merchant}`}
+            onClick={()=>setRenamingMerchant({key:m.merchantKey!,name:m.merchant})}><Pencil size={13}/></button>}</div>):
           <p className="muted">Nenhum gasto no período.</p>}</div></article>
     </div>
+    {renamingMerchant&&<RenameMerchantModal merchant={renamingMerchant} onClose={()=>setRenamingMerchant(undefined)}
+      onSaved={()=>{setRenamingMerchant(undefined);onMerchantRenamed()}}/>}
     <article className="panel goals-panel"><div className="panel-title"><div><h2><Target size={17}/> Metas do mês</h2>
       <small>Metas recorrentes com ajustes mensais</small></div></div>
       {report.goals.length===0?<div className="report-empty"><Target/><div><b>Nenhuma meta configurada</b>
@@ -240,6 +245,26 @@ function CumulativeChart({report}:{report:FinancialReport}){
   </svg></div>
 }
 function EmptyChart(){return <div className="chart-empty"><TrendingUp/><span>Sem dados suficientes para este gráfico.</span></div>}
+
+function RenameMerchantModal({merchant,onClose,onSaved}:{merchant:{key:string;name:string};onClose:()=>void;onSaved:()=>void}){
+  const [name,setName]=useState(merchant.name);
+  const [error,setError]=useState("");
+  const [saving,setSaving]=useState(false);
+  async function save(){
+    if(!name.trim()){setError("Informe um nome.");return}
+    setSaving(true);
+    try{await api.saveMerchantAlias(merchant.key,name.trim());onSaved()}
+    catch(e:any){setError(e?.message||String(e));setSaving(false)}
+  }
+  return <div className="modal-backdrop"><article className="modal">
+    <h2>Renomear estabelecimento</h2>
+    <p className="muted">Esse apelido será usado sempre que este estabelecimento aparecer nos relatórios.</p>
+    <label>Nome<input value={name} onChange={e=>setName(e.target.value)} autoFocus/></label>
+    {error&&<p className="form-error">{error}</p>}
+    <div className="editor-actions"><button className="secondary" onClick={onClose}>Cancelar</button>
+      <button disabled={saving} onClick={save}>Salvar</button></div>
+  </article></div>
+}
 
 function TargetEditor({target,month,categories,onClose,onSaved}:{
   target:FinancialTarget;month:string;categories:Awaited<ReturnType<typeof api.categories>>;onClose:()=>void;onSaved:()=>void

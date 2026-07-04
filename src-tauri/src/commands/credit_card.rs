@@ -13,6 +13,7 @@ use crate::{
         import::CsvMappingDraft,
         credit_card::{item_fingerprint, CreditCardImportItem},
         import::DuplicateStatus,
+        merchant::merchant_key,
     },
     error::AppError,
     infrastructure::importer::{
@@ -281,12 +282,13 @@ pub async fn commit_credit_card_import(
         let transaction_id = Uuid::new_v4().to_string();
         let source = if item.candidate.suggested_rule_id.is_some() { Some("rule") }
             else if item.candidate.suggested_category_id.is_some() { Some("manual") } else { None };
+        let merchant = merchant_key(&item.candidate.normalized_description);
         sqlx::query(
-            "INSERT INTO transactions(id,account_id,date,description,normalized_description,amount_cents,fingerprint,
+            "INSERT INTO transactions(id,account_id,date,description,normalized_description,merchant_key,amount_cents,fingerprint,
              category_id,category_source,categorization_rule_id,status,import_batch_id)
-             VALUES(?,?,?,?,?,?,?,?,?,?,?,?)"
+             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)"
         ).bind(&transaction_id).bind(&session.account_id).bind(&item.candidate.date)
-            .bind(&item.candidate.description).bind(&item.candidate.normalized_description)
+            .bind(&item.candidate.description).bind(&item.candidate.normalized_description).bind(&merchant)
             .bind(item.candidate.amount_in_cents).bind(item_fingerprint(&session.account_id, &item))
             .bind(&item.candidate.suggested_category_id).bind(source)
             .bind(&item.candidate.suggested_rule_id).bind("cleared").bind(&batch_id)

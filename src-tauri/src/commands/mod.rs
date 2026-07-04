@@ -14,6 +14,8 @@ mod backup;
 pub use backup::*;
 mod recurring;
 pub use recurring::*;
+mod merchants;
+pub use merchants::*;
 
 use crate::{
     application::state::{AppState, ImportSession},
@@ -23,6 +25,7 @@ use crate::{
             fingerprint, mapping_signature, normalize_description, CsvColumnMapping, CsvMappingDraft,
             CsvMappingProfile, ImportCandidate, ImportSourceKind,
         },
+        merchant::merchant_key,
     },
     error::AppError,
     infrastructure::importer::{
@@ -810,6 +813,7 @@ async fn create_transaction_impl(input: TransactionInput, db: &SqlitePool) -> Re
     ensure_category_active(db, &input.category_id).await?;
     let description = input.description.trim().to_string();
     let normalized = normalize_description(&description);
+    let merchant = merchant_key(&normalized);
     let date = input.date.trim().to_string();
     let fp = manual_fingerprint(&input.account_id, &date, &description, &normalized, input.amount_in_cents);
     let collides = sqlx::query_scalar::<_, i64>(
@@ -821,9 +825,9 @@ async fn create_transaction_impl(input: TransactionInput, db: &SqlitePool) -> Re
     let id = Uuid::new_v4().to_string();
     let source = input.category_id.as_ref().map(|_| "manual");
     sqlx::query(
-        "INSERT INTO transactions(id,account_id,date,description,normalized_description,amount_cents,fingerprint,category_id,category_source,status)
-         VALUES(?,?,?,?,?,?,?,?,?,'cleared')"
-    ).bind(&id).bind(&input.account_id).bind(&date).bind(&description).bind(&normalized)
+        "INSERT INTO transactions(id,account_id,date,description,normalized_description,merchant_key,amount_cents,fingerprint,category_id,category_source,status)
+         VALUES(?,?,?,?,?,?,?,?,?,?,'cleared')"
+    ).bind(&id).bind(&input.account_id).bind(&date).bind(&description).bind(&normalized).bind(&merchant)
         .bind(input.amount_in_cents).bind(&fp).bind(&input.category_id).bind(source)
         .execute(db).await?;
     Ok(id)
@@ -872,6 +876,7 @@ async fn create_transfer_impl(input: TransferInput, db: &SqlitePool) -> Result<V
     let mut ids = Vec::with_capacity(2);
     for (account_id, description, amount) in legs {
         let normalized = normalize_description(&description);
+        let merchant = merchant_key(&normalized);
         let fp = manual_fingerprint(account_id, &date, &description, &normalized, amount);
         let collides = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM transactions WHERE fingerprint=? AND deleted_at IS NULL"
@@ -881,9 +886,9 @@ async fn create_transfer_impl(input: TransferInput, db: &SqlitePool) -> Result<V
         }
         let id = Uuid::new_v4().to_string();
         sqlx::query(
-            "INSERT INTO transactions(id,account_id,date,description,normalized_description,amount_cents,fingerprint,category_id,category_source,status)
-             VALUES(?,?,?,?,?,?,?,?,'manual','cleared')"
-        ).bind(&id).bind(account_id).bind(&date).bind(&description).bind(&normalized)
+            "INSERT INTO transactions(id,account_id,date,description,normalized_description,merchant_key,amount_cents,fingerprint,category_id,category_source,status)
+             VALUES(?,?,?,?,?,?,?,?,?,'manual','cleared')"
+        ).bind(&id).bind(account_id).bind(&date).bind(&description).bind(&normalized).bind(&merchant)
             .bind(amount).bind(&fp).bind(TRANSFER_CATEGORY_ID)
             .execute(&mut *tx).await?;
         ids.push(id);
@@ -903,6 +908,7 @@ pub async fn update_transaction(input: TransactionInput, state: State<'_, AppSta
     if !exists { return Err(AppError::Validation("Transação não encontrada".into())); }
     let description = input.description.trim().to_string();
     let normalized = normalize_description(&description);
+    let merchant = merchant_key(&normalized);
     let date = input.date.trim().to_string();
     let fp = manual_fingerprint(&input.account_id, &date, &description, &normalized, input.amount_in_cents);
     let collides = sqlx::query_scalar::<_, i64>(
@@ -913,11 +919,12 @@ pub async fn update_transaction(input: TransactionInput, state: State<'_, AppSta
     }
     let source = input.category_id.as_ref().map(|_| "manual");
     sqlx::query(
-        "UPDATE transactions SET account_id=?,date=?,description=?,normalized_description=?,amount_cents=?,
+        "UPDATE transactions SET account_id=?,date=?,description=?,normalized_description=?,merchant_key=?,amount_cents=?,
          fingerprint=?,category_id=?,category_source=?,categorization_rule_id=NULL
          WHERE id=? AND deleted_at IS NULL"
-    ).bind(&input.account_id).bind(&date).bind(&description).bind(&normalized).bind(input.amount_in_cents)
-        .bind(&fp).bind(&input.category_id).bind(source).bind(&id).execute(&state.db).await?;
+    ).bind(&input.account_id).bind(&date).bind(&description).bind(&normalized).bind(&merchant)
+        .bind(input.amount_in_cents).bind(&fp).bind(&input.category_id).bind(source).bind(&id)
+        .execute(&state.db).await?;
     Ok(())
 }
 
@@ -1238,11 +1245,12 @@ pub async fn commit_import(session_id: String, state: State<'_, AppState>) -> Re
     for candidate in session.candidates {
         if !candidate.included || matches!(candidate.duplicate_status, crate::domain::import::DuplicateStatus::Exact) { continue; }
         let source = if candidate.suggested_rule_id.is_some() { Some("rule") } else if candidate.suggested_category_id.is_some() { Some("manual") } else { None };
+        let merchant = merchant_key(&candidate.normalized_description);
         sqlx::query(
-            "INSERT INTO transactions(id,account_id,date,description,normalized_description,amount_cents,external_id,fingerprint,
-             status,import_batch_id,category_id,category_source,categorization_rule_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)"
+            "INSERT INTO transactions(id,account_id,date,description,normalized_description,merchant_key,amount_cents,external_id,fingerprint,
+             status,import_batch_id,category_id,category_source,categorization_rule_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
         ).bind(Uuid::new_v4().to_string()).bind(&session.account_id).bind(&candidate.date)
-            .bind(&candidate.description).bind(&candidate.normalized_description).bind(candidate.amount_in_cents)
+            .bind(&candidate.description).bind(&candidate.normalized_description).bind(&merchant).bind(candidate.amount_in_cents)
             .bind(&candidate.external_id).bind(fingerprint(&session.account_id,&candidate)).bind("cleared")
             .bind(&batch_id).bind(&candidate.suggested_category_id).bind(source).bind(&candidate.suggested_rule_id)
             .execute(&mut *tx).await.map_err(|e| { println!("DB ERROR: {:?}", e); e })?;

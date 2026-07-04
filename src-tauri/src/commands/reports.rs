@@ -56,6 +56,7 @@ pub struct CategoryReport {
 #[serde(rename_all = "camelCase")]
 pub struct MerchantReport {
     merchant: String,
+    merchant_key: Option<String>,
     amount_in_cents: i64,
     transaction_count: i64,
 }
@@ -154,7 +155,8 @@ pub struct FinancialTarget {
 struct ReportRow {
     date: String,
     month: String,
-    description: String,
+    merchant_key: Option<String>,
+    merchant_label: String,
     amount: i64,
     account_kind: String,
     category_id: Option<String>,
@@ -334,32 +336,38 @@ pub async fn delete_financial_target(id:String,state:State<'_,AppState>)->Result
 
 #[tauri::command]
 pub async fn generate_financial_report(filter:ReportFilter,state:State<'_,AppState>)->Result<FinancialReport,AppError>{
+    generate_financial_report_impl(filter,&state.db).await
+}
+
+async fn generate_financial_report_impl(filter:ReportFilter,db:&SqlitePool)->Result<FinancialReport,AppError>{
     let months=month_range(&filter.start_month,&filter.end_month)?;
     if !["all","bank","credit_card"].contains(&filter.source.as_str()){
         return Err(AppError::Validation("Origem de relatório inválida".into()));
     }
     if let Some(account_id)=&filter.account_id {
         let exists:i64=sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE id=? AND deleted_at IS NULL")
-            .bind(account_id).fetch_one(&state.db).await?;
+            .bind(account_id).fetch_one(db).await?;
         if exists==0{return Err(AppError::Validation("Conta não encontrada".into()));}
     }
     let previous_month=shift_month(&filter.end_month,-1)?;
     let query_start=if previous_month<filter.start_month{previous_month.clone()}else{filter.start_month.clone()};
     let rows=sqlx::query(
-        "SELECT t.date, strftime('%Y-%m',t.date) month,
-         t.description, t.amount_cents,
+        "SELECT t.date, strftime('%Y-%m',t.date) month, t.merchant_key,
+         COALESCE(ma.display_name, t.merchant_key, t.description) merchant_label, t.amount_cents,
          a.kind account_kind, t.category_id, c.name category_name, c.color category_color, c.kind category_kind
          FROM transactions t JOIN accounts a ON a.id=t.account_id
          LEFT JOIN categories c ON c.id=t.category_id
+         LEFT JOIN merchant_aliases ma ON ma.merchant_key=t.merchant_key
          WHERE t.deleted_at IS NULL AND a.deleted_at IS NULL
          AND strftime('%Y-%m',t.date)>=? AND strftime('%Y-%m',t.date)<=?
          AND (?='all' OR (?='bank' AND a.kind!='credit_card') OR (?='credit_card' AND a.kind='credit_card'))
          AND (? IS NULL OR t.account_id=?)"
     ).bind(&query_start).bind(&filter.end_month).bind(&filter.source).bind(&filter.source)
         .bind(&filter.source).bind(&filter.account_id).bind(&filter.account_id)
-        .fetch_all(&state.db).await?;
+        .fetch_all(db).await?;
     let report_rows:Vec<ReportRow>=rows.into_iter().map(|r|ReportRow{
-        date:r.get("date"),month:r.get("month"),description:r.get("description"),amount:r.get("amount_cents"),
+        date:r.get("date"),month:r.get("month"),merchant_key:r.get("merchant_key"),
+        merchant_label:r.get("merchant_label"),amount:r.get("amount_cents"),
         account_kind:r.get("account_kind"),category_id:r.get("category_id"),category_name:r.get("category_name"),
         category_color:r.get("category_color"),category_kind:r.get("category_kind")
     }).collect();
@@ -389,7 +397,7 @@ pub async fn generate_financial_report(filter:ReportFilter,state:State<'_,AppSta
     let current_rows:Vec<_>=report_rows.iter().filter(|r|r.month==filter.end_month).collect();
     let mut category_map:HashMap<Option<String>,(String,Option<String>,i64)>=HashMap::new();
     let mut current_category_map:HashMap<Option<String>,i64>=HashMap::new();
-    let mut merchant_map:HashMap<String,(i64,i64)>=HashMap::new();
+    let mut merchant_map:HashMap<String,(String,Option<String>,i64,i64)>=HashMap::new();
     let mut daily_map:BTreeMap<String,i64>=BTreeMap::new();
     let mut bank=0;let mut card=0;let mut uncategorized_count=0;let mut uncategorized=0;
     for row in &period_rows {
@@ -398,7 +406,9 @@ pub async fn generate_financial_report(filter:ReportFilter,state:State<'_,AppSta
         let category=category_map.entry(row.category_id.clone()).or_insert((
             row.category_name.clone().unwrap_or_else(||"Sem categoria".into()),row.category_color.clone(),0
         ));category.2+=expense;
-        let merchant=merchant_map.entry(row.description.clone()).or_insert((0,0));merchant.0+=expense;merchant.1+=1;
+        let merchant_group_key=row.merchant_key.clone().unwrap_or_else(||row.merchant_label.clone());
+        let merchant=merchant_map.entry(merchant_group_key).or_insert((row.merchant_label.clone(),row.merchant_key.clone(),0,0));
+        merchant.2+=expense;merchant.3+=1;
         if row.account_kind=="credit_card"{card+=expense}else{bank+=expense}
         if row.category_id.is_none(){uncategorized_count+=1;uncategorized+=expense}
     }
@@ -413,8 +423,8 @@ pub async fn generate_financial_report(filter:ReportFilter,state:State<'_,AppSta
         category_id:id,category:name,color,amount_in_cents:amount.max(0),
         share_percent:amount.max(0) as f64/total as f64*100.0
     }).collect();categories.sort_by_key(|x|-x.amount_in_cents);
-    let mut merchants:Vec<_>=merchant_map.into_iter().map(|(merchant,(amount,count))|MerchantReport{
-        merchant,amount_in_cents:amount.max(0),transaction_count:count
+    let mut merchants:Vec<_>=merchant_map.into_iter().map(|(_,(label,key,amount,count))|MerchantReport{
+        merchant:label,merchant_key:key,amount_in_cents:amount.max(0),transaction_count:count
     }).collect();merchants.sort_by_key(|x|-x.amount_in_cents);merchants.truncate(8);
     let mut cumulative=0;
     let daily:Vec<_>=daily_map.into_iter().map(|(date,amount)|{cumulative+=amount;DailyReportPoint{
@@ -426,7 +436,7 @@ pub async fn generate_financial_report(filter:ReportFilter,state:State<'_,AppSta
         SourceReport{source:"credit_card".into(),amount_in_cents:card.max(0),share_percent:card.max(0) as f64/total as f64*100.0},
     ];
 
-    let targets=load_targets(&state.db).await?;
+    let targets=load_targets(db).await?;
     let mut goals=vec![];
     for target in targets.into_iter().filter(|t|t.enabled) {
         let target_amount=target.overrides.iter().find(|o|o.month==filter.end_month)
@@ -452,7 +462,7 @@ pub async fn generate_financial_report(filter:ReportFilter,state:State<'_,AppSta
          WHERE i.deleted_at IS NULL AND strftime('%Y-%m',i.due_date)>=? AND strftime('%Y-%m',i.due_date)<=?
          AND (? IS NULL OR i.account_id=?)"
     ).bind(&filter.start_month).bind(&filter.end_month).bind(&filter.account_id).bind(&filter.account_id)
-        .fetch_one(&state.db).await?;
+        .fetch_one(db).await?;
     let invoices=InvoiceReport{open_count:invoice.get("open_count"),paid_count:invoice.get("paid_count"),open_total_in_cents:invoice.get("open_total")};
     let current_invested:i64=sqlx::query_scalar(
         "SELECT COALESCE(-SUM(t.amount_cents),0)
@@ -462,7 +472,7 @@ pub async fn generate_financial_report(filter:ReportFilter,state:State<'_,AppSta
          AND (?='all' OR (?='bank' AND a.kind!='credit_card') OR (?='credit_card' AND a.kind='credit_card'))
          AND (? IS NULL OR t.account_id=?)"
     ).bind(&filter.source).bind(&filter.source).bind(&filter.source)
-        .bind(&filter.account_id).bind(&filter.account_id).fetch_one(&state.db).await?;
+        .bind(&filter.account_id).bind(&filter.account_id).fetch_one(db).await?;
     let monthly_average=if monthly.is_empty(){0}else{monthly.iter().map(|x|x.expenses_in_cents).sum::<i64>()/monthly.len() as i64};
     let card_share=card.max(0) as f64/total as f64*100.0;
     let mut alerts=vec![];
@@ -516,9 +526,59 @@ pub async fn category_trend(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::merchant::merchant_key;
+
     #[test] fn month_helpers_cover_year_boundaries(){
         assert_eq!(shift_month("2026-01",-1).unwrap(),"2025-12");
         assert_eq!(month_range("2025-11","2026-02").unwrap().len(),4);
     }
     #[test] fn percent_change_handles_zero(){assert_eq!(percent_change(10,0),None);}
+
+    async fn setup() -> (tempfile::TempDir, SqlitePool, String) {
+        let directory = tempfile::tempdir().unwrap();
+        let db = crate::infrastructure::database::connect(&directory.path().join("reports.db")).await.unwrap();
+        sqlx::query("INSERT INTO accounts(id,name,kind) VALUES('acc','Conta','checking')")
+            .execute(&db).await.unwrap();
+        (directory, db, "acc".into())
+    }
+
+    async fn insert_expense(db: &SqlitePool, id: &str, date: &str, description: &str, amount_cents: i64) {
+        let normalized = crate::domain::import::normalize_description(description);
+        let key = merchant_key(&normalized);
+        sqlx::query(
+            "INSERT INTO transactions(id,account_id,date,description,normalized_description,merchant_key,amount_cents,fingerprint,status)
+             VALUES(?,?,?,?,?,?,?,?,?)"
+        ).bind(id).bind("acc").bind(date).bind(description).bind(&normalized).bind(&key)
+            .bind(amount_cents).bind(format!("fp-{id}")).bind("cleared").execute(db).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn report_groups_normalized_description_variants_into_one_merchant() {
+        let (_directory, db, _account_id) = setup().await;
+        insert_expense(&db, "t1", "2026-06-01", "SUPERMERCADO BH LTDA", -5000).await;
+        insert_expense(&db, "t2", "2026-06-02", "COMPRA CARTAO SUPERMERCADO BH 02/06", -3000).await;
+
+        let report = generate_financial_report_impl(ReportFilter {
+            start_month: "2026-06".into(), end_month: "2026-06".into(), source: "all".into(), account_id: None,
+        }, &db).await.unwrap();
+
+        assert_eq!(report.merchants.len(), 1, "both descriptions must fold into a single merchant");
+        assert_eq!(report.merchants[0].amount_in_cents, 8000);
+        assert_eq!(report.merchants[0].transaction_count, 2);
+    }
+
+    #[tokio::test]
+    async fn renaming_a_merchant_alias_reflects_in_the_report() {
+        let (_directory, db, _account_id) = setup().await;
+        insert_expense(&db, "t1", "2026-06-01", "SUPERMERCADO BH LTDA", -5000).await;
+        sqlx::query("INSERT INTO merchant_aliases(id,merchant_key,display_name) VALUES('a1',?,?)")
+            .bind(merchant_key("SUPERMERCADO BH LTDA")).bind("Mercadinho da esquina")
+            .execute(&db).await.unwrap();
+
+        let report = generate_financial_report_impl(ReportFilter {
+            start_month: "2026-06".into(), end_month: "2026-06".into(), source: "all".into(), account_id: None,
+        }, &db).await.unwrap();
+
+        assert_eq!(report.merchants[0].merchant, "Mercadinho da esquina");
+    }
 }

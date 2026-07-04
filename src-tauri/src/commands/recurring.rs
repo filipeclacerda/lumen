@@ -178,10 +178,11 @@ async fn sync_recurring_transactions_impl(db: &SqlitePool) -> Result<usize, AppE
             if collides == 0 {
                 let transaction_id = Uuid::new_v4().to_string();
                 let source = category_id.as_ref().map(|_| "manual");
+                let merchant = crate::domain::merchant::merchant_key(&normalized);
                 sqlx::query(
-                    "INSERT INTO transactions(id,account_id,date,description,normalized_description,amount_cents,fingerprint,category_id,category_source,recurring_transaction_id,status)
-                     VALUES(?,?,?,?,?,?,?,?,?,?,'cleared')"
-                ).bind(&transaction_id).bind(&account_id).bind(&date).bind(&description).bind(&normalized)
+                    "INSERT INTO transactions(id,account_id,date,description,normalized_description,merchant_key,amount_cents,fingerprint,category_id,category_source,recurring_transaction_id,status)
+                     VALUES(?,?,?,?,?,?,?,?,?,?,?,'cleared')"
+                ).bind(&transaction_id).bind(&account_id).bind(&date).bind(&description).bind(&normalized).bind(&merchant)
                     .bind(amount_in_cents).bind(&fp).bind(&category_id).bind(source).bind(&id)
                     .execute(db).await?;
                 generated += 1;

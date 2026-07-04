@@ -39,6 +39,10 @@ pub fn run() {
             }
             let db = tauri::async_runtime::block_on(infrastructure::database::connect(&db_path))
                 .map_err(|e| Box::<dyn std::error::Error>::from(e.to_string()))?;
+            // Idempotent: only fills rows still missing merchant_key, in batches, so it never
+            // blocks startup noticeably even on large databases.
+            tauri::async_runtime::block_on(commands::backfill_merchant_keys_impl(&db, false))
+                .map_err(|e| Box::<dyn std::error::Error>::from(e.to_string()))?;
             app.manage(AppState {
                 db,
                 sessions: Mutex::new(HashMap::new()),
@@ -80,7 +84,9 @@ pub fn run() {
             commands::reset_database,
             commands::list_recurring_transactions, commands::save_recurring_transaction,
             commands::set_recurring_transaction_active, commands::archive_recurring_transaction,
-            commands::sync_recurring_transactions
+            commands::sync_recurring_transactions,
+            commands::backfill_merchant_keys, commands::list_merchant_aliases,
+            commands::save_merchant_alias, commands::delete_merchant_alias
         ])
         .run(tauri::generate_context!())
         .expect("erro ao executar Lúmen");

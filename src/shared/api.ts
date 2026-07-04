@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Account, AccountType, AppBootstrap, Category, CategorizationRule, CategoryTrendPoint, CreditCardImportPreview, CreditCardInvoice, CreditCardInvoiceItem, CsvMappingDraft, CsvMappingProfile, DashboardSummary, FinancialReport, FinancialTarget, FinancialTargetInput, ImportFileInspection, ImportPreview, OnboardingInput, OnboardingResult, PaymentMatchCandidate, RecurringTransaction, RecurringTransactionInput, ReportFilter, RuleImpact, RuleInput, TemplateKind, Transaction, TransactionInput, TransactionLink, TransferInput, UserProfile } from "./types";
+import type { Account, AccountType, AppBootstrap, Category, CategorizationRule, CategoryTrendPoint, CreditCardImportPreview, CreditCardInvoice, CreditCardInvoiceItem, CsvMappingDraft, CsvMappingProfile, DashboardSummary, FinancialReport, FinancialTarget, FinancialTargetInput, ImportFileInspection, ImportPreview, MerchantAlias, OnboardingInput, OnboardingResult, PaymentMatchCandidate, RecurringTransaction, RecurringTransactionInput, ReportFilter, RuleImpact, RuleInput, TemplateKind, Transaction, TransactionInput, TransactionLink, TransferInput, UserProfile } from "./types";
 
 const demoTransactions: Transaction[] = [
   { id: "1", accountId: "card", accountName:"Cartão principal", accountKind:"credit_card", date: "2026-06-26", description: "Supermercado Aurora", amountInCents: -28490, categoryId: "groceries", category: "Supermercado", categorySource: "rule", status: "cleared" },
@@ -151,8 +151,8 @@ export const api = {
         {categoryId:"transport",category:"Transporte",color:"#a778ba",amountInCents:82000,sharePercent:16},
         {categoryId:"health",category:"Saúde",color:"#d66d68",amountInCents:61000,sharePercent:12}
       ],merchants:[
-        {merchant:"SUPERMERCADOS BH",amountInCents:92300,transactionCount:4},
-        {merchant:"MERCADOLIVRE",amountInCents:79139,transactionCount:2}
+        {merchant:"SUPERMERCADOS BH",merchantKey:"SUPERMERCADOS BH",amountInCents:92300,transactionCount:4},
+        {merchant:"MERCADOLIVRE",merchantKey:"MERCADOLIVRE",amountInCents:79139,transactionCount:2}
       ],daily:[
         {date:"2026-06-05",amountInCents:68000,cumulativeInCents:68000},
         {date:"2026-06-12",amountInCents:94000,cumulativeInCents:162000},
@@ -179,5 +179,9 @@ export const api = {
   setRecurringTransactionActive:(id:string,active:boolean):Promise<void> =>
     invoke("set_recurring_transaction_active",{id,active}),
   archiveRecurringTransaction:(id:string):Promise<void> => invoke("archive_recurring_transaction",{id}),
-  syncRecurringTransactions:():Promise<number> => isTauri()?invoke("sync_recurring_transactions"):Promise.resolve(0)
+  syncRecurringTransactions:():Promise<number> => isTauri()?invoke("sync_recurring_transactions"):Promise.resolve(0),
+  merchantAliases:():Promise<MerchantAlias[]> => isTauri()?invoke("list_merchant_aliases"):Promise.resolve([]),
+  saveMerchantAlias:(merchantKey:string,displayName:string):Promise<string> =>
+    invoke("save_merchant_alias",{input:{merchantKey,displayName}}),
+  deleteMerchantAlias:(id:string):Promise<void> => invoke("delete_merchant_alias",{id})
 };
