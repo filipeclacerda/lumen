@@ -2,10 +2,14 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { Database, Download, RotateCcw, Save, ShieldCheck, UserRound } from "lucide-react";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { AlertTriangle, Database, Download, RotateCcw, Save, ShieldCheck, Trash2, UserRound } from "lucide-react";
 import { api } from "../../shared/api";
+import { Modal } from "../../shared/ui/Modal";
 import { useToast } from "../../shared/ui/toast";
 import type { FinancialGoal } from "../../shared/types";
+
+const RESET_CONFIRM_WORD = "APAGAR";
 
 const goalLabels:Record<FinancialGoal,string>={
   organize:"Organizar minhas finanças",emergency_fund:"Criar reserva de emergência",
@@ -18,6 +22,8 @@ export function SettingsPage(){
   const {data:profile}=useQuery({queryKey:["profile"],queryFn:api.profile});
   const [name,setName]=useState("");const [income,setIncome]=useState("");const [day,setDay]=useState("");
   const [goal,setGoal]=useState<FinancialGoal>();const [saving,setSaving]=useState(false);
+  const [resetOpen,setResetOpen]=useState(false);const [resetConfirmText,setResetConfirmText]=useState("");
+  const [resetting,setResetting]=useState(false);
   useEffect(()=>{if(profile){setName(profile.displayName);setIncome(profile.monthlyIncomeInCents?String(profile.monthlyIncomeInCents/100):"");
     setDay(profile.incomeDay?String(profile.incomeDay):"");setGoal(profile.financialGoal)}},[profile]);
   async function saveProfile(){
@@ -56,6 +62,20 @@ export function SettingsPage(){
       }
     } catch(e) { toast((e as {message?:string})?.message??"Falha ao restaurar.","error"); }
   }
+  function closeReset(){setResetOpen(false);setResetConfirmText("")}
+  async function resetAllData(){
+    setResetting(true);
+    try{
+      await api.resetDatabase();
+      toast("Todos os dados foram apagados. Reiniciando o Lúmen…");
+      closeReset();
+      // The actual wipe happens at startup (before the db pool opens), so we relaunch
+      // right after staging it — the user never has to close/reopen the app manually.
+      await new Promise(resolve=>setTimeout(resolve,900));
+      await relaunch();
+    } catch(e) { toast((e as {message?:string})?.message??"Não foi possível apagar os dados.","error"); }
+    finally { setResetting(false); }
+  }
   return <section><header><div><p className="eyebrow">PREFERÊNCIAS</p><h1>Configurações</h1><p className="muted">Atualize seus dados de planejamento.</p></div></header>
     <div className="settings-grid"><article className="panel rule-editor"><div className="panel-title"><h2><UserRound size={17}/> Perfil financeiro</h2></div>
       <label>Nome<input value={name} onChange={e=>setName(e.target.value)}/></label>
@@ -74,5 +94,21 @@ export function SettingsPage(){
       </div>
       <p className="muted" style={{fontSize:12,marginTop:12}}>A restauração substitui todos os dados atuais e é aplicada ao reiniciar o aplicativo.</p>
     </article>
+    <article className="panel danger-zone" style={{marginTop:18}}><div className="panel-title"><h2><AlertTriangle size={17}/> Zona de risco</h2></div>
+      <p className="muted">Apaga permanentemente contas, transações, categorias, regras, metas, recorrências e faturas de cartão — o Lúmen reinicia sozinho e volta ao estado de instalação nova. Faça um backup antes, se precisar dos dados depois.</p>
+      <button className="danger" onClick={()=>setResetOpen(true)}><Trash2 size={15}/> Resetar dados do aplicativo</button>
+    </article>
+    {resetOpen&&<Modal title="Apagar todos os dados?" onClose={closeReset}>
+      <div className="modal-form">
+        <p className="muted">Essa ação não pode ser desfeita. Todos os dados serão apagados e o Lúmen reinicia automaticamente para concluir a limpeza.</p>
+        <label>Digite {RESET_CONFIRM_WORD} para confirmar<input value={resetConfirmText} onChange={e=>setResetConfirmText(e.target.value)} autoFocus/></label>
+        <div className="editor-actions">
+          <button className="secondary" onClick={closeReset} disabled={resetting}>Cancelar</button>
+          <button className="danger" onClick={resetAllData} disabled={resetting||resetConfirmText!==RESET_CONFIRM_WORD}>
+            <Trash2 size={15}/> {resetting?"Apagando…":"Apagar tudo"}
+          </button>
+        </div>
+      </div>
+    </Modal>}
   </section>
 }

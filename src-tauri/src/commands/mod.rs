@@ -12,6 +12,8 @@ mod reports;
 pub use reports::*;
 mod backup;
 pub use backup::*;
+mod recurring;
+pub use recurring::*;
 
 use crate::{
     application::state::{AppState, ImportSession},
@@ -42,6 +44,16 @@ pub struct TransactionInput {
     description: String,
     amount_in_cents: i64,
     category_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferInput {
+    from_account_id: String,
+    to_account_id: String,
+    date: String,
+    amount_in_cents: i64,
+    description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -817,6 +829,69 @@ async fn create_transaction_impl(input: TransactionInput, db: &SqlitePool) -> Re
     Ok(id)
 }
 
+/// System category that keeps transfer legs out of income/expense totals.
+const TRANSFER_CATEGORY_ID: &str = "transfers";
+
+#[tauri::command]
+pub async fn create_transfer(input: TransferInput, state: State<'_, AppState>) -> Result<Vec<String>, AppError> {
+    create_transfer_impl(input, &state.db).await
+}
+
+async fn create_transfer_impl(input: TransferInput, db: &SqlitePool) -> Result<Vec<String>, AppError> {
+    if input.amount_in_cents <= 0 {
+        return Err(AppError::Validation("O valor da transferência deve ser maior que zero".into()));
+    }
+    if input.from_account_id == input.to_account_id {
+        return Err(AppError::Validation("Escolha contas diferentes para origem e destino".into()));
+    }
+    let date = input.date.trim().to_string();
+    chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
+        .map_err(|_| AppError::Validation("Data inválida".into()))?;
+    ensure_account_active(db, &input.from_account_id).await?;
+    ensure_account_active(db, &input.to_account_id).await?;
+    let from_name = sqlx::query_scalar::<_, String>("SELECT name FROM accounts WHERE id=?")
+        .bind(&input.from_account_id).fetch_one(db).await?;
+    let to_name = sqlx::query_scalar::<_, String>("SELECT name FROM accounts WHERE id=?")
+        .bind(&input.to_account_id).fetch_one(db).await?;
+    let custom = input.description.as_deref().map(str::trim).filter(|d| !d.is_empty());
+    if let Some(d) = custom {
+        if d.chars().count() > 180 {
+            return Err(AppError::Validation("A descrição deve ter no máximo 180 caracteres".into()));
+        }
+    }
+    let out_description = custom.map(|d| format!("{d} (para {to_name})"))
+        .unwrap_or_else(|| format!("Transferência para {to_name}"));
+    let in_description = custom.map(|d| format!("{d} (de {from_name})"))
+        .unwrap_or_else(|| format!("Transferência de {from_name}"));
+
+    let legs = [
+        (&input.from_account_id, out_description, -input.amount_in_cents),
+        (&input.to_account_id, in_description, input.amount_in_cents),
+    ];
+    let mut tx = db.begin().await?;
+    let mut ids = Vec::with_capacity(2);
+    for (account_id, description, amount) in legs {
+        let normalized = normalize_description(&description);
+        let fp = manual_fingerprint(account_id, &date, &description, &normalized, amount);
+        let collides = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM transactions WHERE fingerprint=? AND deleted_at IS NULL"
+        ).bind(&fp).fetch_one(&mut *tx).await? > 0;
+        if collides {
+            return Err(AppError::Validation("Já existe uma transferência idêntica (mesmas contas, data e valor)".into()));
+        }
+        let id = Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO transactions(id,account_id,date,description,normalized_description,amount_cents,fingerprint,category_id,category_source,status)
+             VALUES(?,?,?,?,?,?,?,?,'manual','cleared')"
+        ).bind(&id).bind(account_id).bind(&date).bind(&description).bind(&normalized)
+            .bind(amount).bind(&fp).bind(TRANSFER_CATEGORY_ID)
+            .execute(&mut *tx).await?;
+        ids.push(id);
+    }
+    tx.commit().await?;
+    Ok(ids)
+}
+
 #[tauri::command]
 pub async fn update_transaction(input: TransactionInput, state: State<'_, AppState>) -> Result<(), AppError> {
     let id = input.id.clone().ok_or_else(|| AppError::Validation("Transação inválida".into()))?;
@@ -1252,5 +1327,52 @@ mod tests {
             description:"Feira da semana".into(), amount_in_cents:-5000, category_id:None,
         };
         assert!(create_transaction_impl(duplicate, &db).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn transfer_creates_linked_legs_outside_income_and_expenses() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = crate::infrastructure::database::connect(&directory.path().join("transfer.db")).await.unwrap();
+        let onboarding = OnboardingInput {
+            display_name:"Pessoa Teste".into(),monthly_income_in_cents:None,income_day:None,
+            financial_goal:None,account_name:"Corrente".into(),account_kind:"checking".into(),
+            opening_balance_in_cents:None,
+        };
+        let from_account = complete_onboarding_impl(onboarding, &db).await.unwrap().account_id;
+        let to_account = "poupanca-teste".to_string();
+        sqlx::query("INSERT INTO accounts(id,name,kind) VALUES(?,?,'savings')")
+            .bind(&to_account).bind("Poupança").execute(&db).await.unwrap();
+
+        // Same account on both sides is rejected.
+        assert!(create_transfer_impl(TransferInput {
+            from_account_id:from_account.clone(), to_account_id:from_account.clone(),
+            date:"2026-06-10".into(), amount_in_cents:10_000, description:None,
+        }, &db).await.is_err());
+
+        let ids = create_transfer_impl(TransferInput {
+            from_account_id:from_account.clone(), to_account_id:to_account.clone(),
+            date:"2026-06-10".into(), amount_in_cents:10_000, description:None,
+        }, &db).await.unwrap();
+        assert_eq!(ids.len(), 2);
+
+        // Both legs use the transfer category and net out to zero.
+        let (total, count): (i64, i64) = sqlx::query_as(
+            "SELECT COALESCE(SUM(amount_cents),0), COUNT(*) FROM transactions WHERE category_id='transfers' AND deleted_at IS NULL"
+        ).fetch_one(&db).await.unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(total, 0);
+
+        // Neither leg counts as income or expense in the dashboard aggregation.
+        let visible: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM transactions t JOIN categories c ON c.id=t.category_id
+             WHERE c.kind NOT IN ('transfer','investment') AND t.deleted_at IS NULL AND strftime('%Y-%m',t.date)='2026-06'"
+        ).fetch_one(&db).await.unwrap();
+        assert_eq!(visible, 0);
+
+        // Repeating the exact same transfer is rejected as a duplicate.
+        assert!(create_transfer_impl(TransferInput {
+            from_account_id:from_account, to_account_id:to_account,
+            date:"2026-06-10".into(), amount_in_cents:10_000, description:None,
+        }, &db).await.is_err());
     }
 }

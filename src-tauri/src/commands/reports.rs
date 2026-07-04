@@ -481,6 +481,38 @@ pub async fn generate_financial_report(filter:ReportFilter,state:State<'_,AppSta
     })
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CategoryTrendPoint {
+    month: String,
+    amount_in_cents: i64,
+}
+
+/// Monthly spend for a single category (or "sem categoria" when `category_id` is `None`)
+/// over the last `months`, so the UI can plot a trend line when a category is selected.
+#[tauri::command]
+pub async fn category_trend(
+    category_id: Option<String>, months: i64, state: State<'_, AppState>
+) -> Result<Vec<CategoryTrendPoint>, AppError> {
+    let months = months.clamp(1, 24);
+    let end_month = Local::now().format("%Y-%m").to_string();
+    let start_month = shift_month(&end_month, -(months as i32 - 1))?;
+    let month_list = month_range(&start_month, &end_month)?;
+    let rows = sqlx::query(
+        "SELECT strftime('%Y-%m',t.date) month, -SUM(t.amount_cents) amount
+         FROM transactions t JOIN accounts a ON a.id=t.account_id
+         WHERE t.deleted_at IS NULL AND a.deleted_at IS NULL AND t.amount_cents<0
+         AND ((?1 IS NULL AND t.category_id IS NULL) OR t.category_id=?1)
+         AND strftime('%Y-%m',t.date)>=?2 AND strftime('%Y-%m',t.date)<=?3
+         GROUP BY month"
+    ).bind(&category_id).bind(&start_month).bind(&end_month).fetch_all(&state.db).await?;
+    let mut by_month: HashMap<String, i64> = rows.into_iter()
+        .map(|r| (r.get("month"), r.get("amount"))).collect();
+    Ok(month_list.into_iter()
+        .map(|month| CategoryTrendPoint { amount_in_cents: by_month.remove(&month).unwrap_or(0), month })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

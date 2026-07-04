@@ -579,3 +579,49 @@ nav a span {
 .mapping-sample-panel table{font-size:12px}
 .mapping-sample-panel td{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(max-width:1000px){.import-mapping-panel .rules-layout{grid-template-columns:1fr}}
+
+/* Month navigator (shared period selector) */
+.month-nav{display:inline-flex;align-items:center;gap:4px}
+.month-nav .icon-button{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border:1px solid var(--border-strong);border-radius:8px;background:var(--surface-bg);color:var(--text-muted);cursor:pointer}
+.month-nav .icon-button:hover{color:var(--brand);border-color:var(--brand)}
+.month-nav .text-button{font-size:11px;letter-spacing:normal;text-transform:none}
+
+/* Dashboard cash flow chart */
+.chart-panel{margin-bottom:22px}
+.chart-wrap{margin-top:10px}
+.chart-wrap .recharts-legend-item-text{color:var(--text-muted)!important}
+
+/* Transfer form */
+.transfer-row{grid-template-columns:1fr auto 1fr;align-items:end}
+.transfer-arrow{color:var(--text-muted);margin-bottom:12px;flex-shrink:0}
+@media(max-width:650px){.transfer-row{grid-template-columns:1fr}.transfer-arrow{display:none}}
+
+/* Dashboard pace strip (savings rate / daily pace / projection) */
+.pace-strip{grid-template-columns:repeat(3,1fr)}
+@media(max-width:850px){.pace-strip{grid-template-columns:1fr}}
+
+/* Interactive category donut + trend drill-down (Reports) */
+.category-breakdown{display:grid;grid-template-columns:minmax(200px,.85fr) 1fr;gap:18px;align-items:center}
+.donut-chart-wrap{text-align:center}
+.donut-hint{font-size:11px;margin-top:6px}
+.category-bar-clickable{cursor:pointer;border-radius:10px;padding:4px 6px;margin:0 -6px;transition:background .12s ease}
+.category-bar-clickable:hover{background:var(--surface-2)}
+.category-bar-selected{background:var(--brand-soft)}
+.category-trend-panel{margin-top:20px;padding-top:18px;border-top:1px solid var(--border)}
+.category-trend-actions{display:flex;align-items:center;gap:10px}
+.category-trend-actions a{font-size:12px;color:var(--brand);text-decoration:none;font-weight:600}
+@media(max-width:750px){.category-breakdown{grid-template-columns:1fr}}
+
+/* Recurring transactions list */
+.recurring-list{display:flex;flex-direction:column}
+.recurring-row{display:grid;grid-template-columns:1fr auto auto auto;gap:12px;align-items:center;padding:13px 0;border-top:1px solid var(--border);font-size:12px}
+.recurring-row:first-child{border-top:0}
+.recurring-row.inactive{opacity:.5}
+.recurring-row small{display:block;color:var(--text-muted);margin-top:3px}
+.recurring-amount.negative{color:var(--danger)}
+.recurring-amount.positive{color:var(--accent-green)}
+
+/* Settings danger zone (reset all data) */
+.danger-zone{border-color:var(--danger-soft)}
+.danger-zone h2{color:var(--danger)}
+.danger-zone p{margin-bottom:14px}

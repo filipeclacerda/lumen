@@ -34,6 +34,10 @@ export type TransactionInput = {
   id?: string; accountId: string; date: string; description: string;
   amountInCents: number; categoryId?: string;
 };
+export type TransferInput = {
+  fromAccountId: string; toAccountId: string; date: string;
+  amountInCents: number; description?: string;
+};
 export type CategoryKind = "income" | "expense" | "transfer" | "investment";
 export type Category = {
   id: string; parentId?: string; name: string; color?: string; icon?: string;
@@ -197,6 +201,16 @@ export type FinancialTarget = {
   overrides:{month:string;amountInCents:number}[];
 };
 export type FinancialTargetInput = Omit<FinancialTarget,"id"|"categoryName"|"overrides">&{id?:string};
+export type CategoryTrendPoint = { month:string; amountInCents:number };
+export type RecurringTransaction = {
+  id:string; accountId:string; accountName:string; categoryId?:string; categoryName?:string;
+  description:string; amountInCents:number; dayOfMonth:number; startMonth:string; endMonth?:string;
+  lastGeneratedMonth?:string; active:boolean;
+};
+export type RecurringTransactionInput = {
+  id?:string; accountId:string; categoryId?:string; description:string; amountInCents:number;
+  dayOfMonth:number; startMonth:string; endMonth?:string;
+};
 export type FinancialReport = {
   summary:ReportSummary; latestMonthSummary:ReportSummary; previousSummary:ReportSummary;
   currentInvestedInCents:number; monthly:MonthlyReportPoint[];

@@ -70,3 +70,13 @@ pub async fn restore_database(app: AppHandle, path: String) -> Result<(), AppErr
     std::fs::write(&staged, &bytes)?;
     Ok(())
 }
+
+#[tauri::command]
+pub async fn reset_database(app: AppHandle) -> Result<(), AppError> {
+    // Stage a marker instead of deleting the file here: the database is currently
+    // open (WAL/SHM in use), so the actual wipe happens at next startup, before
+    // the connection pool opens, the same way `restore_database` stages a swap.
+    let marker = data_dir(&app)?.join("financa.reset");
+    std::fs::write(&marker, b"")?;
+    Ok(())
+}

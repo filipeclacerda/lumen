@@ -13,10 +13,22 @@ use tokio::sync::Mutex;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir().expect("diretório de dados");
             std::fs::create_dir_all(&data_dir)?;
             let db_path = data_dir.join("financa.db");
+            // A reset staged by `reset_database` wins over any pending restore: wipe the
+            // database file entirely here, before any connection opens, so migrations
+            // recreate a pristine database (fresh seed data, no profile/accounts/transactions).
+            let reset_marker = data_dir.join("financa.reset");
+            if reset_marker.exists() {
+                let _ = std::fs::remove_file(&db_path);
+                let _ = std::fs::remove_file(data_dir.join("financa.db-wal"));
+                let _ = std::fs::remove_file(data_dir.join("financa.db-shm"));
+                let _ = std::fs::remove_file(data_dir.join("financa.restore"));
+                std::fs::remove_file(&reset_marker)?;
+            }
             // A restore staged by `restore_database` is swapped in here, before any
             // connection opens, so the live database is never overwritten in place.
             let staged = data_dir.join("financa.restore");
@@ -40,7 +52,7 @@ pub fn run() {
             commands::list_accounts, commands::create_account, commands::rename_account,
             commands::archive_account,
             commands::list_transactions, commands::dashboard_summary,
-            commands::create_transaction, commands::update_transaction,
+            commands::create_transaction, commands::update_transaction, commands::create_transfer,
             commands::list_categories, commands::save_category, commands::archive_category,
             commands::list_rules, commands::save_rule, commands::archive_rule, commands::reorder_rules,
             commands::preview_rule, commands::preview_rules_retroactive, commands::apply_rules_retroactive,
@@ -63,8 +75,12 @@ pub fn run() {
             commands::set_credit_card_invoice_deleted,
             commands::list_financial_targets, commands::save_financial_target,
             commands::save_financial_target_override, commands::delete_financial_target,
-            commands::generate_financial_report,
-            commands::export_transactions_csv, commands::backup_database, commands::restore_database
+            commands::generate_financial_report, commands::category_trend,
+            commands::export_transactions_csv, commands::backup_database, commands::restore_database,
+            commands::reset_database,
+            commands::list_recurring_transactions, commands::save_recurring_transaction,
+            commands::set_recurring_transaction_active, commands::archive_recurring_transaction,
+            commands::sync_recurring_transactions
         ])
         .run(tauri::generate_context!())
         .expect("erro ao executar Lúmen");

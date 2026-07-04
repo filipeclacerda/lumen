@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Account, AccountType, AppBootstrap, Category, CategorizationRule, CreditCardImportPreview, CreditCardInvoice, CreditCardInvoiceItem, CsvMappingDraft, CsvMappingProfile, DashboardSummary, FinancialReport, FinancialTarget, FinancialTargetInput, ImportFileInspection, ImportPreview, OnboardingInput, OnboardingResult, PaymentMatchCandidate, ReportFilter, RuleImpact, RuleInput, TemplateKind, Transaction, TransactionInput, TransactionLink, UserProfile } from "./types";
+import type { Account, AccountType, AppBootstrap, Category, CategorizationRule, CategoryTrendPoint, CreditCardImportPreview, CreditCardInvoice, CreditCardInvoiceItem, CsvMappingDraft, CsvMappingProfile, DashboardSummary, FinancialReport, FinancialTarget, FinancialTargetInput, ImportFileInspection, ImportPreview, OnboardingInput, OnboardingResult, PaymentMatchCandidate, RecurringTransaction, RecurringTransactionInput, ReportFilter, RuleImpact, RuleInput, TemplateKind, Transaction, TransactionInput, TransactionLink, TransferInput, UserProfile } from "./types";
 
 const demoTransactions: Transaction[] = [
   { id: "1", accountId: "card", accountName:"Cartão principal", accountKind:"credit_card", date: "2026-06-26", description: "Supermercado Aurora", amountInCents: -28490, categoryId: "groceries", category: "Supermercado", categorySource: "rule", status: "cleared" },
@@ -74,6 +74,7 @@ export const api = {
   restoreTransactions: (transactionIds: string[]): Promise<number> =>
     invoke("restore_transactions", { transactionIds }),
   createTransaction: (input: TransactionInput): Promise<string> => invoke("create_transaction", { input }),
+  createTransfer: (input: TransferInput): Promise<string[]> => invoke("create_transfer", { input }),
   updateTransaction: (input: TransactionInput): Promise<void> => invoke("update_transaction", { input }),
   createAccount: (name: string, kind: AccountType): Promise<string> => invoke("create_account", { name, kind }),
   renameAccount: (id: string, name: string): Promise<void> => invoke("rename_account", { id, name }),
@@ -81,6 +82,7 @@ export const api = {
   exportTransactionsCsv: (path: string): Promise<number> => invoke("export_transactions_csv", { path }),
   backupDatabase: (path: string): Promise<void> => invoke("backup_database", { path }),
   restoreDatabase: (path: string): Promise<void> => invoke("restore_database", { path }),
+  resetDatabase: (): Promise<void> => invoke("reset_database"),
   inspectImportFile: (path: string): Promise<ImportFileInspection> => invoke("inspect_import_file", { path }),
   csvMappingProfiles: (): Promise<CsvMappingProfile[]> => invoke("list_csv_mapping_profiles"),
   saveCsvMappingProfile: (mapping: CsvMappingDraft): Promise<string> => invoke("save_csv_mapping_profile", { mapping }),
@@ -168,5 +170,14 @@ export const api = {
   saveFinancialTarget:(input:FinancialTargetInput):Promise<string>=>invoke("save_financial_target",{input}),
   saveFinancialTargetOverride:(targetId:string,month:string,amountInCents:number):Promise<void>=>
     invoke("save_financial_target_override",{targetId,month,amountInCents}),
-  deleteFinancialTarget:(id:string):Promise<void>=>invoke("delete_financial_target",{id})
+  deleteFinancialTarget:(id:string):Promise<void>=>invoke("delete_financial_target",{id}),
+  categoryTrend:(categoryId:string|undefined,months=12):Promise<CategoryTrendPoint[]> =>
+    isTauri()?invoke("category_trend",{categoryId:categoryId||null,months}):Promise.resolve([]),
+  recurringTransactions:async():Promise<RecurringTransaction[]> => isTauri()?invoke("list_recurring_transactions"):[],
+  saveRecurringTransaction:(input:RecurringTransactionInput):Promise<string> =>
+    invoke("save_recurring_transaction",{input}),
+  setRecurringTransactionActive:(id:string,active:boolean):Promise<void> =>
+    invoke("set_recurring_transaction_active",{id,active}),
+  archiveRecurringTransaction:(id:string):Promise<void> => invoke("archive_recurring_transaction",{id}),
+  syncRecurringTransactions:():Promise<number> => isTauri()?invoke("sync_recurring_transactions"):Promise.resolve(0)
 };

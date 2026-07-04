@@ -1,20 +1,15 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDownRight, ArrowUpRight, CalendarRange, CreditCard, Landmark, Plus, Target, Trash2, TrendingUp } from "lucide-react";
+import { AlertTriangle, ArrowDownRight, ArrowUpRight, CalendarRange, CreditCard, Landmark, Plus, Target, Trash2, TrendingUp, X } from "lucide-react";
 import { api } from "../../shared/api";
 import { money, maskCurrency, shortDate, parseMoneyToCents, centsToInput } from "../../shared/format";
+import { currentMonth as curMonth, monthLabel, shiftMonth } from "../../shared/period";
 import type { FinancialReport, FinancialTarget, ReportSource } from "../../shared/types";
+import { CategoryDonut } from "./CategoryDonut";
+import { CategoryTrendChart } from "./CategoryTrendChart";
 
-const currentMonth=new Date().toISOString().slice(0,7);
-function shiftMonth(month:string,delta:number){
-  const [year,value]=month.split("-").map(Number);
-  const date=new Date(year,value-1+delta,1);
-  return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}`;
-}
-function monthLabel(month:string){
-  const [year,value]=month.split("-").map(Number);
-  return new Date(year,value-1,1).toLocaleDateString("pt-BR",{month:"short",year:"2-digit"}).replace(".","");
-}
+const currentMonth=curMonth();
 function changeLabel(value?:number|null, inverse=false){
   if(value===undefined||value===null)return "Sem base anterior";
   const improved=inverse?value<=0:value>=0;
@@ -86,6 +81,7 @@ function ReportContent({report,profileIncome,targets,onEdit,onDelete}:{
   report:FinancialReport;profileIncome?:number;targets:FinancialTarget[];
   onEdit:(target:FinancialTarget)=>void;onDelete:(id:string)=>void;
 }){
+  const [selectedCategoryId,setSelectedCategoryId]=useState<string>();
   const summary=report.summary;
   const latest=report.latestMonthSummary;
   const topCategory=report.categories[0];
@@ -101,8 +97,15 @@ function ReportContent({report,profileIncome,targets,onEdit,onDelete}:{
       <div className={`report-kpi-icon ${card.tone}`}>{card.icon}</div><span>{card.label}</span><strong>{money(card.value)}</strong>
       <small>{card.detail}</small></article>)}</div>
     <div className="report-grid main-charts">
-      <article className="panel wide-panel"><div className="panel-title"><div><h2>Onde você mais gastou</h2><small>Categorias somadas no período selecionado</small></div></div>
-        <CategoryBars report={report}/></article>
+      <article className="panel wide-panel"><div className="panel-title"><div><h2>Onde você mais gastou</h2><small>Categorias somadas no período selecionado · clique para ver a tendência</small></div></div>
+        <div className="category-breakdown">
+          <CategoryDonut categories={report.categories} selectedCategoryId={selectedCategoryId} onSelect={setSelectedCategoryId}/>
+          <CategoryBars report={report} selectedCategoryId={selectedCategoryId} onSelect={setSelectedCategoryId}/>
+        </div>
+        {selectedCategoryId!==undefined&&<CategoryTrendPanel categoryId={selectedCategoryId}
+          categoryName={report.categories.find(c=>c.categoryId===selectedCategoryId)?.category??"Sem categoria"}
+          onClose={()=>setSelectedCategoryId(undefined)}/>}
+      </article>
       <article className="panel"><div className="panel-title"><div><h2>Resumo do período</h2><small>Entradas e destino do dinheiro</small></div></div>
         <div className="period-summary">
           <div><span>Receitas</span><b>{money(summary.incomeInCents)}</b></div>
@@ -182,15 +185,41 @@ function SpendingBars({data}:{data:FinancialReport["monthly"]}){
     {data.map(item=><div key={item.month}><span title={money(item.expensesInCents)} style={{height:`${Math.max(item.expensesInCents/max*100,3)}%`}}/>
       <b>{money(item.expensesInCents)}</b><small>{monthLabel(item.month)}</small></div>)}</div>
 }
-function CategoryBars({report}:{report:FinancialReport}){
+function CategoryBars({report,selectedCategoryId,onSelect}:{
+  report:FinancialReport;selectedCategoryId?:string;onSelect:(categoryId:string|undefined)=>void;
+}){
   const visible=report.categories.filter(item=>item.amountInCents>0).slice(0,8);
   if(!visible.length)return <EmptyChart/>;
   const max=Math.max(...visible.map(item=>item.amountInCents),1);
-  return <div className="category-bars">{visible.map((item,index)=><div key={item.category}>
-    <div className="category-bar-heading"><span><i style={{background:item.color??palette[index%palette.length]}}/>{item.category}</span>
-      <b>{money(item.amountInCents)} <small>{item.sharePercent.toFixed(1)}%</small></b></div>
-    <div className="category-bar-track"><i style={{width:`${item.amountInCents/max*100}%`,background:item.color??palette[index%palette.length]}}/></div>
-  </div>)}</div>
+  return <div className="category-bars">{visible.map((item,index)=>{
+    const clickable=Boolean(item.categoryId);
+    const selected=clickable&&item.categoryId===selectedCategoryId;
+    return <div key={item.category} className={`${clickable?"category-bar-clickable":""} ${selected?"category-bar-selected":""}`}
+      role={clickable?"button":undefined} tabIndex={clickable?0:undefined}
+      onClick={clickable?()=>onSelect(item.categoryId===selectedCategoryId?undefined:item.categoryId):undefined}>
+      <div className="category-bar-heading"><span><i style={{background:item.color??palette[index%palette.length]}}/>{item.category}</span>
+        <b>{money(item.amountInCents)} <small>{item.sharePercent.toFixed(1)}%</small></b></div>
+      <div className="category-bar-track"><i style={{width:`${item.amountInCents/max*100}%`,background:item.color??palette[index%palette.length]}}/></div>
+    </div>;
+  })}</div>
+}
+
+function CategoryTrendPanel({categoryId,categoryName,onClose}:{categoryId:string;categoryName:string;onClose:()=>void}){
+  const {data=[],isLoading}=useQuery({
+    queryKey:["category-trend",categoryId],
+    queryFn:()=>api.categoryTrend(categoryId,12)
+  });
+  const total=data.reduce((sum,p)=>sum+p.amountInCents,0);
+  const average=data.length?Math.round(total/data.length):0;
+  return <div className="category-trend-panel">
+    <div className="panel-title"><div><h2>Tendência · {categoryName}</h2><small>Últimos 12 meses · média de {money(average)}/mês</small></div>
+      <div className="category-trend-actions">
+        <Link to={`/transactions?category=${categoryId}`}>Ver transações →</Link>
+        <button className="icon-button" aria-label="Fechar tendência" onClick={onClose}><X size={14}/></button>
+      </div>
+    </div>
+    {isLoading?<p className="muted">Carregando tendência…</p>:<CategoryTrendChart data={data}/>}
+  </div>
 }
 const palette=["#247258","#e5a142","#728bba","#a778ba","#d66d68","#4c94a8"];
 function SourceComparison({report}:{report:FinancialReport}){

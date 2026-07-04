@@ -1,12 +1,15 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CreditCard, Landmark, Pencil, Plus, Search, Tags, Trash2, Undo2, ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { CreditCard, Landmark, Pencil, Plus, Search, Tags, Trash2, Undo2, ArrowUpRight, ArrowDownRight, X } from "lucide-react";
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../../shared/api";
 import { money, shortDate } from "../../shared/format";
 import type { Transaction } from "../../shared/types";
 import { TransactionForm } from "./TransactionForm";
 
 export function Transactions() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const categoryFilter = searchParams.get("category") ?? "";
   const [search, setSearch] = useState("");
   const [showNew, setShowNew] = useState(false);
   const [editing, setEditing] = useState<Transaction>();
@@ -14,12 +17,20 @@ export function Transactions() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkCategory, setBulkCategory] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [undoIds, setUndoIds] = useState<string[]>([]);
+  const [undo, setUndo] = useState<
+    { kind: "delete"; ids: string[] } | { kind: "categorize"; previous: { id: string; categoryId?: string }[] }
+  >();
   const [notice, setNotice] = useState("");
   const client = useQueryClient();
   const { data = [], isLoading } = useQuery({ queryKey: ["transactions"], queryFn: () => api.transactions() });
   const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: () => api.categories() });
-  const rows = data.filter(t => t.description.toLowerCase().includes(search.toLowerCase()));
+  const categoryFilterName = categories.find(c => c.id === categoryFilter)?.name;
+  const rows = data
+    .filter(t => t.description.toLowerCase().includes(search.toLowerCase()))
+    .filter(t => !categoryFilter || t.categoryId === categoryFilter);
+  function clearCategoryFilter() {
+    setSearchParams(params => { params.delete("category"); return params; });
+  }
   const allVisibleSelected = rows.length > 0 && rows.every(t=>selected.has(t.id));
   function toggle(id:string) {
     setSelected(current=>{const next=new Set(current);next.has(id)?next.delete(id):next.add(id);return next});
@@ -41,7 +52,7 @@ export function Transactions() {
   }
   async function deleteOne(id:string) {
     const count=await api.deleteTransactions([id]);
-    setUndoIds([id]); setNotice(`${count} transação movida para a lixeira.`);
+    setUndo({kind:"delete",ids:[id]}); setNotice(`${count} transação movida para a lixeira.`);
     setSelected(current=>{const next=new Set(current);next.delete(id);return next}); await refresh();
   }
   async function createRule() {
@@ -59,24 +70,41 @@ export function Transactions() {
   }
   async function applyBulkCategory() {
     const ids=[...selected]; if(!ids.length)return;
+    const previous=ids.map(id=>({id,categoryId:data.find(t=>t.id===id)?.categoryId}));
     const count=await api.bulkUpdateTransactionCategory(ids,bulkCategory||undefined);
+    setUndo({kind:"categorize",previous});
     setNotice(`${count} transações atualizadas.`); setSelected(new Set()); setBulkCategory(""); await refresh();
   }
   async function deleteSelected() {
     const ids=[...selected]; if(!ids.length)return;
     const count=await api.deleteTransactions(ids);
-    setUndoIds(ids); setNotice(`${count} transações movidas para a lixeira.`);
+    setUndo({kind:"delete",ids}); setNotice(`${count} transações movidas para a lixeira.`);
     setSelected(new Set()); setConfirmDelete(false); await refresh();
   }
-  async function undoDelete() {
-    const count=await api.restoreTransactions(undoIds);
-    setUndoIds([]); setNotice(`${count} transações restauradas.`); await refresh();
+  async function undoLast() {
+    if(!undo)return;
+    if(undo.kind==="delete"){
+      const count=await api.restoreTransactions(undo.ids);
+      setNotice(`${count} transações restauradas.`);
+    } else {
+      // Regroup by former category so the rollback runs as few bulk calls as possible.
+      const groups=new Map<string|undefined,string[]>();
+      undo.previous.forEach(p=>{
+        const list=groups.get(p.categoryId)??[];
+        list.push(p.id); groups.set(p.categoryId,list);
+      });
+      for(const [categoryId,ids] of groups) await api.bulkUpdateTransactionCategory(ids,categoryId);
+      setNotice(`${undo.previous.length} transações voltaram às categorias anteriores.`);
+    }
+    setUndo(undefined); await refresh();
   }
   return <section><header><div><p className="eyebrow">MOVIMENTAÇÕES</p><h1>Transações</h1><p className="muted">{data.length} lançamentos no período</p></div>
     <button onClick={()=>setShowNew(true)}><Plus size={17}/> Nova transação</button></header>
     {showNew&&<TransactionForm onClose={()=>setShowNew(false)}/>}
     {editing&&<TransactionForm existing={editing} onClose={()=>setEditing(undefined)}/>}
-    {notice&&<div className="notice notice-action"><span>{notice}</span>{undoIds.length>0&&<button className="text-button" onClick={undoDelete}><Undo2 size={15}/> Desfazer</button>}</div>}
+    {notice&&<div className="notice notice-action"><span>{notice}</span>{undo&&<button className="text-button" onClick={undoLast}><Undo2 size={15}/> Desfazer</button>}</div>}
+    {categoryFilter&&<div className="notice notice-action"><span>Filtrando por categoria: <b>{categoryFilterName??"Sem categoria"}</b></span>
+      <button className="text-button" onClick={clearCategoryFilter}><X size={15}/> Remover filtro</button></div>}
     <article className="panel"><div className="transactions-toolbar"><div className="toolbar"><Search size={18}/><input aria-label="Buscar transações" placeholder="Buscar por descrição…" value={search} onChange={e=>setSearch(e.target.value)}/></div>
       {selected.size>0&&<div className="bulk-actions"><b>{selected.size} selecionada{selected.size>1?"s":""}</b><select aria-label="Categoria em massa" value={bulkCategory} onChange={e=>setBulkCategory(e.target.value)}>
         <option value="">Sem categoria</option>{categories.map(c=><option key={c.id} value={c.id}>{c.parentId?"↳ ":""}{c.name}</option>)}</select>

@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BarChart3, CreditCard, FileUp, LayoutDashboard, Menu, Moon, Settings, Sun, Tags, WalletCards } from "lucide-react";
+import { BarChart3, CreditCard, FileUp, LayoutDashboard, Menu, Moon, Repeat, Settings, Sun, Tags, WalletCards } from "lucide-react";
 import { getTheme, setTheme, type Theme } from "../shared/theme";
 import { Dashboard } from "../features/dashboard/Dashboard";
 import { Transactions } from "../features/transactions/Transactions";
@@ -11,11 +11,13 @@ import { Onboarding } from "../features/onboarding/Onboarding";
 import { SettingsPage } from "../features/settings/SettingsPage";
 import { AccountsCards } from "../features/accounts/AccountsCards";
 import { Reports } from "../features/reports/Reports";
+import { RecurringTransactions } from "../features/recurring/RecurringTransactions";
 import { api } from "../shared/api";
 
 const nav = [
   ["/", "Visão geral", LayoutDashboard],
   ["/transactions", "Transações", CreditCard],
+  ["/recurring", "Recorrências", Repeat],
   ["/import", "Importar", FileUp],
   ["/accounts", "Contas e cartões", WalletCards],
   ["/categories", "Categorias e regras", Tags],
@@ -30,6 +32,20 @@ export function App() {
   const toggleTheme=()=>{const next:Theme=theme==="dark"?"light":"dark";setTheme(next);setThemeState(next)};
   const [collapsed, setCollapsed] = useState(false);
   const {data:bootstrap,isLoading}=useQuery({queryKey:["bootstrap"],queryFn:api.bootstrap});
+  useEffect(()=>{
+    if(!bootstrap?.onboardingCompleted)return;
+    api.syncRecurringTransactions().then(async count=>{
+      if(count>0){
+        await Promise.all([
+          client.invalidateQueries({queryKey:["transactions"]}),
+          client.invalidateQueries({queryKey:["summary"]}),
+          client.invalidateQueries({queryKey:["financial-report"]})
+        ]);
+      }
+    });
+    // Runs once per app session, right after the profile/account are known to exist.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[bootstrap?.onboardingCompleted]);
   if(isLoading||!bootstrap)return <div className="app-loading">Preparando seu espaço financeiro…</div>;
   if(!bootstrap.onboardingCompleted)return <Onboarding bootstrap={bootstrap} onFinished={async destination=>{
     await Promise.all([
@@ -58,6 +74,7 @@ export function App() {
     <main><Routes>
       <Route path="/" element={<Dashboard/>}/>
       <Route path="/transactions" element={<Transactions/>}/>
+      <Route path="/recurring" element={<RecurringTransactions/>}/>
       <Route path="/import" element={<ImportPage/>}/>
       <Route path="/accounts" element={<AccountsCards/>}/>
       <Route path="/categories" element={<CategoriesRules/>}/>
