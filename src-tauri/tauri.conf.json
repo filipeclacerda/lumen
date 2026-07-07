@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Lúmen",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "identifier": "com.lacerda.lumen",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -16,6 +16,7 @@
   "bundle": {
     "active": true,
     "targets": ["msi", "nsis"],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -23,5 +24,13 @@
       "icons/icon.ico",
       "icons/icon.icns"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFCRTYwRDdEQjc1QTQ0NzAKUldSd1JGcTNmUTNtcTgwd2Z4UG9QaE9rWkR2TWNUa3FIb05XdlYxREJxeit5cjRjYmJFNjJYa1gK",
+      "endpoints": [
+        "https://github.com/filipeclacerda/lumen/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

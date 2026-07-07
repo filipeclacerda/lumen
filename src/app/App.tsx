@@ -13,6 +13,7 @@ import { AccountsCards } from "../features/accounts/AccountsCards";
 import { Reports } from "../features/reports/Reports";
 import { RecurringTransactions } from "../features/recurring/RecurringTransactions";
 import { api } from "../shared/api";
+import { UpdateNotice } from "../shared/ui/UpdateNotice";
 
 const nav = [
   ["/", "Visão geral", LayoutDashboard],
@@ -71,7 +72,7 @@ export function App() {
         <div className="privacy">🔒 Seus dados ficam neste computador</div>
       </div>
     </aside>
-    <main><Routes>
+    <main><UpdateNotice enabled={bootstrap.onboardingCompleted}/><Routes>
       <Route path="/" element={<Dashboard/>}/>
       <Route path="/transactions" element={<Transactions/>}/>
       <Route path="/recurring" element={<RecurringTransactions/>}/>

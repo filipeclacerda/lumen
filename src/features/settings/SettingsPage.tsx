@@ -3,8 +3,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { AlertTriangle, Database, Download, RotateCcw, Save, ShieldCheck, Trash2, UserRound } from "lucide-react";
+import { AlertTriangle, Database, Download, RefreshCw, RotateCcw, Save, ShieldCheck, Trash2, UserRound } from "lucide-react";
 import { api } from "../../shared/api";
+import { canCheckForUpdates, checkLumenUpdate, clearDismissedUpdate, requestUpdateNoticeRefresh } from "../../shared/updater";
 import { Modal } from "../../shared/ui/Modal";
 import { useToast } from "../../shared/ui/toast";
 import type { FinancialGoal } from "../../shared/types";
@@ -24,6 +25,8 @@ export function SettingsPage(){
   const [goal,setGoal]=useState<FinancialGoal>();const [saving,setSaving]=useState(false);
   const [resetOpen,setResetOpen]=useState(false);const [resetConfirmText,setResetConfirmText]=useState("");
   const [resetting,setResetting]=useState(false);
+  const [checkingUpdate,setCheckingUpdate]=useState(false);
+  const updatesEnabled=canCheckForUpdates();
   useEffect(()=>{if(profile){setName(profile.displayName);setIncome(profile.monthlyIncomeInCents?String(profile.monthlyIncomeInCents/100):"");
     setDay(profile.incomeDay?String(profile.incomeDay):"");setGoal(profile.financialGoal)}},[profile]);
   async function saveProfile(){
@@ -62,6 +65,21 @@ export function SettingsPage(){
       }
     } catch(e) { toast((e as {message?:string})?.message??"Falha ao restaurar.","error"); }
   }
+  async function checkForUpdates(){
+    if(!updatesEnabled)return;
+    setCheckingUpdate(true);
+    try{
+      const update=await checkLumenUpdate();
+      if(!update){
+        toast("Você já está usando a versão mais recente.");
+        return;
+      }
+      clearDismissedUpdate(update.latestVersion);
+      requestUpdateNoticeRefresh();
+      toast(`Lúmen ${update.latestVersion} disponível. O aviso apareceu no topo da tela.`);
+    }catch(e){toast((e as {message?:string})?.message??"Não foi possível checar atualizações.","error");}
+    finally{setCheckingUpdate(false);}
+  }
   function closeReset(){setResetOpen(false);setResetConfirmText("")}
   async function resetAllData(){
     setResetting(true);
@@ -94,6 +112,12 @@ export function SettingsPage(){
       </div>
       <p className="muted" style={{fontSize:12,marginTop:12}}>A restauração substitui todos os dados atuais e é aplicada ao reiniciar o aplicativo.</p>
     </article>
+    {updatesEnabled&&<article className="panel" style={{marginTop:18}}><div className="panel-title"><h2><RefreshCw size={17}/> Atualizações</h2></div>
+      <p className="muted">Confira se existe uma versão nova do Lúmen. Quando houver atualização, um aviso aparece no topo da tela com a opção de instalar.</p>
+      <div className="data-actions">
+        <button className="secondary" onClick={checkForUpdates} disabled={checkingUpdate}><RefreshCw size={15}/> {checkingUpdate?"Checando…":"Checar atualização"}</button>
+      </div>
+    </article>}
     <article className="panel danger-zone" style={{marginTop:18}}><div className="panel-title"><h2><AlertTriangle size={17}/> Zona de risco</h2></div>
       <p className="muted">Apaga permanentemente contas, transações, categorias, regras, metas, recorrências e faturas de cartão — o Lúmen reinicia sozinho e volta ao estado de instalação nova. Faça um backup antes, se precisar dos dados depois.</p>
       <button className="danger" onClick={()=>setResetOpen(true)}><Trash2 size={15}/> Resetar dados do aplicativo</button>

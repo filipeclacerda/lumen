@@ -118,6 +118,9 @@ th{color:var(--text-soft)}
 .toast-error{border-left-color:var(--danger)}.toast-error>svg{color:var(--danger)}
 @keyframes toast-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 @media(max-width:650px){.toast-stack{left:14px;right:14px;bottom:14px}.toast{max-width:none}}
+.update-banner{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:18px;padding:14px 16px;border:1px solid var(--border);border-left:3px solid var(--brand);border-radius:12px;background:var(--surface);box-shadow:var(--shadow-sm)}
+.update-banner strong,.update-banner span{display:block}.update-banner strong{font-size:13px}.update-banner span{color:var(--text-muted);font-size:12px;margin-top:3px}.update-banner-actions{display:flex;align-items:center;gap:8px;flex:none}.update-notes{max-height:150px;overflow:auto;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);padding:12px;color:var(--text);font-size:12px;line-height:1.45;white-space:pre-wrap}.update-progress{height:7px;border-radius:8px;background:var(--surface-2);overflow:hidden}.update-progress i{display:block;height:100%;border-radius:inherit;background:var(--brand);transition:width .18s ease}
+@media(max-width:650px){.update-banner{align-items:stretch;flex-direction:column}.update-banner-actions{justify-content:space-between}}
 
 /* Blocos suaves de apoio */
 .impact,.invoice-items,.report-empty,.invoice-totals>div,.match-row,.goal-card,
