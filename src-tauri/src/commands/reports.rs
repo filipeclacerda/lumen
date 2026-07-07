@@ -54,6 +54,14 @@ pub struct CategoryReport {
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct KindBreakdown {
+    kind: String,
+    total_in_cents: i64,
+    categories: Vec<CategoryReport>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct MerchantReport {
     merchant: String,
     merchant_key: Option<String>,
@@ -109,6 +117,7 @@ pub struct FinancialReport {
     current_invested_in_cents: i64,
     monthly: Vec<MonthlyReportPoint>,
     categories: Vec<CategoryReport>,
+    kind_breakdown: Vec<KindBreakdown>,
     merchants: Vec<MerchantReport>,
     daily: Vec<DailyReportPoint>,
     sources: Vec<SourceReport>,
@@ -423,6 +432,41 @@ async fn generate_financial_report_impl(filter:ReportFilter,db:&SqlitePool)->Res
         category_id:id,category:name,color,amount_in_cents:amount.max(0),
         share_percent:amount.max(0) as f64/total as f64*100.0
     }).collect();categories.sort_by_key(|x|-x.amount_in_cents);
+
+    // Build per-kind breakdown (income, expense, investment) by aggregating signed amounts
+    // per category. For income/investment we use positive amounts; for expense we use the
+    // expense_value (positive spend). This powers separate donuts in the UI.
+    let mut kind_map:HashMap<String,HashMap<Option<String>,(String,Option<String>,i64)>>=HashMap::new();
+    for row in &period_rows {
+        let kind=row.category_kind.clone().unwrap_or_else(|| if row.amount>0 {"income".into()} else {"expense".into()});
+        let signed=match kind.as_str() {
+            "income"=>income_value(row),
+            "investment"=>investment_value(row),
+            _=>expense_value(row),
+        };
+        if signed==0{continue}
+        let entry=kind_map.entry(kind.clone()).or_default();
+        let cat=entry.entry(row.category_id.clone()).or_insert((
+            row.category_name.clone().unwrap_or_else(||"Sem categoria".into()),
+            row.category_color.clone(),
+            0,
+        ));
+        cat.2+=signed;
+    }
+    let mut kind_breakdown:Vec<_>=kind_map.into_iter().map(|(kind,inner)|{
+        let kind_total:i64=inner.values().map(|x|x.2.max(0)).sum();
+        let div=kind_total.max(1);
+        let mut list:Vec<_>=inner.into_iter().map(|(id,(name,color,amount))|CategoryReport{
+            category_id:id,category:name,color,amount_in_cents:amount.max(0),
+            share_percent:amount.max(0) as f64/div as f64*100.0
+        }).collect();
+        list.sort_by_key(|x|-x.amount_in_cents);
+        KindBreakdown{kind:kind.clone(),total_in_cents:kind_total,categories:list}
+    }).collect();
+    kind_breakdown.sort_by_key(|k| match k.kind.as_str() {
+        "income"=>0,"expense"=>1,"investment"=>2,_=>3,
+    });
+
     let mut merchants:Vec<_>=merchant_map.into_iter().map(|(_,(label,key,amount,count))|MerchantReport{
         merchant:label,merchant_key:key,amount_in_cents:amount.max(0),transaction_count:count
     }).collect();merchants.sort_by_key(|x|-x.amount_in_cents);merchants.truncate(8);
@@ -485,7 +529,7 @@ async fn generate_financial_report_impl(filter:ReportFilter,db:&SqlitePool)->Res
     }
     Ok(FinancialReport{
         summary,latest_month_summary,previous_summary,current_invested_in_cents:current_invested.max(0),
-        monthly,categories,merchants,daily,sources,goals,invoices,
+        monthly,categories,kind_breakdown,merchants,daily,sources,goals,invoices,
         uncategorized_count,uncategorized_in_cents:uncategorized.max(0),highest_spending_day,
         monthly_average_in_cents:monthly_average,card_share_percent:card_share,alerts
     })

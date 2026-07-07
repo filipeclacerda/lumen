@@ -4,6 +4,7 @@ import { ArrowRight } from "lucide-react";
 import { api } from "../../shared/api";
 import { Modal } from "../../shared/ui/Modal";
 import { MoneyInput } from "../../shared/ui/MoneyInput";
+import { CategorySelect } from "../../shared/ui/CategorySelect";
 import { useToast } from "../../shared/ui/toast";
 import { todayIso } from "../../shared/format";
 import type { Transaction } from "../../shared/types";
@@ -28,7 +29,6 @@ export function TransactionForm({ onClose, existing }: Props) {
   const [saving, setSaving] = useState(false);
 
   const resolvedAccountId = accountId || accounts[0]?.id || "";
-  const relevantCategories = categories.filter(c => (type === "income" ? c.kind === "income" : c.kind !== "income"));
   const destinationAccounts = accounts.filter(a => a.id !== resolvedAccountId);
   const resolvedToAccountId = toAccountId && toAccountId !== resolvedAccountId ? toAccountId : destinationAccounts[0]?.id || "";
 
@@ -113,10 +113,14 @@ export function TransactionForm({ onClose, existing }: Props) {
               </select></label>
             </div>
             <label>Descrição<input value={description} onChange={e => setDescription(e.target.value)} placeholder="Ex.: Mercado, salário, farmácia" /></label>
-            <label>Categoria<select value={categoryId} onChange={e => setCategoryId(e.target.value)}>
-              <option value="">Sem categoria</option>
-              {relevantCategories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select></label>
+            <CategorySelect
+              value={categoryId}
+              onChange={id => setCategoryId(id ?? "")}
+              categories={categories}
+              movementType={type}
+              allowEmpty
+              emptyLabel="Sem categoria"
+            />
           </>
         )}
         {error && <p className="form-error">{error}</p>}

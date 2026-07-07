@@ -224,6 +224,9 @@ textarea:focus-visible,[role="button"]:focus-visible,[tabindex]:focus-visible{
 .dropzone h2{color:var(--text)}
 .dropzone p{color:var(--text-muted)}
 .dropzone small{color:var(--text-muted)}
+.dropzone{position:relative;transition:border-color .18s ease,background .18s ease,box-shadow .18s ease,transform .18s ease}
+.dropzone.dragging{border-color:var(--brand);background:var(--brand-soft);box-shadow:0 16px 42px #155c4717;transform:translateY(-1px)}
+.dropzone.dragging h2{color:var(--brand)}
 
 /* Grade estável das faturas: métricas, status e ações compartilham as mesmas colunas */
 .invoice-row{display:grid;grid-template-columns:28px minmax(210px,1.55fr) minmax(105px,.8fr) minmax(105px,.8fr) minmax(125px,.9fr) 70px 112px;align-items:center;column-gap:14px;min-height:78px}
@@ -626,3 +629,63 @@ nav a span {
 .danger-zone{border-color:var(--danger-soft)}
 .danger-zone h2{color:var(--danger)}
 .danger-zone p{margin-bottom:14px}
+
+/* Category groups and kind badges */
+.category-group{margin-bottom:16px}
+.category-group-title{font-size:11px;font-weight:700;color:var(--brand);text-transform:uppercase;letter-spacing:.5px;margin:0 0 8px;padding:4px 8px;background:var(--brand-soft);border-radius:6px;display:inline-block}
+.kind-badge{display:inline-block;padding:2px 6px;border-radius:4px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;margin-left:8px}
+.kind-badge.income{background:var(--brand-soft);color:var(--brand)}
+.kind-badge.expense{background:#fff0ed;color:#c76155}
+.kind-badge.investment{background:#eaf1f8;color:#3d6f9a}
+.kind-badge.transfer{background:#f3f7f4;color:#547067}
+.category-row .kind-badge{font-size:9px;padding:1px 5px}
+
+/* Onboarding category groups */
+.onboarding-category-group{margin-bottom:14px}
+.onboarding-category-label{font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin:0 0 6px}
+.onboarding-category-badges{display:flex;flex-wrap:wrap;gap:6px}
+
+/* Category dropdown (custom CategorySelect with icons, tooltips and search) */
+.category-dropdown{position:relative;display:inline-block;min-width:160px;width:100%}
+.category-dropdown-trigger{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;border:1px solid var(--border-strong);border-radius:8px;background:var(--surface);padding:9px 10px;font:inherit;color:var(--text);text-align:left;cursor:pointer;min-width:0}
+.category-dropdown-trigger:disabled{opacity:.5;cursor:not-allowed}
+.category-dropdown-trigger:hover:not(:disabled){border-color:var(--brand)}
+.category-dropdown.open .category-dropdown-trigger{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-soft)}
+.category-dropdown-value{display:flex;align-items:center;gap:6px;min-width:0;flex:1}
+.category-dropdown-placeholder{color:var(--text-muted);font-size:12px}
+.category-dropdown-swatch{width:9px;height:18px;border-radius:5px;flex-shrink:0}
+.category-dropdown-icon{font-size:14px;line-height:1;flex-shrink:0}
+.category-dropdown-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}
+.category-dropdown-caret{color:var(--text-muted);font-size:10px;flex-shrink:0}
+.category-dropdown-panel{position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:50;background:var(--surface);border:1px solid var(--border-strong);border-radius:10px;box-shadow:var(--shadow-md);max-height:300px;display:flex;flex-direction:column;min-width:220px}
+.category-dropdown-search{padding:8px;border-bottom:1px solid var(--border)}
+.category-dropdown-search input{width:100%;border:1px solid var(--border-strong);border-radius:7px;padding:7px 9px;font:inherit;font-size:12px;background:var(--surface);color:var(--text)}
+.category-dropdown-search input:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-soft)}
+.category-dropdown-list{overflow-y:auto;padding:4px}
+.category-dropdown-empty{padding:14px;text-align:center;color:var(--text-muted);font-size:12px;margin:0}
+.category-dropdown-group{margin-top:4px}
+.category-dropdown-group-label{font-size:9px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;padding:6px 8px 2px}
+.category-dropdown-option{display:flex;align-items:center;gap:6px;width:100%;background:transparent;border:0;border-radius:7px;padding:7px 8px;text-align:left;font:inherit;font-size:12px;color:var(--text);cursor:pointer;min-width:0}
+.category-dropdown-option:hover{background:var(--surface-2)}
+.category-dropdown-option.selected{background:var(--brand-soft);color:var(--brand)}
+.category-dropdown-option .category-dropdown-name{flex:1}
+.category-dropdown-kind{font-size:9px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.3px;flex-shrink:0}
+
+/* Hierarchical tree styling for category rows */
+.category-tree{display:flex;flex-direction:column;position:relative}
+.category-tree-node{position:relative;display:flex;flex-direction:column}
+.category-tree-children{display:flex;flex-direction:column;position:relative;padding-left:24px}
+.category-tree-node .tree-bar{position:absolute;top:14px;bottom:14px;width:3px;border-radius:3px;opacity:.5}
+.category-row.tree-row{display:flex;grid-template-columns:none;width:100%;min-height:50px;position:relative;padding:10px 0;align-items:center;gap:10px}
+.category-row.tree-row .category-swatch{flex:0 0 9px;height:30px}
+.category-row.tree-row .category-icon{width:18px;height:18px;flex:0 0 18px;display:grid;place-items:center}
+.category-row.tree-row .tree-content{display:flex;align-items:center;gap:8px;flex:1;min-width:0}
+.category-row.tree-row .tree-content>b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.category-row.tree-row .tree-content>small{display:inline;margin:0;white-space:nowrap;flex:0 0 auto}
+.category-row.tree-row .kind-badge{flex:0 0 auto;margin-left:0}
+.category-row.tree-row .system-label{flex:0 0 auto;margin-left:auto}
+.tree-children-count{font-size:9px;color:var(--text-muted);margin-left:2px;flex:0 0 auto}
+.category-drag-handle{width:18px;flex:0 0 18px;color:var(--text-muted);font-size:10px;cursor:grab;line-height:1;text-align:center}
+.category-row.tree-row:active .category-drag-handle{cursor:grabbing}
+.tree-row-actions{display:flex;gap:4px;align-items:center;justify-content:flex-end;flex:0 0 auto}
+.tree-row-actions .icon-button{height:28px;min-width:28px;padding:0 8px}

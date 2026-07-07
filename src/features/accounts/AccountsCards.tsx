@@ -125,7 +125,7 @@ export function AccountsCards() {
             </span>
           </button>
           <div className="invoice-metric"><small>Compras</small><b>{money(invoice.purchasesInCents)}</b></div>
-          <div className="invoice-metric"><small>Créditos</small><b>{money(invoice.creditsInCents)}</b></div>
+          <div className="invoice-metric"><small>Créditos e pagamentos</small><b>{money(invoice.creditsInCents)}</b></div>
           <div className="invoice-metric invoice-total-value"><small>Total</small><strong>{money(invoice.totalInCents)}</strong></div>
           <div className="invoice-status"><span className={`badge ${invoice.status==="paid"?"success-badge":""}`}>{invoice.status==="paid"?"Paga":"Aberta"}</span></div>
           <div className="invoice-actions">
@@ -143,7 +143,7 @@ export function AccountsCards() {
             <tbody>{items.map(item=><tr key={item.transactionId}><td>{shortDate(item.date)}</td><td>{item.description}</td>
               <td>{item.holder??"—"}</td><td>{item.installment??"—"}</td><td>{item.categoryName??"Sem categoria"}</td>
               <td className={item.amountInCents>0?"positive amount":"amount"}>{money(item.amountInCents)}</td>
-              <td><div style={{display:"flex",gap:"8px",justifyContent:"flex-end"}}>{item.isPayment&&(item.isLinked?<button className="secondary" onClick={()=>unlinkImportedPayment(item.transactionId)}><Unlink size={14}/> Desvincular</button>:
+              <td><div style={{display:"flex",gap:"8px",justifyContent:"flex-end"}}>{item.lineKind==="payment"&&(item.isLinked?<button className="secondary" onClick={()=>unlinkImportedPayment(item.transactionId)}><Unlink size={14}/> Desvincular</button>:
                 <button className="secondary" onClick={()=>findImportedPayment(item.transactionId,item.amountInCents)}><Link2 size={14}/> Conciliar</button>)}
                 <button className="danger icon-button" title="Excluir lançamento" onClick={()=>setDeletingTransaction(item.transactionId)}><Trash2 size={16}/></button>
               </div></td>
