@@ -115,7 +115,7 @@ export function TransactionForm({ onClose, existing }: Props) {
             <label>Descrição<input value={description} onChange={e => setDescription(e.target.value)} placeholder="Ex.: Mercado, salário, farmácia" /></label>
             <CategorySelect
               value={categoryId}
-              onChange={setCategoryId}
+              onChange={id => setCategoryId(id ?? "")}
               categories={categories}
               movementType={type}
               allowEmpty

@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { type DragEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Check, CheckCircle2, Circle, CreditCard, Download, FileText, FileUp, ListChecks, Plus, ShieldCheck, TableProperties, X } from "lucide-react";
 import { api } from "../../shared/api";
 import { Modal } from "../../shared/ui/Modal";
+import { CategorySelect } from "../../shared/ui/CategorySelect";
 import { money, centsToInput, parseMoneyToCents, maskCurrency } from "../../shared/format";
 import type {
   CreditCardImportPreview,
@@ -59,6 +61,8 @@ export function ImportPage() {
   const [newCardName, setNewCardName] = useState("");
   const [creatingCard, setCreatingCard] = useState(false);
   const [cardDueDate, setCardDueDate] = useState("");
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const [isReadingFile, setIsReadingFile] = useState(false);
 
   useEffect(() => {
     if (pendingCardPath) {
@@ -85,6 +89,9 @@ export function ImportPage() {
   const { data: accounts = [] } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
   const bankAccount = accounts.find((account) => account.kind !== "credit_card");
   const cards = accounts.filter((account) => account.kind === "credit_card");
+  const bankAccountId = bankAccount?.id;
+  const firstCardId = cards[0]?.id ?? "";
+  const canStartImport = !bankPreview && !cardPreview && !pendingCardPath && !mappingState;
 
   // Keep the selected card valid: a <select> with a value that matches no
   // option shows the first option visually but leaves cardAccountId empty.
@@ -125,42 +132,135 @@ export function ImportPage() {
     return () => clearTimeout(timer);
   }, [mappingState, bankAccount, cardAccountId]);
 
+  const resetFlow = useCallback(() => {
+    setBankPreview(undefined);
+    setCardPreview(undefined);
+    setPendingCardPath("");
+    setMappingState(undefined);
+    setMappingError("");
+  }, []);
+
+  const processImportPath = useCallback(async (path: string) => {
+    if (!path || isReadingFile) return;
+    setIsReadingFile(true);
+    setIsDraggingFile(false);
+    resetFlow();
+    setMessage("");
+    try {
+      const kind = await api.detectImportKind(path);
+      if (kind === "known_credit_card") {
+        setPendingCardPath(path);
+        setCardAccountId(firstCardId);
+        return;
+      }
+      if (kind === "known_bank") {
+        if (!bankAccountId) {
+          setMessage("Cadastre uma conta bancária antes de importar o extrato.");
+          return;
+        }
+        setBankPreview(await api.previewImport(path, bankAccountId));
+        return;
+      }
+      const inspection = await api.inspectImportFile(path);
+      const matchedProfile = inspection.matchedProfiles.length === 1 ? inspection.matchedProfiles[0] : undefined;
+      const sourceKind = matchedProfile?.sourceKind ?? inspection.suggestedSourceKind ?? "bank";
+      setMappingState({
+        path,
+        inspection,
+        draft: matchedProfile ? draftFromProfile(matchedProfile) : buildInitialDraft(inspection, sourceKind),
+        saveProfile: !matchedProfile,
+        matchedProfile,
+      });
+      if (sourceKind === "credit_card" && firstCardId) {
+        setCardAccountId(firstCardId);
+      }
+    } catch (error: any) {
+      setMessage(`Não foi possível ler o arquivo: ${error?.message || error}`);
+    } finally {
+      setIsReadingFile(false);
+    }
+  }, [bankAccountId, firstCardId, isReadingFile, resetFlow]);
+
+  const handleDroppedPaths = useCallback(async (paths: string[]) => {
+    if (!canStartImport || paths.length === 0) return;
+    if (paths.length > 1) {
+      setIsDraggingFile(false);
+      setMessage("Solte apenas um arquivo por vez para revisar a importação com segurança.");
+      return;
+    }
+    await processImportPath(paths[0]);
+  }, [canStartImport, processImportPath]);
+
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    getCurrentWebview().onDragDropEvent((event) => {
+      if (disposed) return;
+      if (!canStartImport) {
+        if (event.payload.type !== "over") setIsDraggingFile(false);
+        return;
+      }
+      if (event.payload.type === "enter" || event.payload.type === "over") {
+        setIsDraggingFile(true);
+        return;
+      }
+      if (event.payload.type === "leave") {
+        setIsDraggingFile(false);
+        return;
+      }
+      void handleDroppedPaths(event.payload.paths);
+    }).then((nextUnlisten) => {
+      if (disposed) nextUnlisten();
+      else unlisten = nextUnlisten;
+    }).catch(() => setIsDraggingFile(false));
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [canStartImport, handleDroppedPaths]);
+
   async function choose() {
     if (!("__TAURI_INTERNALS__" in window)) {
       setMessage("Abra o aplicativo desktop para selecionar arquivos locais.");
       return;
     }
-    const path = await open({ multiple: false, filters: [{ name: "Extratos e faturas", extensions: ["csv", "ofx", "pdf"] }] });
-    if (!path) return;
-    resetFlow();
-    setMessage("");
-    const kind = await api.detectImportKind(path);
-    if (kind === "known_credit_card") {
-      setPendingCardPath(path);
-      setCardAccountId(cards[0]?.id ?? "");
+    const selectedPath = await open({ multiple: false, filters: [{ name: "Extratos e faturas", extensions: ["csv", "ofx", "pdf"] }] });
+    if (!selectedPath) return;
+    const path = Array.isArray(selectedPath) ? selectedPath[0] : selectedPath;
+    await processImportPath(path);
+  }
+
+  function handleDropzoneDrag(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (canStartImport) setIsDraggingFile(true);
+  }
+
+  function handleDropzoneLeave(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    const nextTarget = event.relatedTarget as Node | null;
+    if (nextTarget && event.currentTarget.contains(nextTarget)) return;
+    setIsDraggingFile(false);
+  }
+
+  function handleDropzoneDrop(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDraggingFile(false);
+    if (!canStartImport) return;
+    const paths = Array.from(event.dataTransfer.files)
+      .map((file) => (file as File & { path?: string }).path)
+      .filter((path): path is string => Boolean(path));
+    if (paths.length > 0) {
+      void handleDroppedPaths(paths);
       return;
     }
-    if (kind === "known_bank") {
-      if (!bankAccount) {
-        setMessage("Cadastre uma conta bancária antes de importar o extrato.");
-        return;
-      }
-      setBankPreview(await api.previewImport(path, bankAccount.id));
-      return;
-    }
-    const inspection = await api.inspectImportFile(path);
-    const matchedProfile = inspection.matchedProfiles.length === 1 ? inspection.matchedProfiles[0] : undefined;
-    const sourceKind = matchedProfile?.sourceKind ?? inspection.suggestedSourceKind ?? "bank";
-    setMappingState({
-      path,
-      inspection,
-      draft: matchedProfile ? draftFromProfile(matchedProfile) : buildInitialDraft(inspection, sourceKind),
-      saveProfile: !matchedProfile,
-      matchedProfile,
-    });
-    if (sourceKind === "credit_card" && cards[0]?.id) {
-      setCardAccountId(cards[0].id);
-    }
+    setMessage("__TAURI_INTERNALS__" in window
+      ? "Não consegui acessar o caminho do arquivo arrastado. Use Escolher arquivo ou tente soltar novamente."
+      : "Abra o aplicativo desktop para arrastar arquivos locais.");
   }
 
   async function createCard() {
@@ -231,15 +331,7 @@ export function ImportPage() {
     ]);
   }
 
-  function resetFlow() {
-    setBankPreview(undefined);
-    setCardPreview(undefined);
-    setPendingCardPath("");
-    setMappingState(undefined);
-    setMappingError("");
-  }
-
-  async function changeBankCategory(sourceRow: number, categoryId: string) {
+  async function changeBankCategory(sourceRow: number, categoryId?: string) {
     if (!bankPreview) return;
     const candidate = bankPreview.candidates.find((c) => c.sourceRow === sourceRow);
     const oldCategoryId = candidate?.suggestedCategoryId;
@@ -346,10 +438,16 @@ export function ImportPage() {
     <header><div><p className="eyebrow">IMPORTAÇÃO SEGURA</p><h1>Importar extrato ou fatura</h1>
       <p className="muted">CSV, OFX e PDF são processados somente neste computador.</p></div></header>
 
-    {!bankPreview && !cardPreview && !pendingCardPath && !mappingState && <article className="dropzone">
-      <FileUp size={42} /><h2>Selecione um arquivo financeiro</h2>
-      <p>O aplicativo reconhece automaticamente extratos e o CSV de fatura de cartão. Para outros CSVs, você pode mapear as colunas e salvar o layout.</p>
-      <button onClick={choose}>Escolher arquivo</button>
+    {canStartImport && <article
+      className={`dropzone${isDraggingFile ? " dragging" : ""}`}
+      onDragEnter={handleDropzoneDrag}
+      onDragOver={handleDropzoneDrag}
+      onDragLeave={handleDropzoneLeave}
+      onDrop={handleDropzoneDrop}
+    >
+      <FileUp size={42} /><h2>{isDraggingFile ? "Solte o arquivo para importar" : "Arraste ou selecione um arquivo financeiro"}</h2>
+      <p>Arraste um CSV, OFX ou PDF para esta área. O aplicativo reconhece automaticamente extratos e faturas; para outros CSVs, você pode mapear as colunas e salvar o layout.</p>
+      <button onClick={choose} disabled={isReadingFile}>{isReadingFile ? "Lendo arquivo..." : "Escolher arquivo"}</button>
       <div style={{ position: "relative", display: "inline-block", margin: "0 auto 22px" }}>
         <button className="text-button" onClick={() => setShowTroubleMenu(!showTroubleMenu)}>Enfrentando problemas?</button>
         {showTroubleMenu && <div ref={troubleMenuRef} style={{ position: "absolute", top: openUpwards ? "auto" : "calc(100% + 8px)", bottom: openUpwards ? "calc(100% + 8px)" : "auto", left: "50%", transform: "translateX(-50%)", background: "var(--surface)", border: "1px solid var(--border-strong)", padding: "14px", borderRadius: "14px", boxShadow: "var(--shadow-md)", display: "flex", flexDirection: "column", zIndex: 10, minWidth: "240px", animation: openUpwards ? "slideUp 0.2s ease-out" : "slideDown 0.2s ease-out" }}>
@@ -491,7 +589,7 @@ export function ImportPage() {
             {candidate.suggestionSource==="rule"&&candidate.suggestedRuleName&&<small className="source-label">por {candidate.suggestedRuleName}</small>}
             {candidate.suggestionSource==="history"&&<small className="source-label history-label">pelo seu histórico</small>}
           </td>
-          <td><CategorySelect value={candidate.suggestedCategoryId} categories={categories} onChange={(value) => changeBankCategory(candidate.sourceRow, value)} /></td>
+          <td><CategorySelect value={candidate.suggestedCategoryId} categories={categories} native onChange={(value) => changeBankCategory(candidate.sourceRow, value)} /></td>
           <td><MoneyEditor value={candidate.amountInCents} disabled={!candidate.included}
             onCommit={(value) => updateBankCandidate(candidate.sourceRow, value, candidate.included)} /></td>
           <td><span className="badge">{candidate.duplicateStatus}</span></td></tr>)}</tbody></table>
@@ -515,7 +613,7 @@ export function ImportPage() {
             {!item.isPayment&&item.candidate.suggestionSource==="history"&&<small className="source-label history-label">pelo seu histórico</small>}
           </td>
           <td>{item.holder ?? "—"}</td><td>{item.installment ?? "—"}</td>
-          <td><CategorySelect value={item.candidate.suggestedCategoryId} categories={categories}
+          <td><CategorySelect value={item.candidate.suggestedCategoryId} categories={categories} native
             onChange={(value) => updateCard(item.candidate.sourceRow, item.included, value)} /></td>
           <td className={item.candidate.amountInCents > 0 ? "positive amount" : "amount"}>{money(item.candidate.amountInCents)}</td>
         </tr>)}</tbody></table></div>
@@ -687,15 +785,6 @@ function CardPicker({ label, cards, value, onChange, onCreate, required }: {
     </div>
     {empty && <small className="card-picker-hint">Você ainda não tem cartões. Toque em <b>+</b> para cadastrar o primeiro.</small>}
   </div>;
-}
-
-function CategorySelect({ value, categories, onChange }: {
-  value?: string; categories: Awaited<ReturnType<typeof api.categories>>; onChange: (value: string) => void
-}) {
-  return <select className="category-select" value={value ?? ""} onChange={(event) => onChange(event.target.value)}>
-    <option value="">Sem categoria</option>
-    {categories.map((category) => <option key={category.id} value={category.id}>{category.parentId ? "↳ " : ""}{category.name}</option>)}
-  </select>;
 }
 
 function MoneyEditor({ value, disabled, onCommit }: { value: number; disabled?: boolean; onCommit: (value: number) => void }) {

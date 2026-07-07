@@ -283,13 +283,13 @@ function TargetEditor({target,month,categories,onClose,onSaved}:{
       onSaved();
     }catch(e:any){setError(e?.message||String(e))}
   }
-  return <div className="modal-backdrop"><article className="modal target-modal"><h2>{target.id?"Editar meta":"Nova meta financeira"}</h2"}</h2>
+  return <div className="modal-backdrop"><article className="modal target-modal"><h2>{target.id?"Editar meta":"Nova meta financeira"}</h2>
     <p className="muted">Defina um objetivo recorrente e acompanhe a projeção ao longo do mês.</p>
     <label>Tipo<select value={kind} onChange={e=>setKind(e.target.value as typeof kind)}>
       <option value="category">Limite por categoria</option><option value="savings">Economia mensal</option></select></label>
     {kind==="category"&&<CategorySelect
         value={categoryId}
-        onChange={setCategoryId}
+        onChange={id => setCategoryId(id ?? "")}
         categories={categories}
         kind="expense"
         allowEmpty

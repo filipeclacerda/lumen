@@ -46,7 +46,7 @@ export function Transactions() {
   async function refresh() {
     await Promise.all([client.invalidateQueries({queryKey:["transactions"]}),client.invalidateQueries({queryKey:["summary"]})]);
   }
-  async function changeCategory(transaction:Transaction, categoryId:string) {
+  async function changeCategory(transaction:Transaction, categoryId?:string) {
     await api.updateTransactionCategory(transaction.id, categoryId || undefined);
     await refresh();
     if(categoryId) setLearning({transaction,categoryId,pattern:transaction.description.toUpperCase()});
@@ -109,7 +109,7 @@ export function Transactions() {
     <article className="panel"><div className="transactions-toolbar"><div className="toolbar"><Search size={18}/><input aria-label="Buscar transações" placeholder="Buscar por descrição…" value={search} onChange={e=>setSearch(e.target.value)}/></div>
       {selected.size>0&&<div className="bulk-actions"><b>{selected.size} selecionada{selected.size>1?"s":""}</b><CategorySelect
           value={bulkCategory}
-          onChange={setBulkCategory}
+          onChange={id => setBulkCategory(id ?? "")}
           categories={categories}
           allowEmpty
           emptyLabel="Sem categoria"
@@ -141,7 +141,7 @@ export function Transactions() {
           </span></td>
           <td><CategorySelect
             value={t.categoryId}
-            onChange={id => changeCategory(t, id || undefined)}
+            onChange={id => changeCategory(t, id)}
             categories={categories}
             allowEmpty
             emptyLabel="Sem categoria"

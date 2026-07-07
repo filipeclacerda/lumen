@@ -117,11 +117,13 @@ export type ImportFileInspection = {
 };
 export type TemplateKind = "bank" | "credit_card";
 export type ImportPreview = { sessionId: string; fileName: string; candidates: ImportCandidate[] };
+export type CreditCardLineKind = "purchase" | "refund" | "payment";
 export type CreditCardImportItem = {
   candidate: ImportCandidate;
   holder?: string;
   installment?: string;
   rawAmountInCents: number;
+  lineKind: CreditCardLineKind;
   included: boolean;
   isPayment: boolean;
 };
@@ -158,6 +160,7 @@ export type CreditCardInvoiceItem = {
   holder?: string;
   installment?: string;
   sourceRow: number;
+  lineKind: CreditCardLineKind;
   isPayment: boolean;
   isLinked: boolean;
 };
@@ -189,6 +192,9 @@ export type MonthlyReportPoint = {
 export type CategoryReport = {
   categoryId?:string; category:string; color?:string; amountInCents:number; sharePercent:number;
 };
+export type KindBreakdown = {
+  kind:CategoryKind; totalInCents:number; categories:CategoryReport[];
+};
 export type MerchantReport = { merchant:string; merchantKey?:string; amountInCents:number; transactionCount:number };
 export type MerchantAlias = { id:string; merchantKey:string; displayName:string };
 export type DailyReportPoint = { date:string; amountInCents:number; cumulativeInCents:number };
@@ -216,7 +222,7 @@ export type RecurringTransactionInput = {
 export type FinancialReport = {
   summary:ReportSummary; latestMonthSummary:ReportSummary; previousSummary:ReportSummary;
   currentInvestedInCents:number; monthly:MonthlyReportPoint[];
-  categories:CategoryReport[]; merchants:MerchantReport[]; daily:DailyReportPoint[];
+  categories:CategoryReport[]; kindBreakdown:KindBreakdown[]; merchants:MerchantReport[]; daily:DailyReportPoint[];
   sources:{source:"bank"|"credit_card";amountInCents:number;sharePercent:number}[];
   goals:GoalProgress[]; invoices:{openCount:number;paidCount:number;openTotalInCents:number};
   uncategorizedCount:number; uncategorizedInCents:number; highestSpendingDay?:DailyReportPoint;

@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../shared/api";
 import { maskCurrency, parseMoneyToCents } from "../../shared/format";
-import type { AccountType, AppBootstrap, Category, FinancialGoal } from "../../shared/types";
+import type { AccountType, AppBootstrap, Category, CategoryKind, FinancialGoal } from "../../shared/types";
 
 const goals:{value:FinancialGoal;label:string}[]=[
   {value:"organize",label:"Organizar minhas finanças"},
@@ -30,6 +30,7 @@ export function Onboarding({bootstrap,onFinished}:{bootstrap:AppBootstrap;onFini
   const queryClient = useQueryClient();
   const { data: categories = [] } = useQuery<Category[]>({ queryKey: ["categories"], queryFn: api.categories });
   const [newCategoryName, setNewCategoryName] = useState("");
+  const [newCategoryKind, setNewCategoryKind] = useState<CategoryKind>("expense");
 
   function nextProfile(){
     if(name.trim().length<2){setError("Informe um nome com pelo menos 2 caracteres.");return}
@@ -91,29 +92,52 @@ export function Onboarding({bootstrap,onFinished}:{bootstrap:AppBootstrap;onFini
     </div>}
     {step===4&&<div className="onboarding-content"><div className="step-icon"><Tags/></div><p className="eyebrow">PERSONALIZAÇÃO</p><h1>Ajuste suas categorias</h1>
       <p className="muted">Essas são as categorias padrão. Você pode remover as que não usa e adicionar novas para deixar com a sua cara.</p>
-      <div style={{display:"flex",flexWrap:"wrap",gap:"8px",marginBottom:"20px"}}>
-        {categories.map(c=><span key={c.id} className="badge" style={{display:"flex",alignItems:"center",gap:"4px"}}>
-          {c.name}
-          <X size={13} style={{cursor:"pointer",opacity:0.7}} onClick={async()=>{
-            if(confirm(`Remover categoria ${c.name}?`)){
-              await api.archiveCategory(c.id);
-              queryClient.invalidateQueries({queryKey:["categories"]});
-            }
-          }}/>
-        </span>)}
-      </div>
-      <div className="inline-create" style={{marginTop:0}}>
-        <label>Nova categoria: <input style={{marginLeft: "8px"}} value={newCategoryName} onChange={e=>setNewCategoryName(e.target.value)} placeholder="Ex.: Lazer" onKeyDown={e=>{
+      {(() => {
+        const kinds: { value: CategoryKind; label: string }[] = [
+          { value: "income", label: "Receitas" },
+          { value: "expense", label: "Despesas" },
+          { value: "investment", label: "Investimentos" },
+          { value: "transfer", label: "Transferências" },
+        ];
+        return kinds.map(({ value, label }) => {
+          const items = categories.filter(c => c.kind === value);
+          if (items.length === 0) return null;
+          return (
+            <div key={value} className="onboarding-category-group">
+              <p className="onboarding-category-label">{label}</p>
+              <div className="onboarding-category-badges">
+                {items.map(c => <span key={c.id} className={`badge kind-badge ${c.kind}`} style={{display:"flex",alignItems:"center",gap:"4px"}}>
+                  {c.name}
+                  <X size={13} style={{cursor:"pointer",opacity:0.7}} onClick={async()=>{
+                    if(confirm(`Remover categoria ${c.name}?`)){
+                      await api.archiveCategory(c.id);
+                      queryClient.invalidateQueries({queryKey:["categories"]});
+                    }
+                  }}/>
+                </span>)}
+              </div>
+            </div>
+          );
+        });
+      })()}
+      <div className="inline-create" style={{marginTop:16}}>
+        <label>Nova categoria: <input style={{marginLeft:"8px"}} value={newCategoryName} onChange={e=>setNewCategoryName(e.target.value)} placeholder="Ex.: Lazer" onKeyDown={e=>{
           if(e.key==="Enter" && newCategoryName.trim()){
-            api.saveCategory({ name: newCategoryName.trim(), kind: "expense" }).then(()=>{
+            api.saveCategory({ name: newCategoryName.trim(), kind: newCategoryKind }).then(()=>{
               setNewCategoryName("");
               queryClient.invalidateQueries({queryKey:["categories"]});
             });
           }
         }}/></label>
+        <select value={newCategoryKind} onChange={e=>setNewCategoryKind(e.target.value as CategoryKind)} aria-label="Tipo da nova categoria">
+          <option value="expense">Despesa</option>
+          <option value="income">Receita</option>
+          <option value="investment">Investimento</option>
+          <option value="transfer">Transferência</option>
+        </select>
         <button className="secondary" onClick={async()=>{
           if(!newCategoryName.trim())return;
-          await api.saveCategory({ name: newCategoryName.trim(), kind: "expense" });
+          await api.saveCategory({ name: newCategoryName.trim(), kind: newCategoryKind });
           setNewCategoryName("");
           queryClient.invalidateQueries({queryKey:["categories"]});
         }}><Plus size={16}/> Adicionar</button>

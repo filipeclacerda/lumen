@@ -8,13 +8,24 @@ const demoTransactions: Transaction[] = [
   { id: "4", accountId: "card", accountName:"Cartão principal", accountKind:"credit_card", date: "2026-06-21", description: "Café do Centro", amountInCents: -3250, categoryId: "food", category: "Alimentação", status: "cleared" }
 ];
 const demoCategories: Category[] = [
-  { id:"income",name:"Receitas",color:"#22835f",kind:"income",sortOrder:0,isSystem:true },
-  { id:"salary",parentId:"income",name:"Salário",color:"#22835f",kind:"income",sortOrder:10,isSystem:true },
+  { id:"income",name:"Receitas",color:"#22835f",kind:"income",sortOrder:10,isSystem:true },
+  { id:"salary",parentId:"income",name:"Salário",color:"#22835f",kind:"income",sortOrder:11,isSystem:true },
+  { id:"other-income",parentId:"income",name:"Outras receitas",color:"#22835f",kind:"income",sortOrder:12,isSystem:true },
   { id:"food",name:"Alimentação",color:"#e5a142",kind:"expense",sortOrder:20,isSystem:true },
-  { id:"groceries",parentId:"food",name:"Supermercado",color:"#e5a142",kind:"expense",sortOrder:30,isSystem:true },
-  { id:"housing",name:"Moradia",color:"#728bba",kind:"expense",sortOrder:40,isSystem:true },
-  { id:"utilities",parentId:"housing",name:"Água, luz e gás",color:"#728bba",kind:"expense",sortOrder:50,isSystem:true },
-  { id:"transfers",name:"Transferências",color:"#6d7d78",kind:"transfer",sortOrder:140,isSystem:true }
+  { id:"groceries",parentId:"food",name:"Supermercado",color:"#e5a142",kind:"expense",sortOrder:21,isSystem:true },
+  { id:"restaurants",parentId:"food",name:"Restaurantes",color:"#e5a142",kind:"expense",sortOrder:22,isSystem:true },
+  { id:"housing",name:"Moradia",color:"#728bba",kind:"expense",sortOrder:30,isSystem:true },
+  { id:"rent",parentId:"housing",name:"Aluguel e condomínio",color:"#728bba",kind:"expense",sortOrder:31,isSystem:true },
+  { id:"utilities",parentId:"housing",name:"Água, luz e gás",color:"#728bba",kind:"expense",sortOrder:32,isSystem:true },
+  { id:"transport",name:"Transporte",color:"#9165a4",kind:"expense",sortOrder:40,isSystem:true },
+  { id:"fuel",parentId:"transport",name:"Combustível",color:"#9165a4",kind:"expense",sortOrder:41,isSystem:true },
+  { id:"health",name:"Saúde",color:"#d66d68",kind:"expense",sortOrder:50,isSystem:true },
+  { id:"shopping",name:"Compras",color:"#c97f9e",kind:"expense",sortOrder:90,isSystem:true },
+  { id:"personal-care",name:"Cuidados pessoais",color:"#c97f9e",kind:"expense",sortOrder:95,isSystem:true },
+  { id:"leisure",name:"Lazer",color:"#4c94a8",kind:"expense",sortOrder:100,isSystem:true },
+  { id:"investments",name:"Investimentos",color:"#1a5b82",kind:"investment",sortOrder:130,isSystem:true },
+  { id:"transfers",name:"Transferências",color:"#6d7d78",kind:"transfer",sortOrder:120,isSystem:true },
+  { id:"credit-card-payment",parentId:"transfers",name:"Pagamento de fatura",color:"#6d7d78",kind:"transfer",sortOrder:121,isSystem:true }
 ];
 const demoRules: CategorizationRule[] = [
   { id:"default-salary",name:"Salário identificado",priority:1000,enabled:true,operator:"contains",pattern:"SALARIO",movementType:"income",categoryId:"salary",categoryName:"Salário",useCount:1,isSystem:true },
@@ -150,6 +161,15 @@ export const api = {
         {categoryId:"housing",category:"Moradia",color:"#728bba",amountInCents:142000,sharePercent:28},
         {categoryId:"transport",category:"Transporte",color:"#a778ba",amountInCents:82000,sharePercent:16},
         {categoryId:"health",category:"Saúde",color:"#d66d68",amountInCents:61000,sharePercent:12}
+      ],kindBreakdown:[
+        {kind:"income",totalInCents:4520000,categories:[{categoryId:"salary",category:"Salário",color:"#22835f",amountInCents:4520000,sharePercent:100}]},
+        {kind:"expense",totalInCents:2898740,categories:[
+          {categoryId:"food",category:"Alimentação",color:"#e5a142",amountInCents:168000,sharePercent:33},
+          {categoryId:"housing",category:"Moradia",color:"#728bba",amountInCents:142000,sharePercent:28},
+          {categoryId:"transport",category:"Transporte",color:"#a778ba",amountInCents:82000,sharePercent:16},
+          {categoryId:"health",category:"Saúde",color:"#d66d68",amountInCents:61000,sharePercent:12}
+        ]},
+        {kind:"investment",totalInCents:305000,categories:[{categoryId:"investments",category:"Investimentos",color:"#1a5b82",amountInCents:305000,sharePercent:100}]}
       ],merchants:[
         {merchant:"SUPERMERCADOS BH",merchantKey:"SUPERMERCADOS BH",amountInCents:92300,transactionCount:4},
         {merchant:"MERCADOLIVRE",merchantKey:"MERCADOLIVRE",amountInCents:79139,transactionCount:2}
