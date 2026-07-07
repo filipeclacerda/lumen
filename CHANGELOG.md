@@ -5,6 +5,31 @@ Todas as mudanças relevantes deste projeto são documentadas neste arquivo.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o
 projeto adota o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.3.5] - 2026-07-07
+
+Foco em preparar o Lúmen para avisar e instalar novas versões pelo próprio app.
+
+### Adicionado
+- **Aviso de nova versão** com banner persistente e modal de instalação quando
+  houver atualização disponível.
+- **Instalação pelo app** usando o updater oficial do Tauri, com download,
+  instalação e reinício automático do Lúmen.
+- **Checagem manual de atualização** na tela de Configurações para builds
+  instalados.
+- **Artefatos de updater assinados** no build Tauri, com endpoint apontando para
+  o `latest.json` publicado nas releases do GitHub.
+
+### Alterado
+- O fluxo de release passa a receber `TAURI_SIGNING_PRIVATE_KEY` e
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` pelos secrets do GitHub Actions.
+- A checagem de atualização fica desabilitada em `tauri dev`, evitando erros
+  locais enquanto não existe uma release publicada.
+- A versão do app foi alinhada em `0.3.5` nos manifests do frontend e do Tauri.
+
+### Segurança
+- Arquivos de chave (`*.key*`) passam a ser ignorados pelo Git para evitar que a
+  chave privada do updater seja commitada por acidente.
+
 ## [0.3.0] - 2026-06-28
 
 Foco em tornar a importação de faturas de cartão mais clara, guiada e à prova de
@@ -45,3 +70,4 @@ erros, com cadastro rápido de cartão sem sair do fluxo.
   publicação, acelerando os builds.
 
 [0.3.0]: https://github.com/filipeclacerda/lumen/compare/v0.2.2...v0.3.0
+[0.3.5]: https://github.com/filipeclacerda/lumen/compare/v0.3.4...v0.3.5
