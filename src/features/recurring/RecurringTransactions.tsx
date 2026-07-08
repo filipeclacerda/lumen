@@ -2,10 +2,11 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, Pencil, Play, Repeat, Save } from "lucide-react";
 import { api } from "../../shared/api";
-import { maskCurrency, centsToInput, money, parseMoneyToCents } from "../../shared/format";
+import { money } from "../../shared/format";
 import { currentMonth } from "../../shared/period";
 import { useToast } from "../../shared/ui/toast";
 import { CategorySelect } from "../../shared/ui/CategorySelect";
+import { MoneyInput } from "../../shared/ui/MoneyInput";
 import type { RecurringTransaction, RecurringTransactionInput } from "../../shared/types";
 
 const emptyDraft: RecurringTransactionInput = {
@@ -24,7 +25,8 @@ export function RecurringTransactions() {
   const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: api.categories });
   const [draft, setDraft] = useState<RecurringTransactionInput>(emptyDraft);
   const [type, setType] = useState<"expense" | "income">("expense");
-  const [amountText, setAmountText] = useState("");
+  const [amountInCents, setAmountInCents] = useState<number | null>(null);
+  const [amountInputVersion, setAmountInputVersion] = useState(0);
   const [error, setError] = useState("");
   const editing = Boolean(draft.id);
 
@@ -39,7 +41,8 @@ export function RecurringTransactions() {
 
   function edit(item: RecurringTransaction) {
     setType(item.amountInCents > 0 ? "income" : "expense");
-    setAmountText(centsToInput(Math.abs(item.amountInCents)));
+    setAmountInCents(Math.abs(item.amountInCents));
+    setAmountInputVersion(version => version + 1);
     setDraft({
       id: item.id, accountId: item.accountId, categoryId: item.categoryId, description: item.description,
       amountInCents: item.amountInCents, dayOfMonth: item.dayOfMonth, startMonth: item.startMonth, endMonth: item.endMonth,
@@ -50,13 +53,14 @@ export function RecurringTransactions() {
 
   function resetDraft() {
     setDraft({ ...emptyDraft, accountId: accounts[0]?.id ?? "" });
-    setAmountText(""); setType("expense"); setError("");
+    setAmountInputVersion(version => version + 1);
+    setAmountInCents(null); setType("expense"); setError("");
   }
 
   async function save() {
     setError("");
     const resolvedAccountId = draft.accountId || accounts[0]?.id || "";
-    const cents = parseMoneyToCents(amountText);
+    const cents = amountInCents;
     if (!resolvedAccountId) { setError("Selecione uma conta."); return; }
     if (!cents || cents <= 0) { setError("Informe um valor maior que zero."); return; }
     if (draft.description.trim().length < 1) { setError("Descreva a recorrência."); return; }
@@ -104,7 +108,13 @@ export function RecurringTransactions() {
         </div>
         <label>Descrição<input value={draft.description} onChange={e => setDraft({ ...draft, description: e.target.value })} placeholder="Ex.: Aluguel, Netflix, Salário" /></label>
         <div className="form-row">
-          <label>Valor mensal<div className="money-input"><span>R$</span><input inputMode="decimal" value={amountText} onChange={e => setAmountText(maskCurrency(e.target.value))} /></div></label>
+          <label>Valor mensal
+            <MoneyInput
+              key={`${draft.id ?? "new-recurring"}-${amountInputVersion}`}
+              defaultCents={amountInCents ?? 0}
+              onChange={setAmountInCents}
+            />
+          </label>
           <label>Dia do mês<select value={draft.dayOfMonth} onChange={e => setDraft({ ...draft, dayOfMonth: Number(e.target.value) })}>
             {dayOptions.map(day => <option key={day} value={day}>{day}</option>)}
             <option value={31}>Último dia do mês</option>

@@ -2,10 +2,11 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Wallet } from "lucide-react";
 import { api } from "../../shared/api";
-import { money, maskCurrency, parseMoneyToCents, centsToInput } from "../../shared/format";
+import { money } from "../../shared/format";
 import { currentMonth as curMonth, monthLabel } from "../../shared/period";
 import { MonthNavigator } from "../../shared/ui/MonthNavigator";
 import { CategorySelect } from "../../shared/ui/CategorySelect";
+import { MoneyInput } from "../../shared/ui/MoneyInput";
 import type { BudgetCategory, Category, FinancialTarget } from "../../shared/types";
 
 const currentMonth = curMonth();
@@ -143,12 +144,11 @@ function AddBudgetModal({ categories, onClose, onSaved }: {
   onSaved: () => void;
 }) {
   const [categoryId, setCategoryId] = useState<string>();
-  const [amount, setAmount] = useState("");
+  const [amountInCents, setAmountInCents] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
   async function save() {
-    const amountInCents = parseMoneyToCents(amount);
     if (!categoryId) { setError("Selecione uma categoria."); return; }
     if (!amountInCents || amountInCents <= 0) { setError("Informe um limite mensal positivo."); return; }
     setSaving(true);
@@ -174,9 +174,7 @@ function AddBudgetModal({ categories, onClose, onSaved }: {
               <CategorySelect value={categoryId} onChange={setCategoryId} categories={categories} kind="expense" allowEmpty emptyLabel="Selecione" />
             </label>
             <label>Limite mensal
-              <div className="money-input"><span>R$</span>
-                <input inputMode="decimal" value={amount} onChange={e => setAmount(maskCurrency(e.target.value))} placeholder="0,00" autoFocus />
-              </div>
+              <MoneyInput onChange={setAmountInCents} autoFocus />
             </label>
           </>
         )}
@@ -197,13 +195,12 @@ function EditBudgetModal({ category, month, target, onClose, onSaved }: {
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [amount, setAmount] = useState(centsToInput(category.limitInCents));
+  const [amountInCents, setAmountInCents] = useState<number | null>(category.limitInCents);
   const [monthlyOnly, setMonthlyOnly] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
   async function save() {
-    const amountInCents = parseMoneyToCents(amount);
     if (!amountInCents || amountInCents <= 0) { setError("Informe um limite mensal positivo."); return; }
     setSaving(true);
     try {
@@ -228,9 +225,7 @@ function EditBudgetModal({ category, month, target, onClose, onSaved }: {
         <h2>Editar limite · {category.categoryName}</h2>
         <p className="muted">Ajuste o limite mensal para esta categoria.</p>
         <label>Limite mensal
-          <div className="money-input"><span>R$</span>
-            <input inputMode="decimal" value={amount} onChange={e => setAmount(maskCurrency(e.target.value))} autoFocus />
-          </div>
+          <MoneyInput defaultCents={category.limitInCents} onChange={setAmountInCents} autoFocus />
         </label>
         <label className="check-label">
           <input type="checkbox" checked={monthlyOnly} onChange={e => setMonthlyOnly(e.target.checked)} />

@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { save } from "@tauri-apps/plugin-dialog";
 import { AlertTriangle, ArrowDownRight, ArrowUpRight, CalendarRange, CreditCard, Download, Pencil, Plus, Target, Trash2, TrendingUp, X } from "lucide-react";
 import { api } from "../../shared/api";
-import { money, maskCurrency, shortDate, parseMoneyToCents, centsToInput } from "../../shared/format";
+import { money, shortDate } from "../../shared/format";
 import { currentMonth as curMonth, monthLabel, shiftMonth } from "../../shared/period";
 import type { CategoryReport, FinancialReport, FinancialTarget, KindBreakdown, ReportFilter, ReportSource } from "../../shared/types";
 import { CategoryDonut, UNCATEGORIZED_CATEGORY_KEY } from "./CategoryDonut";
@@ -17,6 +17,7 @@ import {
   SpendingBarsChart,
 } from "../../shared/ui/Charts";
 import { useToast } from "../../shared/ui/toast";
+import { MoneyInput } from "../../shared/ui/MoneyInput";
 
 const currentMonth=curMonth();
 type ReportTab = "overview" | "categories" | "goals" | "credit";
@@ -356,12 +357,12 @@ function TargetEditor({target,month,categories,onClose,onSaved}:{
 }){
   const [kind,setKind]=useState<"savings"|"category">(target.kind);
   const [categoryId,setCategoryId]=useState(target.categoryId??"");
-  const [amount,setAmount]=useState(centsToInput(target.amountInCents));
+  const [amountInCents,setAmountInCents]=useState<number | null>(target.amountInCents || null);
   const [monthlyOnly,setMonthlyOnly]=useState(false);
   const [error,setError]=useState("");
   async function save(){
     try{
-      const amountInCents=parseMoneyToCents(amount);if(!amountInCents || amountInCents<=0){setError("Informe um valor positivo.");return}
+      if(!amountInCents || amountInCents<=0){setError("Informe um valor positivo.");return}
       if(target.id&&monthlyOnly){await api.saveFinancialTargetOverride(target.id,month,amountInCents)}
       else await api.saveFinancialTarget({id:target.id||undefined,kind,categoryId:kind==="category"?categoryId:undefined,amountInCents,enabled:true});
       onSaved();
@@ -379,7 +380,7 @@ function TargetEditor({target,month,categories,onClose,onSaved}:{
         allowEmpty
         emptyLabel="Selecione"
       />}
-        <label>Valor mensal<div className="money-input"><span>R$</span><input inputMode="decimal" value={amount} onChange={e=>setAmount(maskCurrency(e.target.value))}/></div></label>
+        <label>Valor mensal<MoneyInput defaultCents={target.amountInCents} onChange={setAmountInCents} /></label>
     {target.id&&<label className="check-label"><input type="checkbox" checked={monthlyOnly} onChange={e=>setMonthlyOnly(e.target.checked)}/>
       Alterar somente para {monthLabel(month)}</label>}
     {error&&<p className="form-error">{error}</p>}

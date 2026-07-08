@@ -2,7 +2,7 @@ import { ArrowRight, CheckCircle2, Landmark, ShieldCheck, UserRound, WalletCards
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../shared/api";
-import { maskCurrency, parseMoneyToCents } from "../../shared/format";
+import { MoneyInput } from "../../shared/ui/MoneyInput";
 import type { AccountType, AppBootstrap, Category, CategoryKind, FinancialGoal } from "../../shared/types";
 
 const goals:{value:FinancialGoal;label:string}[]=[
@@ -16,14 +16,14 @@ const goals:{value:FinancialGoal;label:string}[]=[
 export function Onboarding({bootstrap,onFinished}:{bootstrap:AppBootstrap;onFinished:(destination:string)=>Promise<void>}){
   const [step,setStep]=useState(1);
   const [name,setName]=useState("");
-  const [income,setIncome]=useState("");
+  const [incomeInCents,setIncomeInCents]=useState<number | null>(null);
   const [incomeDay,setIncomeDay]=useState("");
   const [goal,setGoal]=useState<FinancialGoal>();
   const [accountName,setAccountName]=useState(bootstrap.account?.name??"Conta principal");
   const [accountKind,setAccountKind]=useState<Exclude<AccountType,"credit_card">>(
     bootstrap.account?.kind==="savings"||bootstrap.account?.kind==="cash"?bootstrap.account.kind:"checking"
   );
-  const [openingBalance,setOpeningBalance]=useState("");
+  const [openingBalanceInCents,setOpeningBalanceInCents]=useState<number | null>(null);
   const [error,setError]=useState("");
   const [saving,setSaving]=useState(false);
   const [completed,setCompleted]=useState(false);
@@ -45,11 +45,11 @@ export function Onboarding({bootstrap,onFinished}:{bootstrap:AppBootstrap;onFini
     try{
       await api.completeOnboarding({
         displayName:name.trim(),
-        monthlyIncomeInCents:income?parseMoneyToCents(income)??undefined:undefined,
+        monthlyIncomeInCents:incomeInCents ?? undefined,
         incomeDay:incomeDay?Number(incomeDay):undefined,
         financialGoal:goal,
         accountName:accountName.trim(),accountKind,
-        openingBalanceInCents:!bootstrap.hasTransactions&&openingBalance?parseMoneyToCents(openingBalance)??undefined:undefined
+        openingBalanceInCents:!bootstrap.hasTransactions ? openingBalanceInCents ?? undefined : undefined
       });
       setCompleted(true);
     }catch(e){setError(typeof e==="object"&&e&&"message" in e?String((e as {message:unknown}).message):String(e))}
@@ -76,7 +76,7 @@ export function Onboarding({bootstrap,onFinished}:{bootstrap:AppBootstrap;onFini
     {step===2&&<div className="onboarding-content"><div className="step-icon"><UserRound/></div><p className="eyebrow">SEU PERFIL</p><h1>Vamos nos conhecer</h1>
       <p className="muted">Só o nome é obrigatório. Você pode completar o restante depois.</p>
       <label>Como devemos chamar você? <input autoFocus value={name} onChange={e=>setName(e.target.value)} placeholder="Seu nome"/></label>
-      <div className="form-row"><label>Renda líquida mensal <div className="money-input"><span>R$</span><input inputMode="decimal" value={income} onChange={e=>setIncome(maskCurrency(e.target.value))} placeholder="0,00"/></div></label>
+      <div className="form-row"><label>Renda líquida mensal <MoneyInput defaultCents={incomeInCents ?? 0} onChange={setIncomeInCents} /></label>
         <label>Dia de recebimento <input type="number" min="1" max="31" value={incomeDay} onChange={e=>setIncomeDay(e.target.value)} placeholder="Ex.: 5"/></label></div>
       <label>Objetivo principal <select value={goal??""} onChange={e=>setGoal((e.target.value||undefined) as FinancialGoal|undefined)}><option value="">Escolha depois</option>
         {goals.map(item=><option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
@@ -87,7 +87,7 @@ export function Onboarding({bootstrap,onFinished}:{bootstrap:AppBootstrap;onFini
       <label>Nome da conta <input autoFocus value={accountName} onChange={e=>setAccountName(e.target.value)} placeholder="Conta principal"/></label>
       <label>Tipo de conta <select value={accountKind} onChange={e=>setAccountKind(e.target.value as Exclude<AccountType,"credit_card">)}>
         <option value="checking">Conta corrente</option><option value="savings">Poupança</option><option value="cash">Dinheiro</option></select></label>
-      {!bootstrap.hasTransactions&&<label>Saldo inicial <div className="money-input"><span>R$</span><input inputMode="decimal" value={openingBalance} onChange={e=>setOpeningBalance(maskCurrency(e.target.value))} placeholder="0,00"/></div></label>}
+      {!bootstrap.hasTransactions&&<label>Saldo inicial <MoneyInput defaultCents={openingBalanceInCents ?? 0} onChange={setOpeningBalanceInCents} /></label>}
       {error&&<p className="form-error">{error}</p>}<div className="onboarding-actions"><button className="secondary" onClick={()=>setStep(2)}>Voltar</button><button onClick={nextAccount}>Continuar <ArrowRight size={17}/></button></div>
     </div>}
     {step===4&&<div className="onboarding-content"><div className="step-icon"><Tags/></div><p className="eyebrow">PERSONALIZAÇÃO</p><h1>Ajuste suas categorias</h1>

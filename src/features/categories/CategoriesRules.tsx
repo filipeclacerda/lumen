@@ -7,6 +7,7 @@ import type { Category, CategoryKind, CategorizationRule, MovementType, RuleImpa
 import { shortDate, money } from "../../shared/format";
 import { currentMonth as curMonth, shiftMonth } from "../../shared/period";
 import { CategoryIcon, CategorySelect } from "../../shared/ui/CategorySelect";
+import { MoneyInput } from "../../shared/ui/MoneyInput";
 
 const emptyRule: RuleInput = {
   name: "", priority: 100, enabled: true, operator: "contains", pattern: "",
@@ -20,6 +21,7 @@ export function CategoriesRules() {
   const { data: accounts = [] } = useQuery({ queryKey:["accounts"], queryFn:api.accounts });
   const [tab, setTab] = useState<"rules"|"categories"|"merchants">("rules");
   const [rule, setRule] = useState<RuleInput>(emptyRule);
+  const [ruleInputVersion, setRuleInputVersion] = useState(0);
   const [impact, setImpact] = useState<RuleImpact>();
   const [historyImpact, setHistoryImpact] = useState<RuleImpact>();
   const [message, setMessage] = useState("");
@@ -43,6 +45,7 @@ export function CategoriesRules() {
   async function saveRule() {
     if (!rule.name || !rule.pattern || !rule.categoryId) { setMessage("Preencha nome, padrão e categoria."); return; }
     await api.saveRule(rule);
+    setRuleInputVersion(version => version + 1);
     setRule(emptyRule); setImpact(undefined); setMessage("Regra salva.");
     await client.invalidateQueries({queryKey:["rules"]});
   }
@@ -145,7 +148,7 @@ export function CategoriesRules() {
 
     {tab==="rules"&&<div className="rules-layout">
       <article className="panel rule-editor">
-        <div className="panel-title"><h2>{rule.id?"Editar regra":"Nova regra"}</h2>{rule.id&&<button className="text-button" onClick={()=>setRule(emptyRule)}>Cancelar</button>}</div>
+        <div className="panel-title"><h2>{rule.id?"Editar regra":"Nova regra"}</h2>{rule.id&&<button className="text-button" onClick={()=>{setRuleInputVersion(version=>version+1);setRule(emptyRule)}}>Cancelar</button>}</div>
         <label>Nome<input value={rule.name} onChange={e=>setRule({...rule,name:e.target.value})} placeholder="Ex.: Mercado do bairro"/></label>
         <div className="form-row">
           <label>Correspondência<select value={rule.operator} onChange={e=>setRule({...rule,operator:e.target.value as RuleOperator})}>
@@ -175,8 +178,20 @@ export function CategoriesRules() {
         <label>Conta<select value={rule.accountId??""} onChange={e=>setRule({...rule,accountId:e.target.value||undefined})}><option value="">Todas as contas</option>
           {accounts.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
         <div className="form-row">
-          <label>Valor mínimo<input type="number" min="0" value={rule.minAmountInCents?rule.minAmountInCents/100:""} onChange={e=>setRule({...rule,minAmountInCents:e.target.value?Math.round(Number(e.target.value)*100):undefined})}/></label>
-          <label>Valor máximo<input type="number" min="0" value={rule.maxAmountInCents?rule.maxAmountInCents/100:""} onChange={e=>setRule({...rule,maxAmountInCents:e.target.value?Math.round(Number(e.target.value)*100):undefined})}/></label>
+          <label>Valor mínimo
+            <MoneyInput
+              key={`min-${rule.id ?? "new"}-${ruleInputVersion}`}
+              defaultCents={rule.minAmountInCents ?? 0}
+              onChange={cents=>setRule({...rule,minAmountInCents:cents ?? undefined})}
+            />
+          </label>
+          <label>Valor máximo
+            <MoneyInput
+              key={`max-${rule.id ?? "new"}-${ruleInputVersion}`}
+              defaultCents={rule.maxAmountInCents ?? 0}
+              onChange={cents=>setRule({...rule,maxAmountInCents:cents ?? undefined})}
+            />
+          </label>
         </div>
         <label className="check-label"><input type="checkbox" checked={rule.enabled} onChange={e=>setRule({...rule,enabled:e.target.checked})}/> Regra ativa</label>
         <div className="editor-actions"><button className="secondary" onClick={testRule}><TestTube2 size={16}/> Testar impacto</button><button onClick={saveRule}><Save size={16}/> Salvar regra</button></div>

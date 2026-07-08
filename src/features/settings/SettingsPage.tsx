@@ -7,6 +7,7 @@ import { AlertTriangle, Database, Download, RefreshCw, RotateCcw, Save, ShieldCh
 import { api } from "../../shared/api";
 import { canCheckForUpdates, checkLumenUpdate, clearDismissedUpdate, requestUpdateNoticeRefresh } from "../../shared/updater";
 import { Modal } from "../../shared/ui/Modal";
+import { MoneyInput } from "../../shared/ui/MoneyInput";
 import { useToast } from "../../shared/ui/toast";
 import type { FinancialGoal } from "../../shared/types";
 
@@ -21,18 +22,19 @@ export function SettingsPage(){
   const client=useQueryClient();
   const toast=useToast();
   const {data:profile}=useQuery({queryKey:["profile"],queryFn:api.profile});
-  const [name,setName]=useState("");const [income,setIncome]=useState("");const [day,setDay]=useState("");
+  const [name,setName]=useState("");const [incomeInCents,setIncomeInCents]=useState<number | null>(null);const [day,setDay]=useState("");
+  const [incomeInputVersion,setIncomeInputVersion]=useState(0);
   const [goal,setGoal]=useState<FinancialGoal>();const [saving,setSaving]=useState(false);
   const [resetOpen,setResetOpen]=useState(false);const [resetConfirmText,setResetConfirmText]=useState("");
   const [resetting,setResetting]=useState(false);
   const [checkingUpdate,setCheckingUpdate]=useState(false);
   const updatesEnabled=canCheckForUpdates();
-  useEffect(()=>{if(profile){setName(profile.displayName);setIncome(profile.monthlyIncomeInCents?String(profile.monthlyIncomeInCents/100):"");
+  useEffect(()=>{if(profile){setName(profile.displayName);setIncomeInCents(profile.monthlyIncomeInCents ?? null);setIncomeInputVersion(version=>version+1);
     setDay(profile.incomeDay?String(profile.incomeDay):"");setGoal(profile.financialGoal)}},[profile]);
   async function saveProfile(){
     setSaving(true);
     try {
-      await api.saveProfile({displayName:name.trim(),monthlyIncomeInCents:income?Math.round(Number(income)*100):undefined,
+      await api.saveProfile({displayName:name.trim(),monthlyIncomeInCents:incomeInCents ?? undefined,
         incomeDay:day?Number(day):undefined,financialGoal:goal});
       await Promise.all([client.invalidateQueries({queryKey:["profile"]}),client.invalidateQueries({queryKey:["bootstrap"]})]);
       toast("Perfil atualizado.");
@@ -97,7 +99,9 @@ export function SettingsPage(){
   return <section><header><div><p className="eyebrow">PREFERÊNCIAS</p><h1>Configurações</h1><p className="muted">Atualize seus dados de planejamento.</p></div></header>
     <div className="settings-grid"><article className="panel rule-editor"><div className="panel-title"><h2><UserRound size={17}/> Perfil financeiro</h2></div>
       <label>Nome<input value={name} onChange={e=>setName(e.target.value)}/></label>
-      <div className="form-row"><label>Renda líquida mensal<input type="number" min="0" step="0.01" value={income} onChange={e=>setIncome(e.target.value)}/></label>
+      <div className="form-row"><label>Renda líquida mensal
+        <MoneyInput key={incomeInputVersion} defaultCents={incomeInCents ?? 0} onChange={setIncomeInCents} />
+      </label>
         <label>Dia de recebimento<input type="number" min="1" max="31" value={day} onChange={e=>setDay(e.target.value)}/></label></div>
       <label>Objetivo principal<select value={goal??""} onChange={e=>setGoal((e.target.value||undefined) as FinancialGoal|undefined)}><option value="">Não definido</option>
         {Object.entries(goalLabels).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
