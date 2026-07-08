@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowDownRight, ArrowUpRight, Gauge, Landmark, PiggyBank, Plus, TrendingUp } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, CalendarClock, Gauge, Landmark, PiggyBank, Plus, TrendingUp } from "lucide-react";
 import { api } from "../../shared/api";
 import { money, shortDate } from "../../shared/format";
 import { currentMonth, monthTitle, shiftMonth } from "../../shared/period";
@@ -101,7 +101,7 @@ export function Dashboard() {
       <article><div className="metric-icon green"><ArrowUpRight/></div><p>Receitas</p><strong>{money(summary.incomeInCents)}</strong>
         <small className="positive">{incomeProgress!==undefined?`${incomeProgress}% da renda mensal de ${money(profile!.monthlyIncomeInCents!)}`:"↑ entradas no mês"}</small></article>
       <article><div className="metric-icon red"><ArrowDownRight/></div><p>Despesas</p><strong>{money(summary.expensesInCents)}</strong><small>gastos confirmados</small></article>
-      <article><div className="metric-icon" style={{background: '#e9f0f5', color: '#1a5b82'}}><ArrowUpRight style={{transform: "rotate(45deg)"}}/></div><p>Investimentos</p><strong>{money(summary.investmentsInCents)}</strong><small>dinheiro guardado</small></article>
+      <article><div className="metric-icon" style={{background: '#e9f0f5', color: '#1a5b82'}}><TrendingUp/></div><p>Investimentos</p><strong>{money(summary.investmentsInCents)}</strong><small>dinheiro guardado</small></article>
       <article className="dark"><div className="metric-icon"><Landmark/></div><p>Saldo do mês</p><strong>{money(netIncomeInCents)}</strong><small>receitas menos despesas</small></article>
     </div>
     {report && (
@@ -112,7 +112,7 @@ export function Dashboard() {
         <article><div className="metric-icon" style={{background:"#f1ebf5", color:"#835c96"}}><Gauge/></div><p>Ritmo diário de gastos</p>
           <strong>{money(report.latestMonthSummary.dailyAverageInCents)}</strong>
           <small>média por dia neste mês</small></article>
-        <article><div className="metric-icon" style={{background:"#fff7e9", color:"#9b6a1f"}}><TrendingUp/></div><p>Projeção do mês</p>
+        <article><div className="metric-icon" style={{background:"#fff7e9", color:"#9b6a1f"}}><CalendarClock/></div><p>Projeção do mês</p>
           <strong>{money(report.latestMonthSummary.projectedExpensesInCents)}</strong>
           <small>se o ritmo de gastos se mantiver</small></article>
       </div>

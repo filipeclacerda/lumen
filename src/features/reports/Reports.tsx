@@ -145,7 +145,7 @@ function ReportContent({report,filter,profileIncome,targets,onEdit,onDelete,onMe
     {label:"Gastos no período",value:summary.expensesInCents,detail:`Total em ${report.monthly.length} ${report.monthly.length===1?"mês":"meses"}`,icon:<ArrowDownRight/>,tone:"red"},
     {label:"Maior categoria",value:topCategory?.amountInCents??0,detail:topCategory?`${topCategory.category} · ${topCategory.sharePercent.toFixed(1)}% dos gastos`:"Sem gastos no período",icon:<Target/>,tone:"blue"},
     {label:"Média mensal",value:report.monthlyAverageInCents,detail:"Média do período filtrado",icon:<CalendarRange/>,tone:"green"},
-    {label:"Total investido atual",value:report.currentInvestedInCents,detail:"Patrimônio investido acumulado",icon:<TrendingUp/>,tone:"purple"}
+    {label:"Total investido atual",value:report.currentInvestedInCents,detail:"Patrimônio investido acumulado",icon:<TrendingUp/>,tone:"blue"}
   ];
   return <>
     <div className="report-kpis">{cards.map(card=><article key={card.label}>
