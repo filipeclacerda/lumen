@@ -40,14 +40,18 @@ pub fn run() {
             }
             let db = tauri::async_runtime::block_on(infrastructure::database::connect(&db_path))
                 .map_err(|e| Box::<dyn std::error::Error>::from(e.to_string()))?;
-            // Idempotent: only fills rows still missing merchant_key, in batches, so it never
-            // blocks startup noticeably even on large databases.
-            tauri::async_runtime::block_on(commands::backfill_merchant_keys_impl(&db, false))
-                .map_err(|e| Box::<dyn std::error::Error>::from(e.to_string()))?;
+            // Idempotent maintenance, but it can touch many imported rows after an upgrade.
+            // Run it after the app is managed so opening the window is not gated by the backfill.
+            let db_for_backfill = db.clone();
             app.manage(AppState {
                 db,
                 sessions: Mutex::new(HashMap::new()),
                 credit_card_sessions: Mutex::new(HashMap::new()),
+            });
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = commands::backfill_merchant_keys_impl(&db_for_backfill, false).await {
+                    eprintln!("Falha ao preencher merchant_key em segundo plano: {error}");
+                }
             });
             Ok(())
         })
@@ -61,10 +65,13 @@ pub fn run() {
             commands::rename_account,
             commands::archive_account,
             commands::list_transactions,
+            commands::list_transactions_page,
             commands::dashboard_summary,
             commands::create_transaction,
             commands::update_transaction,
             commands::create_transfer,
+            commands::detect_transfer_candidates,
+            commands::link_transfer_pair,
             commands::list_categories,
             commands::save_category,
             commands::archive_category,
@@ -113,6 +120,9 @@ pub fn run() {
             commands::generate_financial_report,
             commands::category_trend,
             commands::export_transactions_csv,
+            commands::export_transactions_ofx,
+            commands::export_transactions_pdf,
+            commands::export_financial_report_pdf,
             commands::backup_database,
             commands::restore_database,
             commands::reset_database,
@@ -124,7 +134,10 @@ pub fn run() {
             commands::backfill_merchant_keys,
             commands::list_merchant_aliases,
             commands::save_merchant_alias,
-            commands::delete_merchant_alias
+            commands::delete_merchant_alias,
+            commands::net_worth_history,
+            commands::upcoming_items,
+            commands::budget_overview
         ])
         .run(tauri::generate_context!())
         .expect("erro ao executar Lúmen");

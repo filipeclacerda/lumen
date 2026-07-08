@@ -13,6 +13,9 @@ const emptyDraft: RecurringTransactionInput = {
   dayOfMonth: 5, startMonth: currentMonth(), endMonth: undefined,
 };
 
+const dayOptions = Array.from({ length: 30 }, (_, index) => index + 1);
+const dayLabel = (day: number) => day === 31 ? "último dia do mês" : `${day}`;
+
 export function RecurringTransactions() {
   const client = useQueryClient();
   const toast = useToast();
@@ -102,7 +105,10 @@ export function RecurringTransactions() {
         <label>Descrição<input value={draft.description} onChange={e => setDraft({ ...draft, description: e.target.value })} placeholder="Ex.: Aluguel, Netflix, Salário" /></label>
         <div className="form-row">
           <label>Valor mensal<div className="money-input"><span>R$</span><input inputMode="decimal" value={amountText} onChange={e => setAmountText(maskCurrency(e.target.value))} /></div></label>
-          <label>Dia do mês<input type="number" min={1} max={28} value={draft.dayOfMonth} onChange={e => setDraft({ ...draft, dayOfMonth: Number(e.target.value) })} /></label>
+          <label>Dia do mês<select value={draft.dayOfMonth} onChange={e => setDraft({ ...draft, dayOfMonth: Number(e.target.value) })}>
+            {dayOptions.map(day => <option key={day} value={day}>{day}</option>)}
+            <option value={31}>Último dia do mês</option>
+          </select></label>
         </div>
         <div className="form-row">
           <label>Conta<select value={draft.accountId || accounts[0]?.id || ""} onChange={e => setDraft({ ...draft, accountId: e.target.value })}>
@@ -130,7 +136,7 @@ export function RecurringTransactions() {
           <p>Cadastre despesas e receitas fixas para não esquecer de lançá-las todo mês.</p></div></div>}
         <div className="recurring-list">{recurring.map(item => <div key={item.id} className={`recurring-row ${item.active ? "" : "inactive"}`}>
           <div><b>{item.description}</b>
-            <small>{item.accountName}{item.categoryName ? ` · ${item.categoryName}` : ""} · todo dia {item.dayOfMonth}</small></div>
+            <small>{item.accountName}{item.categoryName ? ` · ${item.categoryName}` : ""} · todo {dayLabel(item.dayOfMonth)}</small></div>
           <strong className={`recurring-amount ${item.amountInCents > 0 ? "positive" : "negative"}`}>{money(item.amountInCents)}</strong>
           <button className="secondary" onClick={() => toggleActive(item)}>{item.active ? "Pausar" : "Reativar"}</button>
           <div className="row-actions">

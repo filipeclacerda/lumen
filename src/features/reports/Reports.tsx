@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDownRight, ArrowUpRight, CalendarRange, CreditCard, Landmark, Pencil, Plus, Target, Trash2, TrendingUp, X } from "lucide-react";
+import { save } from "@tauri-apps/plugin-dialog";
+import { AlertTriangle, ArrowDownRight, ArrowUpRight, CalendarRange, CreditCard, Download, Landmark, Pencil, Plus, Target, Trash2, TrendingUp, X } from "lucide-react";
 import { api } from "../../shared/api";
 import { money, maskCurrency, shortDate, parseMoneyToCents, centsToInput } from "../../shared/format";
 import { currentMonth as curMonth, monthLabel, shiftMonth } from "../../shared/period";
@@ -9,6 +10,7 @@ import type { CategoryReport, FinancialReport, FinancialTarget, KindBreakdown, R
 import { CategoryDonut, UNCATEGORIZED_CATEGORY_KEY } from "./CategoryDonut";
 import { CategoryTrendChart } from "./CategoryTrendChart";
 import { CategorySelect } from "../../shared/ui/CategorySelect";
+import { useToast } from "../../shared/ui/toast";
 
 const currentMonth=curMonth();
 type ReportTab = "overview" | "categories" | "goals" | "credit";
@@ -37,7 +39,9 @@ export function Reports(){
   const [source,setSource]=useState<ReportSource>("all");
   const [accountId,setAccountId]=useState("");
   const [editing,setEditing]=useState<FinancialTarget>();
+  const [exporting,setExporting]=useState(false);
   const client=useQueryClient();
+  const toast=useToast();
   const {data:accounts=[]}=useQuery({queryKey:["accounts"],queryFn:api.accounts});
   const {data:categories=[]}=useQuery({queryKey:["categories"],queryFn:api.categories});
   const {data:profile}=useQuery({queryKey:["profile"],queryFn:api.profile});
@@ -62,11 +66,31 @@ export function Reports(){
     ]);
   }
   async function removeTarget(id:string){await api.deleteFinancialTarget(id);await refresh()}
+  async function exportPdf(){
+    if (!("__TAURI_INTERNALS__" in window)) {
+      toast("Abra o aplicativo desktop para exportar o PDF.", "error");
+      return;
+    }
+    const path = await save({ defaultPath: `relatorio-${startMonth}-${endMonth}.pdf`, filters: [{ name: "PDF", extensions: ["pdf"] }] });
+    if (!path) return;
+    setExporting(true);
+    try {
+      const count = await api.exportFinancialReportPdf(path, filter);
+      toast(`Relatório PDF exportado com ${count} lançamentos.`);
+    } catch (error: any) {
+      toast(`Não foi possível exportar o PDF: ${error?.message || error}`, "error");
+    } finally {
+      setExporting(false);
+    }
+  }
 
   return <section className="reports-page">
     <header><div><p className="eyebrow">ANÁLISE FINANCEIRA</p><h1>Relatórios</h1>
       <p className="muted">Entenda seus hábitos, compare períodos e acompanhe suas metas.</p></div>
-      <button onClick={()=>setEditing({id:"",kind:"category",amountInCents:0,enabled:true,overrides:[]})}><Plus size={16}/> Nova meta</button>
+      <div style={{display:"flex", gap:"10px"}}>
+        <button className="secondary" disabled={exporting || invalidPeriod || !report} onClick={exportPdf}><Download size={16}/> {exporting ? "Exportando..." : "PDF"}</button>
+        <button onClick={()=>setEditing({id:"",kind:"category",amountInCents:0,enabled:true,overrides:[]})}><Plus size={16}/> Nova meta</button>
+      </div>
     </header>
     <article className="report-filters">
       <div className="filter-presets">{[["1","Mês"],["3","3 meses"],["6","6 meses"],["12","12 meses"],["custom","Personalizado"]].map(([value,label])=>

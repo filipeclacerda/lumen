@@ -1,12 +1,16 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CreditCard, Landmark, Pencil, Plus, Search, Tags, Trash2, Undo2, ArrowUpRight, ArrowDownRight, X } from "lucide-react";
-import { useState } from "react";
+import { CreditCard, Download, Landmark, Pencil, Plus, Repeat, Search, Tags, Trash2, Undo2, ArrowUpRight, ArrowDownRight, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "../../shared/api";
-import { money, shortDate } from "../../shared/format";
+import { money, shortDate, suggestRulePattern } from "../../shared/format";
 import { CategorySelect } from "../../shared/ui/CategorySelect";
+import { useToast } from "../../shared/ui/toast";
 import type { ReportSource, Transaction } from "../../shared/types";
 import { TransactionForm } from "./TransactionForm";
+
+const PAGE_SIZE = 100;
 
 export function Transactions() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -17,8 +21,12 @@ export function Transactions() {
   const sourceParam = searchParams.get("source");
   const sourceFilter = (sourceParam === "bank" || sourceParam === "credit_card" ? sourceParam : "") as ReportSource | "";
   const accountFilter = searchParams.get("accountId") ?? "";
-  const queryMonth = startMonthFilter && startMonthFilter === endMonthFilter ? startMonthFilter : undefined;
-  const [search, setSearch] = useState("");
+  const qParam = searchParams.get("q") ?? "";
+  const [search, setSearch] = useState(qParam);
+  const [debouncedSearch, setDebouncedSearch] = useState(qParam);
+  const [exporting, setExporting] = useState(false);
+  const toast = useToast();
+  const [page, setPage] = useState(0);
   const [showNew, setShowNew] = useState(false);
   const [editing, setEditing] = useState<Transaction>();
   const [learning, setLearning] = useState<{transaction:Transaction;categoryId:string;pattern:string}>();
@@ -30,7 +38,49 @@ export function Transactions() {
   >();
   const [notice, setNotice] = useState("");
   const client = useQueryClient();
-  const { data = [], isLoading } = useQuery({ queryKey: ["transactions", queryMonth], queryFn: () => api.transactions(queryMonth) });
+
+  // Debounce the search box so typing doesn't spam the backend with a query per keystroke.
+  useEffect(() => {
+    const timeout = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(timeout);
+  }, [search]);
+
+  // Seeds the search box from a `?q=` URL param (e.g. navigated here from the command palette),
+  // then drops the param so it doesn't linger once the box has taken over.
+  useEffect(() => {
+    if (!qParam) return;
+    setSearch(qParam);
+    setDebouncedSearch(qParam);
+    setSearchParams(params => {
+      const next = new URLSearchParams(params);
+      next.delete("q");
+      return next;
+    }, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qParam]);
+
+  // Any filter change resets pagination back to the first page.
+  useEffect(() => {
+    setPage(0);
+  }, [debouncedSearch, categoryFilter, uncategorizedFilter, startMonthFilter, endMonthFilter, sourceFilter, accountFilter]);
+
+  const filter = {
+    startMonth: startMonthFilter || undefined,
+    endMonth: endMonthFilter || undefined,
+    source: sourceFilter || undefined,
+    accountId: accountFilter || undefined,
+    categoryId: uncategorizedFilter ? undefined : (categoryFilter || undefined),
+    uncategorized: uncategorizedFilter || undefined,
+    search: debouncedSearch || undefined,
+    limit: PAGE_SIZE,
+    offset: page * PAGE_SIZE,
+  };
+  const { data, isLoading } = useQuery({
+    queryKey: ["transactions", filter],
+    queryFn: () => api.listTransactions(filter),
+  });
+  const items = data?.items ?? [];
+  const totalCount = data?.totalCount ?? 0;
   const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: () => api.categories() });
   const categoryFilterName = uncategorizedFilter ? "Sem categoria" : categories.find(c => c.id === categoryFilter)?.name;
   const hasReportFilters = Boolean(categoryFilter||uncategorizedFilter||startMonthFilter||endMonthFilter||sourceFilter||accountFilter);
@@ -41,13 +91,7 @@ export function Transactions() {
     sourceLabel&&`origem: ${sourceLabel}`,
     accountFilter&&`conta selecionada`
   ].filter(Boolean).join(" · ");
-  const rows = data
-    .filter(t => t.description.toLowerCase().includes(search.toLowerCase()))
-    .filter(t => !startMonthFilter || t.date.slice(0,7) >= startMonthFilter)
-    .filter(t => !endMonthFilter || t.date.slice(0,7) <= endMonthFilter)
-    .filter(t => !sourceFilter || (sourceFilter==="credit_card" ? t.accountKind==="credit_card" : t.accountKind!=="credit_card"))
-    .filter(t => !accountFilter || t.accountId === accountFilter)
-    .filter(t => uncategorizedFilter ? !t.categoryId : !categoryFilter || t.categoryId === categoryFilter);
+  const rows = items;
   function clearReportFilters() {
     setSearchParams(params => {
       const next = new URLSearchParams(params);
@@ -66,13 +110,45 @@ export function Transactions() {
       return next;
     });
   }
+  const exportFilter = {
+    startMonth: filter.startMonth,
+    endMonth: filter.endMonth,
+    source: filter.source,
+    accountId: filter.accountId,
+    categoryId: filter.categoryId,
+    uncategorized: filter.uncategorized,
+    search: filter.search,
+  };
+  async function exportFile(kind: "csv" | "ofx" | "pdf") {
+    if (!("__TAURI_INTERNALS__" in window)) {
+      toast("Abra o aplicativo desktop para exportar arquivos.", "error");
+      return;
+    }
+    const labels = {
+      csv: { name: "CSV", extension: "csv", action: api.exportTransactionsCsv },
+      ofx: { name: "OFX", extension: "ofx", action: api.exportTransactionsOfx },
+      pdf: { name: "PDF", extension: "pdf", action: api.exportTransactionsPdf },
+    };
+    const option = labels[kind];
+    const path = await save({ defaultPath: `transacoes.${option.extension}`, filters: [{ name: option.name, extensions: [option.extension] }] });
+    if (!path) return;
+    setExporting(true);
+    try {
+      const count = await option.action(path, exportFilter);
+      toast(`${count} transações exportadas em ${option.name}.`);
+    } catch (error: any) {
+      toast(`Não foi possível exportar ${option.name}: ${error?.message || error}`, "error");
+    } finally {
+      setExporting(false);
+    }
+  }
   async function refresh() {
     await Promise.all([client.invalidateQueries({queryKey:["transactions"]}),client.invalidateQueries({queryKey:["summary"]})]);
   }
   async function changeCategory(transaction:Transaction, categoryId?:string) {
     await api.updateTransactionCategory(transaction.id, categoryId || undefined);
     await refresh();
-    if(categoryId) setLearning({transaction,categoryId,pattern:transaction.description.toUpperCase()});
+    if(categoryId) setLearning({transaction,categoryId,pattern:suggestRulePattern(transaction.description)});
   }
   async function deleteOne(id:string) {
     const count=await api.deleteTransactions([id]);
@@ -94,7 +170,7 @@ export function Transactions() {
   }
   async function applyBulkCategory() {
     const ids=[...selected]; if(!ids.length)return;
-    const previous=ids.map(id=>({id,categoryId:data.find(t=>t.id===id)?.categoryId}));
+    const previous=ids.map(id=>({id,categoryId:items.find(t=>t.id===id)?.categoryId}));
     const count=await api.bulkUpdateTransactionCategory(ids,bulkCategory||undefined);
     setUndo({kind:"categorize",previous});
     setNotice(`${count} transações atualizadas.`); setSelected(new Set()); setBulkCategory(""); await refresh();
@@ -122,8 +198,17 @@ export function Transactions() {
     }
     setUndo(undefined); await refresh();
   }
-  return <section><header><div><p className="eyebrow">MOVIMENTAÇÕES</p><h1>Transações</h1><p className="muted">{rows.length} de {data.length} lançamentos exibidos</p></div>
-    <button onClick={()=>setShowNew(true)}><Plus size={17}/> Nova transação</button></header>
+  const rangeStart = totalCount === 0 ? 0 : page * PAGE_SIZE + 1;
+  const rangeEnd = Math.min(totalCount, page * PAGE_SIZE + rows.length);
+  const hasMore = page * PAGE_SIZE + rows.length < totalCount;
+  const hasPrevious = page > 0;
+  return <section><header><div><p className="eyebrow">MOVIMENTAÇÕES</p><h1>Transações</h1><p className="muted">{totalCount === 0 ? "0 lançamentos" : `${rangeStart}–${rangeEnd} de ${totalCount} lançamentos`}</p></div>
+    <div style={{display:"flex", gap:"10px"}}>
+      <button className="secondary" disabled={exporting} onClick={() => exportFile("csv")}><Download size={17}/> CSV</button>
+      <button className="secondary" disabled={exporting} onClick={() => exportFile("ofx")}><Download size={17}/> OFX</button>
+      <button className="secondary" disabled={exporting} onClick={() => exportFile("pdf")}><Download size={17}/> PDF</button>
+      <button onClick={()=>setShowNew(true)}><Plus size={17}/> Nova transação</button>
+    </div></header>
     {showNew&&<TransactionForm onClose={()=>setShowNew(false)}/>}
     {editing&&<TransactionForm existing={editing} onClose={()=>setEditing(undefined)}/>}
     {notice&&<div className="notice notice-action"><span>{notice}</span>{undo&&<button className="text-button" onClick={undoLast}><Undo2 size={15}/> Desfazer</button>}</div>}
@@ -157,6 +242,7 @@ export function Transactions() {
               </div>;
             })()}
             <b>{t.description}</b>
+            {t.isTransferLeg && <span className="badge" title="Parte de uma transferência vinculada" style={{display:"inline-flex", alignItems:"center", gap:"4px", background:"#eef0ff", color:"#4c5bd4"}}><Repeat size={12}/> Vinculada</span>}
           </div></td>
           <td><span className={`origin-tag ${t.accountKind==="credit_card"?"card-origin":"bank-origin"}`}>
             {t.accountKind==="credit_card"?<CreditCard size={13}/>:<Landmark size={13}/>}
@@ -178,6 +264,11 @@ export function Transactions() {
             <button className="danger icon-button" title="Excluir transação" aria-label={`Excluir ${t.description}`} onClick={()=>deleteOne(t.id)}><Trash2 size={15}/></button></div></td>
         </tr>)}
       </tbody></table></div>
+      {totalCount > 0 && <div className="pagination" style={{display:"flex", alignItems:"center", justifyContent:"flex-end", gap:"10px", padding:"14px 4px 4px"}}>
+        <span className="muted" style={{fontSize:13}}>{rangeStart}–{rangeEnd} de {totalCount}</span>
+        <button className="secondary" disabled={!hasPrevious} onClick={()=>setPage(p=>Math.max(0,p-1))}>Anterior</button>
+        <button className="secondary" disabled={!hasMore} onClick={()=>setPage(p=>p+1)}>Carregar mais</button>
+      </div>}
     </article>
     {learning&&<div className="modal-backdrop"><article className="modal"><h2>Usar esta correção no futuro?</h2><p className="muted">Você pode criar uma regra local ou manter a alteração somente nesta transação.</p>
       <label>Descrição contém<input value={learning.pattern} onChange={e=>setLearning({...learning,pattern:e.target.value})}/></label>

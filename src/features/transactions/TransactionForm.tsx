@@ -18,9 +18,12 @@ export function TransactionForm({ onClose, existing }: Props) {
   const { data: accounts = [] } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
   const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: api.categories });
   const editing = Boolean(existing);
+  const isTransferLeg = Boolean(existing?.isTransferLeg);
   const [accountId, setAccountId] = useState(existing?.accountId ?? "");
   const [toAccountId, setToAccountId] = useState("");
-  const [type, setType] = useState<EntryType>(existing && existing.amountInCents > 0 ? "income" : "expense");
+  const [type, setType] = useState<EntryType>(
+    existing?.isTransferLeg ? "transfer" : existing && existing.amountInCents > 0 ? "income" : "expense"
+  );
   const [cents, setCents] = useState<number | null>(existing ? Math.abs(existing.amountInCents) : null);
   const [date, setDate] = useState(existing?.date ?? todayIso());
   const [description, setDescription] = useState(existing?.description ?? "");
@@ -47,7 +50,7 @@ export function TransactionForm({ onClose, existing }: Props) {
     if (cents === null || cents <= 0) { setError("Informe um valor maior que zero."); return; }
     setSaving(true);
     try {
-      if (type === "transfer") {
+      if (type === "transfer" && !editing) {
         if (!resolvedToAccountId) { setError("Selecione a conta de destino."); setSaving(false); return; }
         await api.createTransfer({
           fromAccountId: resolvedAccountId, toAccountId: resolvedToAccountId, date,
@@ -59,9 +62,10 @@ export function TransactionForm({ onClose, existing }: Props) {
         return;
       }
       if (description.trim().length < 1) { setError("Descreva a transação."); setSaving(false); return; }
-      const amountInCents = type === "income" ? cents : -cents;
+      const amountInCents = isTransferLeg && existing ? existing.amountInCents : type === "income" ? cents : -cents;
       const input = {
-        id: existing?.id, accountId: resolvedAccountId, date,
+        id: existing?.id, accountId: isTransferLeg && existing ? existing.accountId : resolvedAccountId,
+        date: isTransferLeg && existing ? existing.date : date,
         description: description.trim(), amountInCents, categoryId: categoryId || undefined,
       };
       if (editing) await api.updateTransaction(input); else await api.createTransaction(input);
@@ -81,10 +85,13 @@ export function TransactionForm({ onClose, existing }: Props) {
         <div className="segmented" role="group" aria-label="Tipo de transação">
           <button type="button" className={type === "expense" ? "active" : ""} onClick={() => setType("expense")}>Despesa</button>
           <button type="button" className={type === "income" ? "active" : ""} onClick={() => setType("income")}>Receita</button>
-          {!editing && <button type="button" className={type === "transfer" ? "active" : ""} onClick={() => setType("transfer")}>Transferência</button>}
+          <button type="button" className={type === "transfer" ? "active" : ""} onClick={() => setType("transfer")} disabled={editing}>Transferência</button>
         </div>
-        <label>Valor<MoneyInput defaultCents={existing ? Math.abs(existing.amountInCents) : 0} onChange={setCents} autoFocus /></label>
-        {type === "transfer" ? (
+        {isTransferLeg && <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+          Esta transação faz parte de uma transferência; valor, data e contas ficam travados para manter as duas pernas sincronizadas.
+        </p>}
+        <label>Valor<MoneyInput defaultCents={existing ? Math.abs(existing.amountInCents) : 0} onChange={setCents} autoFocus disabled={isTransferLeg} /></label>
+        {type === "transfer" && !editing ? (
           <>
             <div className="form-row transfer-row">
               <label>De<select value={resolvedAccountId} onChange={e => setAccountId(e.target.value)}>
@@ -107,8 +114,8 @@ export function TransactionForm({ onClose, existing }: Props) {
         ) : (
           <>
             <div className="form-row">
-              <label>Data<input type="date" value={date} onChange={e => setDate(e.target.value)} /></label>
-              <label>Conta<select value={resolvedAccountId} onChange={e => setAccountId(e.target.value)}>
+              <label>Data<input type="date" value={date} onChange={e => setDate(e.target.value)} disabled={isTransferLeg} /></label>
+              <label>Conta<select value={resolvedAccountId} onChange={e => setAccountId(e.target.value)} disabled={isTransferLeg}>
                 {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
               </select></label>
             </div>
@@ -126,8 +133,8 @@ export function TransactionForm({ onClose, existing }: Props) {
         {error && <p className="form-error">{error}</p>}
         <div className="editor-actions">
           <button className="secondary" onClick={onClose} disabled={saving}>Cancelar</button>
-          <button onClick={submit} disabled={saving || (type === "transfer" && destinationAccounts.length === 0)}>
-            {saving ? "Salvando…" : type === "transfer" ? "Transferir" : editing ? "Salvar" : "Adicionar"}
+          <button onClick={submit} disabled={saving || (type === "transfer" && !editing && destinationAccounts.length === 0)}>
+            {saving ? "Salvando…" : editing ? "Salvar" : type === "transfer" ? "Transferir" : "Adicionar"}
           </button>
         </div>
       </div>

@@ -16,6 +16,14 @@ mod recurring;
 pub use recurring::*;
 mod merchants;
 pub use merchants::*;
+mod net_worth;
+pub use net_worth::*;
+mod upcoming;
+pub use upcoming::*;
+mod budget;
+pub use budget::*;
+mod export;
+pub use export::*;
 
 use crate::{
     application::state::{AppState, ImportSession},
@@ -129,6 +137,31 @@ pub struct Transaction {
     category: Option<String>,
     category_source: Option<String>,
     status: String,
+    is_transfer_leg: bool,
+}
+
+/// Optional server-side filters + pagination for `list_transactions_page`.
+/// All fields are optional; omitted/empty ones are simply not applied.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransactionFilter {
+    month: Option<String>,
+    start_month: Option<String>,
+    end_month: Option<String>,
+    source: Option<String>,
+    account_id: Option<String>,
+    category_id: Option<String>,
+    uncategorized: Option<bool>,
+    search: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransactionPage {
+    items: Vec<Transaction>,
+    total_count: i64,
 }
 
 #[derive(Serialize)]
@@ -838,29 +871,86 @@ pub async fn archive_account(id: String, state: State<'_, AppState>) -> Result<(
     Ok(())
 }
 
-#[tauri::command]
-pub async fn list_transactions(
-    month: Option<String>,
-    state: State<'_, AppState>,
-) -> Result<Vec<Transaction>, AppError> {
-    let mut q = "SELECT t.id,t.account_id,a.name account_name,a.kind account_kind,t.date,t.description,t.amount_cents,t.category_id,
-                 COALESCE(c.name,'Sem categoria') category,t.category_source,t.status
-                 FROM transactions t JOIN accounts a ON a.id=t.account_id
-                 LEFT JOIN categories c ON c.id=t.category_id
-                 WHERE t.deleted_at IS NULL
-                 AND NOT (a.kind='credit_card' AND t.amount_cents>0 AND t.category_id='credit-card-payment')".to_string();
-    if month.is_some() {
-        q.push_str(" AND strftime('%Y-%m', t.date) = ?");
-    }
-    q.push_str(" ORDER BY date DESC LIMIT 500");
+/// Shared WHERE clause for `list_transactions`/`list_transactions_page`. Every filter is bound
+/// unconditionally (using `?N IS NULL OR ...` guards) so both the item query and the count query
+/// can reuse the exact same bind sequence.
+const TRANSACTION_FILTER_WHERE: &str = "
+    t.deleted_at IS NULL
+    AND NOT (a.kind='credit_card' AND t.amount_cents>0 AND t.category_id='credit-card-payment')
+    AND (?1 IS NULL OR strftime('%Y-%m', t.date) = ?1)
+    AND (?2 IS NULL OR strftime('%Y-%m', t.date) >= ?2)
+    AND (?3 IS NULL OR strftime('%Y-%m', t.date) <= ?3)
+    AND (?4='all' OR (?4='bank' AND a.kind!='credit_card') OR (?4='credit_card' AND a.kind='credit_card'))
+    AND (?5 IS NULL OR t.account_id=?5)
+    AND (?6 IS NULL OR t.category_id=?6)
+    AND (?7=0 OR t.category_id IS NULL)
+    AND (?8 IS NULL OR t.normalized_description LIKE ?8 OR t.description LIKE ?8)
+";
 
-    let mut query = sqlx::query(&q);
-    if let Some(m) = &month {
-        query = query.bind(m);
-    }
-    let rows = query.fetch_all(&state.db).await?;
+fn bind_transaction_filter<'q>(
+    mut query: sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>>,
+    filter: &'q TransactionFilter,
+    search_like: &'q Option<String>,
+) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>> {
+    let source = filter.source.as_deref().unwrap_or("all");
+    let uncategorized = if filter.uncategorized.unwrap_or(false) {
+        1i64
+    } else {
+        0i64
+    };
+    query = query
+        .bind(&filter.month)
+        .bind(&filter.start_month)
+        .bind(&filter.end_month)
+        .bind(source)
+        .bind(&filter.account_id)
+        .bind(&filter.category_id)
+        .bind(uncategorized)
+        .bind(search_like);
+    query
+}
 
-    Ok(rows
+async fn query_transactions_page(
+    db: &SqlitePool,
+    filter: &TransactionFilter,
+) -> Result<TransactionPage, AppError> {
+    let search_like = filter
+        .search
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| format!("%{}%", normalize_description(s)));
+    let limit = filter.limit.unwrap_or(100).clamp(1, 1000);
+    let offset = filter.offset.unwrap_or(0).max(0);
+
+    let count_sql = format!(
+        "SELECT COUNT(*) FROM transactions t JOIN accounts a ON a.id=t.account_id
+         LEFT JOIN categories c ON c.id=t.category_id
+         WHERE {TRANSACTION_FILTER_WHERE}"
+    );
+    let count_query = bind_transaction_filter(sqlx::query(&count_sql), filter, &search_like);
+    let total_count: i64 = count_query.fetch_one(db).await?.get(0);
+
+    let items_sql = format!(
+        "SELECT t.id,t.account_id,a.name account_name,a.kind account_kind,t.date,t.description,t.amount_cents,t.category_id,
+         COALESCE(c.name,'Sem categoria') category,t.category_source,t.status,
+         EXISTS(
+            SELECT 1 FROM transaction_links l
+            WHERE (l.debit_transaction_id=t.id OR l.credit_transaction_id=t.id)
+            AND l.credit_transaction_id IS NOT NULL
+         ) is_transfer_leg
+         FROM transactions t JOIN accounts a ON a.id=t.account_id
+         LEFT JOIN categories c ON c.id=t.category_id
+         WHERE {TRANSACTION_FILTER_WHERE}
+         ORDER BY t.date DESC, t.id DESC
+         LIMIT ?9 OFFSET ?10"
+    );
+    let items_query = bind_transaction_filter(sqlx::query(&items_sql), filter, &search_like)
+        .bind(limit)
+        .bind(offset);
+    let rows = items_query.fetch_all(db).await?;
+
+    let items = rows
         .into_iter()
         .map(|r| Transaction {
             id: r.get("id"),
@@ -874,8 +964,33 @@ pub async fn list_transactions(
             category: r.get("category"),
             category_source: r.get("category_source"),
             status: r.get("status"),
+            is_transfer_leg: r.get::<i64, _>("is_transfer_leg") != 0,
         })
-        .collect())
+        .collect();
+    Ok(TransactionPage { items, total_count })
+}
+
+#[tauri::command]
+pub async fn list_transactions_page(
+    filter: TransactionFilter,
+    state: State<'_, AppState>,
+) -> Result<TransactionPage, AppError> {
+    query_transactions_page(&state.db, &filter).await
+}
+
+/// Legacy shape kept for callers (e.g. the dashboard) that only need a month-bounded list without
+/// pagination metadata.
+#[tauri::command]
+pub async fn list_transactions(
+    month: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<Transaction>, AppError> {
+    let filter = TransactionFilter {
+        month,
+        limit: Some(1000),
+        ..Default::default()
+    };
+    Ok(query_transactions_page(&state.db, &filter).await?.items)
 }
 
 #[tauri::command]
@@ -884,33 +999,23 @@ pub async fn dashboard_summary(
     state: State<'_, AppState>,
 ) -> Result<Summary, AppError> {
     let m = month.unwrap_or_else(|| chrono::Local::now().format("%Y-%m").to_string());
-    let r = sqlx::query(
-        "SELECT
-         COALESCE(SUM(CASE WHEN t.amount_cents>0 AND COALESCE(c.kind,'income') NOT IN ('transfer','investment') THEN t.amount_cents ELSE 0 END),0) income,
-         COALESCE(-SUM(CASE WHEN t.amount_cents<0 AND COALESCE(c.kind,'expense') NOT IN ('transfer','investment') THEN t.amount_cents ELSE 0 END),0) expenses,
-         COALESCE(-SUM(CASE WHEN t.amount_cents<0 AND COALESCE(c.kind,'expense') = 'investment' THEN t.amount_cents ELSE 0 END),0) investments,
-         COALESCE(SUM(t.amount_cents),0) balance, COUNT(*) count
-         FROM transactions t LEFT JOIN categories c ON c.id=t.category_id 
-         WHERE t.deleted_at IS NULL AND strftime('%Y-%m', t.date) = ?"
-    ).bind(&m).fetch_one(&state.db).await?;
-    let cats = sqlx::query(
-        "SELECT COALESCE(c.name,'Sem categoria') category,-SUM(t.amount_cents) amount
-         FROM transactions t LEFT JOIN categories c ON c.id=t.category_id
-         WHERE t.amount_cents<0 AND t.deleted_at IS NULL AND COALESCE(c.kind,'expense') NOT IN ('transfer','investment')
-         AND strftime('%Y-%m', t.date) = ?
-         GROUP BY category ORDER BY amount DESC LIMIT 6"
-    ).bind(&m).fetch_all(&state.db).await?;
+    // Reuses the same row-classification logic as `generate_financial_report` (reports.rs) so the
+    // dashboard and the reports page never disagree — e.g. a credit-card refund (positive amount on
+    // a credit_card account) must not count as income, and expense-kind categories with a positive
+    // amount reduce expenses rather than adding income.
+    let data = reports::dashboard_summary_data(&state.db, &m).await?;
     Ok(Summary {
-        income_in_cents: r.get("income"),
-        expenses_in_cents: r.get("expenses"),
-        investments_in_cents: r.get("investments"),
-        balance_in_cents: r.get("balance"),
-        transaction_count: r.get("count"),
-        by_category: cats
+        income_in_cents: data.income_in_cents,
+        expenses_in_cents: data.expenses_in_cents,
+        investments_in_cents: data.investments_in_cents,
+        balance_in_cents: data.balance_in_cents,
+        transaction_count: data.transaction_count,
+        by_category: data
+            .by_category
             .into_iter()
-            .map(|x| CategoryTotal {
-                category: x.get("category"),
-                amount_in_cents: x.get("amount"),
+            .map(|(category, amount_in_cents)| CategoryTotal {
+                category,
+                amount_in_cents,
             })
             .collect(),
     })
@@ -1455,8 +1560,174 @@ async fn create_transfer_impl(
             .execute(&mut *tx).await?;
         ids.push(id);
     }
+    // `ids[0]` is the out leg (negative amount, from_account) and `ids[1]` is the in leg
+    // (positive amount, to_account) — see the `legs` array above. Linking them lets
+    // `is_transfer_leg` (list_transactions_page/update_transaction_impl) protect both sides
+    // from independent amount/date edits, the same way credit-card payment legs are protected.
+    sqlx::query(
+        "INSERT INTO transaction_links(id,kind,debit_transaction_id,credit_transaction_id)
+         VALUES(?,'transfer',?,?)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(&ids[0])
+    .bind(&ids[1])
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(ids)
+}
+
+/// Candidate pair of transactions that look like an unlinked account-to-account transfer:
+/// opposite amounts, different (non-credit-card) accounts, dates within 3 days, and neither
+/// side already categorized outside the transfers bucket or linked to another transaction.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferCandidate {
+    debit_transaction_id: String,
+    debit_account_name: String,
+    debit_date: String,
+    debit_description: String,
+    credit_transaction_id: String,
+    credit_account_name: String,
+    credit_date: String,
+    credit_description: String,
+    amount_in_cents: i64,
+}
+
+#[tauri::command]
+pub async fn detect_transfer_candidates(
+    batch_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<TransferCandidate>, AppError> {
+    detect_transfer_candidates_impl(&state.db, batch_id.as_deref()).await
+}
+
+async fn detect_transfer_candidates_impl(
+    db: &SqlitePool,
+    batch_id: Option<&str>,
+) -> Result<Vec<TransferCandidate>, AppError> {
+    let rows = sqlx::query(
+        "SELECT d.id debit_id, da.name debit_account_name, d.date debit_date, d.description debit_description,
+                c.id credit_id, ca.name credit_account_name, c.date credit_date, c.description credit_description,
+                c.amount_cents amount_cents
+         FROM transactions d
+         JOIN accounts da ON da.id=d.account_id
+         JOIN transactions c ON c.amount_cents = -d.amount_cents
+         JOIN accounts ca ON ca.id=c.account_id
+         WHERE d.amount_cents<0 AND d.deleted_at IS NULL AND c.deleted_at IS NULL
+           AND da.kind!='credit_card' AND ca.kind!='credit_card'
+           AND d.account_id != c.account_id
+           AND ABS(julianday(d.date)-julianday(c.date))<=3
+           AND (d.category_id IS NULL OR d.category_id IN (SELECT id FROM categories WHERE kind='transfer'))
+           AND (c.category_id IS NULL OR c.category_id IN (SELECT id FROM categories WHERE kind='transfer'))
+           AND NOT EXISTS(SELECT 1 FROM transaction_links l WHERE l.debit_transaction_id=d.id OR l.credit_transaction_id=d.id)
+           AND NOT EXISTS(SELECT 1 FROM transaction_links l WHERE l.debit_transaction_id=c.id OR l.credit_transaction_id=c.id)
+           AND (?1 IS NULL OR d.import_batch_id=?1 OR c.import_batch_id=?1)
+         ORDER BY d.date DESC
+         LIMIT 50",
+    )
+    .bind(batch_id)
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| TransferCandidate {
+            debit_transaction_id: r.get("debit_id"),
+            debit_account_name: r.get("debit_account_name"),
+            debit_date: r.get("debit_date"),
+            debit_description: r.get("debit_description"),
+            credit_transaction_id: r.get("credit_id"),
+            credit_account_name: r.get("credit_account_name"),
+            credit_date: r.get("credit_date"),
+            credit_description: r.get("credit_description"),
+            amount_in_cents: r.get("amount_cents"),
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn link_transfer_pair(
+    debit_transaction_id: String,
+    credit_transaction_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    link_transfer_pair_impl(debit_transaction_id, credit_transaction_id, &state.db).await
+}
+
+async fn link_transfer_pair_impl(
+    debit_transaction_id: String,
+    credit_transaction_id: String,
+    db: &SqlitePool,
+) -> Result<(), AppError> {
+    if debit_transaction_id == credit_transaction_id {
+        return Err(AppError::Validation(
+            "Selecione duas transações diferentes".into(),
+        ));
+    }
+    let mut tx = db.begin().await?;
+    let debit = sqlx::query(
+        "SELECT t.amount_cents,t.account_id,t.category_id,t.category_source,t.categorization_rule_id
+         FROM transactions t JOIN accounts a ON a.id=t.account_id
+         WHERE t.id=? AND t.deleted_at IS NULL AND a.kind!='credit_card'",
+    )
+    .bind(&debit_transaction_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::Validation("Transação de origem não encontrada".into()))?;
+    let credit = sqlx::query(
+        "SELECT t.amount_cents,t.account_id FROM transactions t JOIN accounts a ON a.id=t.account_id
+         WHERE t.id=? AND t.deleted_at IS NULL AND a.kind!='credit_card'",
+    )
+    .bind(&credit_transaction_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::Validation("Transação de destino não encontrada".into()))?;
+    let debit_amount: i64 = debit.get("amount_cents");
+    let credit_amount: i64 = credit.get("amount_cents");
+    if debit_amount >= 0 || credit_amount <= 0 || debit_amount != -credit_amount {
+        return Err(AppError::Validation(
+            "Os dois lados da transferência precisam ter valores opostos".into(),
+        ));
+    }
+    if debit.get::<String, _>("account_id") == credit.get::<String, _>("account_id") {
+        return Err(AppError::Validation(
+            "Escolha transações de contas diferentes".into(),
+        ));
+    }
+    let already_linked: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM transaction_links
+         WHERE debit_transaction_id IN (?,?) OR credit_transaction_id IN (?,?)",
+    )
+    .bind(&debit_transaction_id)
+    .bind(&credit_transaction_id)
+    .bind(&debit_transaction_id)
+    .bind(&credit_transaction_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if already_linked > 0 {
+        return Err(AppError::Validation(
+            "Uma dessas transações já está vinculada a outra transferência ou pagamento".into(),
+        ));
+    }
+    sqlx::query(
+        "INSERT INTO transaction_links(id,kind,debit_transaction_id,credit_transaction_id,previous_category_id,previous_category_source,previous_rule_id)
+         VALUES(?,'transfer',?,?,?,?,?)"
+    ).bind(Uuid::new_v4().to_string()).bind(&debit_transaction_id).bind(&credit_transaction_id)
+        .bind(debit.get::<Option<String>,_>("category_id"))
+        .bind(debit.get::<Option<String>,_>("category_source"))
+        .bind(debit.get::<Option<String>,_>("categorization_rule_id"))
+        .execute(&mut *tx).await?;
+    for transaction_id in [&debit_transaction_id, &credit_transaction_id] {
+        sqlx::query(
+            "UPDATE transactions SET category_id=?,category_source='manual',categorization_rule_id=NULL WHERE id=?",
+        )
+        .bind(TRANSFER_CATEGORY_ID)
+        .bind(transaction_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -1464,22 +1735,39 @@ pub async fn update_transaction(
     input: TransactionInput,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
+    update_transaction_impl(input, &state.db).await
+}
+
+async fn update_transaction_impl(input: TransactionInput, db: &SqlitePool) -> Result<(), AppError> {
     let id = input
         .id
         .clone()
         .ok_or_else(|| AppError::Validation("Transação inválida".into()))?;
     validate_transaction_input(&input)?;
-    ensure_account_active(&state.db, &input.account_id).await?;
-    ensure_category_active(&state.db, &input.category_id).await?;
-    let exists = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM transactions WHERE id=? AND deleted_at IS NULL",
+    ensure_account_active(db, &input.account_id).await?;
+    ensure_category_active(db, &input.category_id).await?;
+    let current = sqlx::query(
+        "SELECT date,amount_cents,
+         EXISTS(
+            SELECT 1 FROM transaction_links l
+            WHERE (l.debit_transaction_id=t.id OR l.credit_transaction_id=t.id)
+            AND l.credit_transaction_id IS NOT NULL
+         ) is_transfer_leg
+         FROM transactions t WHERE t.id=? AND t.deleted_at IS NULL",
     )
     .bind(&id)
-    .fetch_one(&state.db)
+    .fetch_optional(db)
     .await?
-        > 0;
-    if !exists {
-        return Err(AppError::Validation("Transação não encontrada".into()));
+    .ok_or_else(|| AppError::Validation("Transação não encontrada".into()))?;
+    let is_transfer_leg = current.get::<i64, _>("is_transfer_leg") != 0;
+    if is_transfer_leg {
+        let current_date: String = current.get("date");
+        let current_amount: i64 = current.get("amount_cents");
+        if current_date != input.date.trim() || current_amount != input.amount_in_cents {
+            return Err(AppError::Validation(
+                "Esta transação faz parte de uma transferência; edite o valor ou a data pela transferência original".into(),
+            ));
+        }
     }
     let description = input.description.trim().to_string();
     let normalized = normalize_description(&description);
@@ -1497,7 +1785,7 @@ pub async fn update_transaction(
     )
     .bind(&fp)
     .bind(&id)
-    .fetch_one(&state.db)
+    .fetch_one(db)
     .await?
         > 0;
     if collides {
@@ -1512,7 +1800,7 @@ pub async fn update_transaction(
          WHERE id=? AND deleted_at IS NULL"
     ).bind(&input.account_id).bind(&date).bind(&description).bind(&normalized).bind(&merchant)
         .bind(input.amount_in_cents).bind(&fp).bind(&input.category_id).bind(source).bind(&id)
-        .execute(&state.db).await?;
+        .execute(db).await?;
     Ok(())
 }
 
@@ -1955,11 +2243,18 @@ pub async fn set_import_candidate_category(
     Ok(())
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitImportResult {
+    count: usize,
+    batch_id: String,
+}
+
 #[tauri::command]
 pub async fn commit_import(
     session_id: String,
     state: State<'_, AppState>,
-) -> Result<usize, AppError> {
+) -> Result<CommitImportResult, AppError> {
     let session = state
         .sessions
         .lock()
@@ -2015,7 +2310,7 @@ pub async fn commit_import(
         count += 1;
     }
     tx.commit().await?;
-    Ok(count)
+    Ok(CommitImportResult { count, batch_id })
 }
 
 #[cfg(test)]
@@ -2200,6 +2495,37 @@ mod tests {
         ).fetch_one(&db).await.unwrap();
         assert_eq!(visible, 0);
 
+        // `create_transfer` links both legs via `transaction_links`, so they show up as
+        // protected transfer legs just like credit-card payment legs do.
+        let link_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM transaction_links WHERE kind='transfer' AND debit_transaction_id=? AND credit_transaction_id=?"
+        ).bind(&ids[0]).bind(&ids[1]).fetch_one(&db).await.unwrap();
+        assert_eq!(link_count, 1);
+
+        let page = query_transactions_page(&db, &TransactionFilter::default())
+            .await
+            .unwrap();
+        let debit = page.items.iter().find(|t| t.id == ids[0]).unwrap();
+        let credit = page.items.iter().find(|t| t.id == ids[1]).unwrap();
+        assert!(debit.is_transfer_leg);
+        assert!(credit.is_transfer_leg);
+
+        // Amount/date edits on a manually-created transfer leg are rejected, same as
+        // credit-card payment legs.
+        let bad_amount = update_transaction_impl(
+            TransactionInput {
+                id: Some(ids[0].clone()),
+                account_id: from_account.clone(),
+                date: "2026-06-10".into(),
+                description: "Transferência para Poupança".into(),
+                amount_in_cents: -20_000,
+                category_id: None,
+            },
+            &db,
+        )
+        .await;
+        assert!(bad_amount.is_err());
+
         // Repeating the exact same transfer is rejected as a duplicate.
         assert!(create_transfer_impl(
             TransferInput {
@@ -2213,6 +2539,369 @@ mod tests {
         )
         .await
         .is_err());
+    }
+
+    #[tokio::test]
+    async fn detect_transfer_candidates_finds_opposite_pair_across_accounts() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = crate::infrastructure::database::connect(&directory.path().join("detect.db"))
+            .await
+            .unwrap();
+        let onboarding = OnboardingInput {
+            display_name: "Pessoa Teste".into(),
+            monthly_income_in_cents: None,
+            income_day: None,
+            financial_goal: None,
+            account_name: "Corrente".into(),
+            account_kind: "checking".into(),
+            opening_balance_in_cents: None,
+        };
+        let checking = complete_onboarding_impl(onboarding, &db)
+            .await
+            .unwrap()
+            .account_id;
+        let savings = "poupanca-teste".to_string();
+        sqlx::query("INSERT INTO accounts(id,name,kind) VALUES(?,?,'savings')")
+            .bind(&savings)
+            .bind("Poupança")
+            .execute(&db)
+            .await
+            .unwrap();
+        let card = "cartao-teste".to_string();
+        sqlx::query("INSERT INTO accounts(id,name,kind) VALUES(?,?,'credit_card')")
+            .bind(&card)
+            .bind("Cartão")
+            .execute(&db)
+            .await
+            .unwrap();
+
+        let debit_id = create_transaction_impl(
+            TransactionInput {
+                id: None,
+                account_id: checking.clone(),
+                date: "2026-06-10".into(),
+                description: "Envio para poupança".into(),
+                amount_in_cents: -15_000,
+                category_id: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+        let credit_id = create_transaction_impl(
+            TransactionInput {
+                id: None,
+                account_id: savings.clone(),
+                date: "2026-06-12".into(),
+                description: "Recebido da corrente".into(),
+                amount_in_cents: 15_000,
+                category_id: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+
+        // A same-amount pair involving a credit-card account must be ignored.
+        create_transaction_impl(
+            TransactionInput {
+                id: None,
+                account_id: card.clone(),
+                date: "2026-06-11".into(),
+                description: "Pagamento no cartão".into(),
+                amount_in_cents: 15_000,
+                category_id: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+
+        let candidates = detect_transfer_candidates_impl(&db, None).await.unwrap();
+        assert_eq!(candidates.len(), 1);
+        let candidate = &candidates[0];
+        assert_eq!(candidate.debit_transaction_id, debit_id);
+        assert_eq!(candidate.credit_transaction_id, credit_id);
+        assert_eq!(candidate.amount_in_cents, 15_000);
+
+        // Linking the pair removes it from future candidate lists and already-linked
+        // rows must be excluded.
+        link_transfer_pair_impl(debit_id.clone(), credit_id.clone(), &db)
+            .await
+            .unwrap();
+        let after_link = detect_transfer_candidates_impl(&db, None).await.unwrap();
+        assert!(after_link.is_empty());
+
+        let (debit_category, credit_category): (Option<String>, Option<String>) = (
+            sqlx::query_scalar("SELECT category_id FROM transactions WHERE id=?")
+                .bind(&debit_id)
+                .fetch_one(&db)
+                .await
+                .unwrap(),
+            sqlx::query_scalar("SELECT category_id FROM transactions WHERE id=?")
+                .bind(&credit_id)
+                .fetch_one(&db)
+                .await
+                .unwrap(),
+        );
+        assert_eq!(debit_category.as_deref(), Some(TRANSFER_CATEGORY_ID));
+        assert_eq!(credit_category.as_deref(), Some(TRANSFER_CATEGORY_ID));
+
+        // Both legs are now excluded from income/expense totals in the report aggregation.
+        let visible: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM transactions t JOIN categories c ON c.id=t.category_id
+             WHERE t.id IN (?,?) AND c.kind NOT IN ('transfer','investment')",
+        )
+        .bind(&debit_id)
+        .bind(&credit_id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(visible, 0);
+
+        // Trying to link an already-linked transaction again fails.
+        assert!(link_transfer_pair_impl(debit_id, credit_id, &db)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn list_transactions_page_filters_paginates_and_counts() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = crate::infrastructure::database::connect(&directory.path().join("filter.db"))
+            .await
+            .unwrap();
+        let onboarding = OnboardingInput {
+            display_name: "Pessoa Teste".into(),
+            monthly_income_in_cents: None,
+            income_day: None,
+            financial_goal: None,
+            account_name: "Conta".into(),
+            account_kind: "checking".into(),
+            opening_balance_in_cents: None,
+        };
+        let account_id = complete_onboarding_impl(onboarding, &db)
+            .await
+            .unwrap()
+            .account_id;
+
+        for i in 0..5 {
+            create_transaction_impl(
+                TransactionInput {
+                    id: None,
+                    account_id: account_id.clone(),
+                    date: format!("2026-06-{:02}", 10 + i),
+                    description: format!("Mercado Central {i}"),
+                    amount_in_cents: -1000 - i,
+                    category_id: None,
+                },
+                &db,
+            )
+            .await
+            .unwrap();
+        }
+        create_transaction_impl(
+            TransactionInput {
+                id: None,
+                account_id: account_id.clone(),
+                date: "2026-05-15".into(),
+                description: "Outra loja".into(),
+                amount_in_cents: -500,
+                category_id: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+
+        // Month filter + pagination.
+        let page = query_transactions_page(
+            &db,
+            &TransactionFilter {
+                month: Some("2026-06".into()),
+                limit: Some(2),
+                offset: Some(0),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(page.total_count, 5);
+        assert_eq!(page.items.len(), 2);
+
+        let page2 = query_transactions_page(
+            &db,
+            &TransactionFilter {
+                month: Some("2026-06".into()),
+                limit: Some(2),
+                offset: Some(4),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(page2.total_count, 5);
+        assert_eq!(page2.items.len(), 1);
+
+        // Search matches case/accent-folded description via normalized_description.
+        let searched = query_transactions_page(
+            &db,
+            &TransactionFilter {
+                search: Some("mercado".into()),
+                limit: Some(50),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(searched.total_count, 5);
+        assert!(searched
+            .items
+            .iter()
+            .all(|t| t.description.starts_with("Mercado Central")));
+
+        // Range filter excludes the May transaction.
+        let ranged = query_transactions_page(
+            &db,
+            &TransactionFilter {
+                start_month: Some("2026-06".into()),
+                end_month: Some("2026-06".into()),
+                limit: Some(50),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(ranged.total_count, 5);
+    }
+
+    #[tokio::test]
+    async fn transfer_legs_are_flagged_and_protected_from_amount_date_edits() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = crate::infrastructure::database::connect(&directory.path().join("linked.db"))
+            .await
+            .unwrap();
+        let onboarding = OnboardingInput {
+            display_name: "Pessoa Teste".into(),
+            monthly_income_in_cents: None,
+            income_day: None,
+            financial_goal: None,
+            account_name: "Corrente".into(),
+            account_kind: "checking".into(),
+            opening_balance_in_cents: None,
+        };
+        let account_id = complete_onboarding_impl(onboarding, &db)
+            .await
+            .unwrap()
+            .account_id;
+
+        // A plain manual transaction is never a transfer leg.
+        let plain_id = create_transaction_impl(
+            TransactionInput {
+                id: None,
+                account_id: account_id.clone(),
+                date: "2026-06-01".into(),
+                description: "Padaria".into(),
+                amount_in_cents: -300,
+                category_id: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+
+        // Two transactions linked with both legs recorded simulate a genuine two-leg transfer
+        // (mirrors what `link_card_payment` inserts into `transaction_links`).
+        let debit_id = create_transaction_impl(
+            TransactionInput {
+                id: None,
+                account_id: account_id.clone(),
+                date: "2026-06-02".into(),
+                description: "Pagamento fatura".into(),
+                amount_in_cents: -5000,
+                category_id: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+        let credit_id = create_transaction_impl(
+            TransactionInput {
+                id: None,
+                account_id: account_id.clone(),
+                date: "2026-06-02".into(),
+                description: "Recebimento fatura".into(),
+                amount_in_cents: 5000,
+                category_id: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO transaction_links(id,kind,debit_transaction_id,credit_transaction_id)
+             VALUES(?,'credit_card_payment',?,?)",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(&debit_id)
+        .bind(&credit_id)
+        .execute(&db)
+        .await
+        .unwrap();
+
+        let page = query_transactions_page(&db, &TransactionFilter::default())
+            .await
+            .unwrap();
+        let plain = page.items.iter().find(|t| t.id == plain_id).unwrap();
+        let debit = page.items.iter().find(|t| t.id == debit_id).unwrap();
+        let credit = page.items.iter().find(|t| t.id == credit_id).unwrap();
+        assert!(!plain.is_transfer_leg);
+        assert!(debit.is_transfer_leg);
+        assert!(credit.is_transfer_leg);
+
+        // Editing description/category is fine...
+        let ok = update_transaction_impl(
+            TransactionInput {
+                id: Some(debit_id.clone()),
+                account_id: account_id.clone(),
+                date: "2026-06-02".into(),
+                description: "Pagamento fatura cartão".into(),
+                amount_in_cents: -5000,
+                category_id: None,
+            },
+            &db,
+        )
+        .await;
+        assert!(ok.is_ok());
+
+        // ...but changing the amount or date of a transfer leg is rejected.
+        let bad_amount = update_transaction_impl(
+            TransactionInput {
+                id: Some(debit_id.clone()),
+                account_id: account_id.clone(),
+                date: "2026-06-02".into(),
+                description: "Pagamento fatura cartão".into(),
+                amount_in_cents: -6000,
+                category_id: None,
+            },
+            &db,
+        )
+        .await;
+        assert!(bad_amount.is_err());
+
+        let bad_date = update_transaction_impl(
+            TransactionInput {
+                id: Some(debit_id),
+                account_id,
+                date: "2026-06-03".into(),
+                description: "Pagamento fatura cartão".into(),
+                amount_in_cents: -5000,
+                category_id: None,
+            },
+            &db,
+        )
+        .await;
+        assert!(bad_date.is_err());
     }
 
     async fn suggestion_test_setup() -> (tempfile::TempDir, SqlitePool, String) {

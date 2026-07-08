@@ -154,37 +154,127 @@ pub struct FinancialTargetInput {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TargetOverride {
-    month: String,
-    amount_in_cents: i64,
+    pub(crate) month: String,
+    pub(crate) amount_in_cents: i64,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FinancialTarget {
-    id: String,
-    kind: String,
-    category_id: Option<String>,
-    category_name: Option<String>,
-    amount_in_cents: i64,
-    enabled: bool,
-    overrides: Vec<TargetOverride>,
+    pub(crate) id: String,
+    pub(crate) kind: String,
+    pub(crate) category_id: Option<String>,
+    pub(crate) category_name: Option<String>,
+    pub(crate) amount_in_cents: i64,
+    pub(crate) enabled: bool,
+    pub(crate) overrides: Vec<TargetOverride>,
 }
 
 #[derive(Clone)]
-struct ReportRow {
+pub(crate) struct ReportRow {
     date: String,
     month: String,
     merchant_key: Option<String>,
     merchant_label: String,
     amount: i64,
     account_kind: String,
-    category_id: Option<String>,
+    pub(crate) category_id: Option<String>,
     category_name: Option<String>,
     category_color: Option<String>,
     category_kind: Option<String>,
 }
 
-fn parse_month(value: &str) -> Result<(i32, u32), AppError> {
+/// Loads report rows for a single month with the `account_kind`/`category_kind` joins needed by
+/// [`income_value`]/[`expense_value`]/[`investment_value`], scoped to `source`. Shared by the
+/// financial report and the dashboard summary so both use identical income/expense/investment
+/// classification.
+pub(crate) async fn load_report_rows_for_month(
+    db: &SqlitePool,
+    month: &str,
+    source: &str,
+) -> Result<Vec<ReportRow>, AppError> {
+    let rows = sqlx::query(
+        "SELECT t.date, strftime('%Y-%m',t.date) month, t.merchant_key,
+         COALESCE(ma.display_name, t.merchant_key, t.description) merchant_label, t.amount_cents,
+         a.kind account_kind, t.category_id, c.name category_name, c.color category_color, c.kind category_kind
+         FROM transactions t JOIN accounts a ON a.id=t.account_id
+         LEFT JOIN categories c ON c.id=t.category_id
+         LEFT JOIN merchant_aliases ma ON ma.merchant_key=t.merchant_key
+         WHERE t.deleted_at IS NULL AND a.deleted_at IS NULL
+         AND strftime('%Y-%m',t.date)=?
+         AND (?='all' OR (?='bank' AND a.kind!='credit_card') OR (?='credit_card' AND a.kind='credit_card'))"
+    ).bind(month).bind(source).bind(source).bind(source).fetch_all(db).await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| ReportRow {
+            date: r.get("date"),
+            month: r.get("month"),
+            merchant_key: r.get("merchant_key"),
+            merchant_label: r.get("merchant_label"),
+            amount: r.get("amount_cents"),
+            account_kind: r.get("account_kind"),
+            category_id: r.get("category_id"),
+            category_name: r.get("category_name"),
+            category_color: r.get("category_color"),
+            category_kind: r.get("category_kind"),
+        })
+        .collect())
+}
+
+/// Aggregate dashboard figures for a single month, source="all" — reuses the same
+/// income/expense/investment classification as [`generate_financial_report_impl`] so the
+/// dashboard and the reports page never disagree (e.g. a credit-card refund is never counted as
+/// income, and positive amounts in expense-kind categories reduce expenses rather than adding
+/// income).
+pub(crate) struct DashboardSummaryData {
+    pub income_in_cents: i64,
+    pub expenses_in_cents: i64,
+    pub investments_in_cents: i64,
+    pub balance_in_cents: i64,
+    pub transaction_count: i64,
+    pub by_category: Vec<(String, i64)>,
+}
+
+pub(crate) async fn dashboard_summary_data(
+    db: &SqlitePool,
+    month: &str,
+) -> Result<DashboardSummaryData, AppError> {
+    let rows = load_report_rows_for_month(db, month, "all").await?;
+    let mut income = 0i64;
+    let mut expenses = 0i64;
+    let mut investments = 0i64;
+    let mut balance = 0i64;
+    let mut category_map: HashMap<Option<String>, (String, i64)> = HashMap::new();
+    for row in &rows {
+        income += income_value(row);
+        expenses += expense_value(row);
+        investments += investment_value(row);
+        balance += row.amount;
+        let expense = expense_value(row);
+        if expense > 0 {
+            let entry = category_map.entry(row.category_id.clone()).or_insert((
+                row.category_name
+                    .clone()
+                    .unwrap_or_else(|| "Sem categoria".into()),
+                0,
+            ));
+            entry.1 += expense;
+        }
+    }
+    let mut by_category: Vec<(String, i64)> = category_map.into_values().collect();
+    by_category.sort_by(|a, b| b.1.cmp(&a.1));
+    by_category.truncate(6);
+    Ok(DashboardSummaryData {
+        income_in_cents: income,
+        expenses_in_cents: expenses.max(0),
+        investments_in_cents: investments,
+        balance_in_cents: balance,
+        transaction_count: rows.len() as i64,
+        by_category,
+    })
+}
+
+pub(crate) fn parse_month(value: &str) -> Result<(i32, u32), AppError> {
     let date = NaiveDate::parse_from_str(&format!("{value}-01"), "%Y-%m-%d")
         .map_err(|_| AppError::Validation("Período mensal inválido".into()))?;
     Ok((date.year(), date.month()))
@@ -230,7 +320,7 @@ fn percent_change(current: i64, previous: i64) -> Option<f64> {
     }
 }
 
-fn expense_value(row: &ReportRow) -> i64 {
+pub(crate) fn expense_value(row: &ReportRow) -> i64 {
     match row.category_kind.as_deref() {
         Some("transfer") | Some("investment") | Some("income") => 0,
         Some("expense") => -row.amount,
@@ -240,7 +330,7 @@ fn expense_value(row: &ReportRow) -> i64 {
     }
 }
 
-fn income_value(row: &ReportRow) -> i64 {
+pub(crate) fn income_value(row: &ReportRow) -> i64 {
     if row.account_kind == "credit_card" {
         return 0;
     }
@@ -251,7 +341,7 @@ fn income_value(row: &ReportRow) -> i64 {
     }
 }
 
-fn investment_value(row: &ReportRow) -> i64 {
+pub(crate) fn investment_value(row: &ReportRow) -> i64 {
     if row.category_kind.as_deref() == Some("investment") {
         (-row.amount).max(0)
     } else {
@@ -288,13 +378,13 @@ fn summarize_period(rows: &[&ReportRow]) -> ReportSummary {
     result
 }
 
-fn days_in_month(month: &str) -> i64 {
+pub(crate) fn days_in_month(month: &str) -> i64 {
     let next = shift_month(month, 1).unwrap();
     let date = NaiveDate::parse_from_str(&format!("{next}-01"), "%Y-%m-%d").unwrap();
     date.pred_opt().unwrap().day() as i64
 }
 
-fn effective_days(month: &str) -> i64 {
+pub(crate) fn effective_days(month: &str) -> i64 {
     let today = Local::now().date_naive();
     if month == today.format("%Y-%m").to_string() {
         today.day() as i64
@@ -303,7 +393,7 @@ fn effective_days(month: &str) -> i64 {
     }
 }
 
-async fn load_targets(db: &SqlitePool) -> Result<Vec<FinancialTarget>, AppError> {
+pub(crate) async fn load_targets(db: &SqlitePool) -> Result<Vec<FinancialTarget>, AppError> {
     let rows = sqlx::query(
         "SELECT t.id,t.kind,t.category_id,c.name category_name,t.amount_cents,t.enabled
          FROM financial_targets t LEFT JOIN categories c ON c.id=t.category_id
@@ -524,12 +614,15 @@ async fn generate_financial_report_impl(
     );
     let elapsed = effective_days(&filter.end_month).max(1);
     latest_month_summary.daily_average_in_cents = latest_month_summary.expenses_in_cents / elapsed;
-    latest_month_summary.projected_expenses_in_cents =
-        latest_month_summary.daily_average_in_cents * days_in_month(&filter.end_month);
-    summary.daily_average_in_cents = if months.is_empty() {
+    latest_month_summary.projected_expenses_in_cents = ((latest_month_summary.expenses_in_cents
+        as i128
+        * days_in_month(&filter.end_month) as i128)
+        / elapsed as i128) as i64;
+    let period_days: i64 = months.iter().map(|m| effective_days(m)).sum();
+    summary.daily_average_in_cents = if period_days == 0 {
         0
     } else {
-        summary.expenses_in_cents / months.len() as i64 / days_in_month(&filter.end_month)
+        summary.expenses_in_cents / period_days
     };
     summary.projected_expenses_in_cents = latest_month_summary.projected_expenses_in_cents;
 
@@ -732,10 +825,23 @@ async fn generate_financial_report_impl(
                 .unwrap_or(0)
                 .max(0)
         };
+        let is_current_month =
+            filter.end_month == Local::now().date_naive().format("%Y-%m").to_string();
         let projected = if target.kind == "savings" {
-            actual
+            if is_current_month {
+                let days = days_in_month(&filter.end_month) as i128;
+                let projected_income =
+                    (latest_month_summary.income_in_cents as i128 * days) / elapsed as i128;
+                projected_income as i64 - latest_month_summary.projected_expenses_in_cents
+            } else {
+                // Past (or future) months: the month is fully elapsed, so the actual figure is final.
+                actual
+            }
+        } else if is_current_month {
+            // Pro-rate the current month's partial category spend to a full-month projection.
+            ((actual as i128 * days_in_month(&filter.end_month) as i128) / elapsed as i128) as i64
         } else {
-            actual / elapsed * days_in_month(&filter.end_month)
+            actual
         };
         goals.push(GoalProgress {
             target_id: target.id,
@@ -1086,6 +1192,153 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![("2026-05", 4000), ("2026-06", 5000),]
         );
+    }
+
+    #[tokio::test]
+    async fn dashboard_summary_matches_report_for_credit_card_refund() {
+        let (_directory, db, _account_id) = setup().await;
+        sqlx::query("INSERT INTO accounts(id,name,kind) VALUES('card','Cartão','credit_card')")
+            .execute(&db)
+            .await
+            .unwrap();
+        // A credit-card refund (positive amount on a credit_card account) must never be counted
+        // as income by either the dashboard or the report.
+        insert_transaction(
+            &db,
+            "refund",
+            "card",
+            "2026-06-05",
+            "Estorno loja",
+            3000,
+            None,
+        )
+        .await;
+        // A positive amount tagged with an expense-kind category should reduce expenses, not add
+        // income.
+        sqlx::query("INSERT INTO categories(id,name,kind) VALUES('cat-exp','Mercado','expense')")
+            .execute(&db)
+            .await
+            .unwrap();
+        insert_transaction(
+            &db,
+            "exp-refund",
+            "acc",
+            "2026-06-06",
+            "Estorno mercado",
+            1500,
+            Some("cat-exp"),
+        )
+        .await;
+        insert_expense(&db, "regular", "2026-06-07", "Aluguel", -20000).await;
+        insert_transaction(&db, "salary", "acc", "2026-06-01", "Salario", 500000, None).await;
+
+        let dashboard = dashboard_summary_data(&db, "2026-06").await.unwrap();
+        let report = generate_financial_report_impl(
+            ReportFilter {
+                start_month: "2026-06".into(),
+                end_month: "2026-06".into(),
+                source: "all".into(),
+                account_id: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            dashboard.income_in_cents,
+            report.latest_month_summary.income_in_cents
+        );
+        assert_eq!(
+            dashboard.expenses_in_cents,
+            report.latest_month_summary.expenses_in_cents
+        );
+        assert_eq!(
+            dashboard.investments_in_cents,
+            report.latest_month_summary.investments_in_cents
+        );
+        // The credit-card refund must not have been counted as income.
+        assert_eq!(dashboard.income_in_cents, 500000);
+    }
+
+    #[tokio::test]
+    async fn savings_goal_projects_pro_rata_for_the_current_month() {
+        let (_directory, db, _account_id) = setup().await;
+        let today = Local::now().date_naive();
+        let current_month = today.format("%Y-%m").to_string();
+        sqlx::query("INSERT INTO financial_targets(id,kind,category_id,amount_cents,enabled) VALUES('goal-savings','savings',NULL,100000,1)")
+            .execute(&db).await.unwrap();
+        // Half the current savings target reached; income minus expenses so far.
+        insert_transaction(
+            &db,
+            "income",
+            "acc",
+            &format!("{current_month}-01"),
+            "Salario",
+            200000,
+            None,
+        )
+        .await;
+        insert_expense(
+            &db,
+            "expense",
+            &format!("{current_month}-02"),
+            "Contas",
+            -150000,
+        )
+        .await;
+
+        let report = generate_financial_report_impl(
+            ReportFilter {
+                start_month: current_month.clone(),
+                end_month: current_month.clone(),
+                source: "all".into(),
+                account_id: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+        let goal = report
+            .goals
+            .iter()
+            .find(|g| g.kind == "savings")
+            .expect("savings goal");
+        let elapsed = effective_days(&current_month).max(1);
+        let total_days = days_in_month(&current_month);
+        if elapsed < total_days {
+            // Pro-rated projection must scale up the partial actual, not just echo it back.
+            assert!(
+                goal.projected_in_cents > goal.actual_in_cents,
+                "projected {} should exceed partial actual {} mid-month",
+                goal.projected_in_cents,
+                goal.actual_in_cents
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn period_daily_average_accounts_for_each_months_own_length() {
+        let (_directory, db, _account_id) = setup().await;
+        // January has 31 days, February (2026, non-leap) has 28 — both fully in the past.
+        insert_expense(&db, "jan", "2026-01-15", "Despesa janeiro", -3100).await;
+        insert_expense(&db, "feb", "2026-02-15", "Despesa fevereiro", -2800).await;
+
+        let report = generate_financial_report_impl(
+            ReportFilter {
+                start_month: "2026-01".into(),
+                end_month: "2026-02".into(),
+                source: "all".into(),
+                account_id: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+
+        // Total expenses (5900) over 31+28=59 days = 100 cents/day, not 5900/2/28 (~105) which the
+        // old buggy formula (using only the last month's day count) would have produced.
+        assert_eq!(report.summary.daily_average_in_cents, 100);
     }
 
     #[tokio::test]

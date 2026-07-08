@@ -29,7 +29,14 @@ export type Transaction = {
   date: string; description: string;
   amountInCents: number; categoryId?: string; category?: string;
   categorySource?: "manual" | "rule"; status: "cleared" | "pending";
+  isTransferLeg: boolean;
 };
+export type TransactionFilter = {
+  month?: string; startMonth?: string; endMonth?: string;
+  source?: ReportSource; accountId?: string; categoryId?: string;
+  uncategorized?: boolean; search?: string; limit?: number; offset?: number;
+};
+export type TransactionPage = { items: Transaction[]; totalCount: number };
 export type TransactionInput = {
   id?: string; accountId: string; date: string; description: string;
   amountInCents: number; categoryId?: string;
@@ -178,6 +185,21 @@ export type TransactionLink = {
   creditTransactionId?: string;
   invoiceId?: string;
 };
+export type TransferCandidate = {
+  debitTransactionId: string;
+  debitAccountName: string;
+  debitDate: string;
+  debitDescription: string;
+  creditTransactionId: string;
+  creditAccountName: string;
+  creditDate: string;
+  creditDescription: string;
+  amountInCents: number;
+};
+export type CommitImportResult = {
+  count: number;
+  batchId: string;
+};
 export type ReportSource = "all" | "bank" | "credit_card";
 export type ReportFilter = { startMonth:string; endMonth:string; source:ReportSource; accountId?:string };
 export type CategoryTrendFilter = { categoryId?:string; endMonth:string; source:ReportSource; accountId?:string; months:number };
@@ -211,6 +233,16 @@ export type FinancialTarget = {
 };
 export type FinancialTargetInput = Omit<FinancialTarget,"id"|"categoryName"|"overrides">&{id?:string};
 export type CategoryTrendPoint = { month:string; amountInCents:number };
+export type NetWorthKindAmount = { kind:AccountType; amountInCents:number };
+export type NetWorthPoint = { month:string; totalInCents:number; perKind:NetWorthKindAmount[] };
+export type UpcomingItem = { date:string; label:string; amountInCents:number; kind:"invoice"|"recurring" };
+export type BudgetStatus = "ok"|"warning"|"over";
+export type BudgetCategory = {
+  targetId:string; categoryId:string; categoryName:string; categoryColor?:string;
+  limitInCents:number; spentInCents:number; remainingInCents:number; progressPercent:number;
+  projectedInCents:number; status:BudgetStatus;
+};
+export type BudgetOverview = { categories:BudgetCategory[]; totals:{limitInCents:number;spentInCents:number} };
 export type RecurringTransaction = {
   id:string; accountId:string; accountName:string; categoryId?:string; categoryName?:string;
   description:string; amountInCents:number; dayOfMonth:number; startMonth:string; endMonth?:string;

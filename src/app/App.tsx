@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BarChart3, CreditCard, FileUp, LayoutDashboard, Menu, Moon, Repeat, Settings, Sun, Tags, WalletCards } from "lucide-react";
+import { BarChart3, CreditCard, FileUp, LayoutDashboard, Menu, Moon, Repeat, Settings, Sun, Tags, Wallet, WalletCards } from "lucide-react";
 import { getTheme, setTheme, type Theme } from "../shared/theme";
 import { Dashboard } from "../features/dashboard/Dashboard";
 import { Transactions } from "../features/transactions/Transactions";
@@ -12,13 +12,16 @@ import { SettingsPage } from "../features/settings/SettingsPage";
 import { AccountsCards } from "../features/accounts/AccountsCards";
 import { Reports } from "../features/reports/Reports";
 import { RecurringTransactions } from "../features/recurring/RecurringTransactions";
+import { BudgetPage } from "../features/budget/BudgetPage";
 import { api } from "../shared/api";
 import { UpdateNotice } from "../shared/ui/UpdateNotice";
+import { CommandPalette } from "../shared/ui/CommandPalette";
 
 const nav = [
   ["/", "Visão geral", LayoutDashboard],
   ["/transactions", "Transações", CreditCard],
   ["/recurring", "Recorrências", Repeat],
+  ["/budget", "Orçamento", Wallet],
   ["/import", "Importar", FileUp],
   ["/accounts", "Contas e cartões", WalletCards],
   ["/categories", "Categorias e regras", Tags],
@@ -72,10 +75,11 @@ export function App() {
         <div className="privacy">🔒 Seus dados ficam neste computador</div>
       </div>
     </aside>
-    <main><UpdateNotice enabled={bootstrap.onboardingCompleted}/><Routes>
+    <main><UpdateNotice enabled={bootstrap.onboardingCompleted}/><CommandPalette/><Routes>
       <Route path="/" element={<Dashboard/>}/>
       <Route path="/transactions" element={<Transactions/>}/>
       <Route path="/recurring" element={<RecurringTransactions/>}/>
+      <Route path="/budget" element={<BudgetPage/>}/>
       <Route path="/import" element={<ImportPage/>}/>
       <Route path="/accounts" element={<AccountsCards/>}/>
       <Route path="/categories" element={<CategoriesRules/>}/>

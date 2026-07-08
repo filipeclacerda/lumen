@@ -12,7 +12,7 @@ pub async fn connect(path: &Path) -> Result<SqlitePool, AppError> {
         .execute(&pool)
         .await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
-    // Touched to force recompile for migrations!
+    // Touched to force recompile for migrations! (0017_transaction_links_transfer_kind)
     Ok(pool)
 }
 

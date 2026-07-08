@@ -6,11 +6,12 @@ type MoneyInputProps = {
   onChange: (cents: number | null) => void;
   autoFocus?: boolean;
   id?: string;
+  disabled?: boolean;
 };
 
 /** Brazilian currency field. Uncontrolled text, reports parsed integer cents
  *  (null while the input is blank/invalid). */
-export function MoneyInput({ defaultCents = 0, onChange, autoFocus, id }: MoneyInputProps) {
+export function MoneyInput({ defaultCents = 0, onChange, autoFocus, id, disabled }: MoneyInputProps) {
   const [text, setText] = useState(defaultCents ? centsToInput(defaultCents) : "");
   return (
     <div className="money-input">
@@ -21,6 +22,7 @@ export function MoneyInput({ defaultCents = 0, onChange, autoFocus, id }: MoneyI
         autoFocus={autoFocus}
         value={text}
         placeholder="0,00"
+        disabled={disabled}
         onChange={e => {
           const masked = maskCurrency(e.target.value);
           setText(masked);

@@ -281,13 +281,7 @@ git push origin feature/minha-melhoria
 
 ## 📄 Licença
 
-Este projeto é open source.
-
-Adicione aqui a licença escolhida para o projeto, por exemplo:
-
-```md
-MIT License
-```
+Este projeto é open source, distribuído sob a licença MIT. Consulte o arquivo [LICENSE](./LICENSE) para o texto completo.
 
 ---
 

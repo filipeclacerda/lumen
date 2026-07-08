@@ -1,11 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Account, AccountType, AppBootstrap, Category, CategorizationRule, CategoryTrendFilter, CategoryTrendPoint, CreditCardImportPreview, CreditCardInvoice, CreditCardInvoiceItem, CsvMappingDraft, CsvMappingProfile, DashboardSummary, FinancialReport, FinancialTarget, FinancialTargetInput, ImportFileInspection, ImportPreview, MerchantAlias, OnboardingInput, OnboardingResult, PaymentMatchCandidate, RecurringTransaction, RecurringTransactionInput, ReportFilter, RuleImpact, RuleInput, TemplateKind, Transaction, TransactionInput, TransactionLink, TransferInput, UserProfile } from "./types";
+import type { Account, AccountType, AppBootstrap, BudgetOverview, Category, CategorizationRule, CategoryTrendFilter, CategoryTrendPoint, CommitImportResult, CreditCardImportPreview, CreditCardInvoice, CreditCardInvoiceItem, CsvMappingDraft, CsvMappingProfile, DashboardSummary, FinancialReport, FinancialTarget, FinancialTargetInput, ImportFileInspection, ImportPreview, MerchantAlias, NetWorthPoint, OnboardingInput, OnboardingResult, PaymentMatchCandidate, RecurringTransaction, RecurringTransactionInput, ReportFilter, RuleImpact, RuleInput, TemplateKind, Transaction, TransactionFilter, TransactionInput, TransactionLink, TransactionPage, TransferCandidate, TransferInput, UpcomingItem, UserProfile } from "./types";
 
 const demoTransactions: Transaction[] = [
-  { id: "1", accountId: "card", accountName:"Cartão principal", accountKind:"credit_card", date: "2026-06-26", description: "Supermercado Aurora", amountInCents: -28490, categoryId: "groceries", category: "Supermercado", categorySource: "rule", status: "cleared" },
-  { id: "2", accountId: "demo", accountName:"Conta principal", accountKind:"checking", date: "2026-06-25", description: "Salário", amountInCents: 780000, categoryId: "salary", category: "Salário", categorySource: "rule", status: "cleared" },
-  { id: "3", accountId: "demo", accountName:"Conta principal", accountKind:"checking", date: "2026-06-23", description: "Energia elétrica", amountInCents: -18734, categoryId: "utilities", category: "Água, luz e gás", categorySource: "rule", status: "cleared" },
-  { id: "4", accountId: "card", accountName:"Cartão principal", accountKind:"credit_card", date: "2026-06-21", description: "Café do Centro", amountInCents: -3250, categoryId: "food", category: "Alimentação", status: "cleared" }
+  { id: "1", accountId: "card", accountName:"Cartão principal", accountKind:"credit_card", date: "2026-06-26", description: "Supermercado Aurora", amountInCents: -28490, categoryId: "groceries", category: "Supermercado", categorySource: "rule", status: "cleared", isTransferLeg: false },
+  { id: "2", accountId: "demo", accountName:"Conta principal", accountKind:"checking", date: "2026-06-25", description: "Salário", amountInCents: 780000, categoryId: "salary", category: "Salário", categorySource: "rule", status: "cleared", isTransferLeg: false },
+  { id: "3", accountId: "demo", accountName:"Conta principal", accountKind:"checking", date: "2026-06-23", description: "Energia elétrica", amountInCents: -18734, categoryId: "utilities", category: "Água, luz e gás", categorySource: "rule", status: "cleared", isTransferLeg: false },
+  { id: "4", accountId: "card", accountName:"Cartão principal", accountKind:"credit_card", date: "2026-06-21", description: "Café do Centro", amountInCents: -3250, categoryId: "food", category: "Alimentação", status: "cleared", isTransferLeg: false }
 ];
 const demoCategories: Category[] = [
   { id:"income",name:"Receitas",color:"#22835f",kind:"income",sortOrder:10,isSystem:true },
@@ -60,6 +60,16 @@ export const api = {
   },
   accounts: async (): Promise<Account[]> => isTauri() ? invoke("list_accounts") : [{ id: "demo", name: "Conta principal", kind: "checking", balanceInCents: 549526 }],
   transactions: async (month?: string): Promise<Transaction[]> => isTauri() ? invoke("list_transactions", { month: month || null }) : demoTransactions,
+  listTransactions: async (filter: TransactionFilter): Promise<TransactionPage> => {
+    if (isTauri()) return invoke("list_transactions_page", { filter });
+    const items = demoTransactions.filter(t =>
+      (!filter.search || t.description.toLowerCase().includes(filter.search.toLowerCase())) &&
+      (!filter.accountId || t.accountId === filter.accountId) &&
+      (!filter.categoryId || t.categoryId === filter.categoryId) &&
+      (!filter.uncategorized || !t.categoryId)
+    );
+    return { items, totalCount: items.length };
+  },
   summary: async (month?: string): Promise<DashboardSummary> => isTauri() ? invoke("dashboard_summary", { month: month || null }) : {
     incomeInCents: 780000, expensesInCents: 50374, investmentsInCents: 20000, balanceInCents: 729626, transactionCount: 4,
     byCategory: [{ category: "Alimentação", amountInCents: 31740 }, { category: "Moradia", amountInCents: 18734 }]
@@ -86,11 +96,22 @@ export const api = {
     invoke("restore_transactions", { transactionIds }),
   createTransaction: (input: TransactionInput): Promise<string> => invoke("create_transaction", { input }),
   createTransfer: (input: TransferInput): Promise<string[]> => invoke("create_transfer", { input }),
+  detectTransferCandidates: (batchId?: string): Promise<TransferCandidate[]> =>
+    invoke("detect_transfer_candidates", { batchId: batchId || null }),
+  linkTransferPair: (debitTransactionId: string, creditTransactionId: string): Promise<void> =>
+    invoke("link_transfer_pair", { debitTransactionId, creditTransactionId }),
   updateTransaction: (input: TransactionInput): Promise<void> => invoke("update_transaction", { input }),
   createAccount: (name: string, kind: AccountType): Promise<string> => invoke("create_account", { name, kind }),
   renameAccount: (id: string, name: string): Promise<void> => invoke("rename_account", { id, name }),
   archiveAccount: (id: string): Promise<void> => invoke("archive_account", { id }),
-  exportTransactionsCsv: (path: string): Promise<number> => invoke("export_transactions_csv", { path }),
+  exportTransactionsCsv: (path: string, filter: TransactionFilter = {}): Promise<number> =>
+    invoke("export_transactions_csv", { path, filter }),
+  exportTransactionsOfx: (path: string, filter: TransactionFilter = {}): Promise<number> =>
+    invoke("export_transactions_ofx", { path, filter }),
+  exportTransactionsPdf: (path: string, filter: TransactionFilter = {}): Promise<number> =>
+    invoke("export_transactions_pdf", { path, filter }),
+  exportFinancialReportPdf: (path: string, filter: ReportFilter): Promise<number> =>
+    invoke("export_financial_report_pdf", { path, filter }),
   backupDatabase: (path: string): Promise<void> => invoke("backup_database", { path }),
   restoreDatabase: (path: string): Promise<void> => invoke("restore_database", { path }),
   resetDatabase: (): Promise<void> => invoke("reset_database"),
@@ -107,7 +128,7 @@ export const api = {
     invoke("update_import_candidate", { sessionId, sourceRow, amountInCents, included }),
   setImportCategory: (sessionId: string, sourceRow: number, categoryId?: string): Promise<void> =>
     invoke("set_import_candidate_category", { sessionId, sourceRow, categoryId: categoryId || null }),
-  commitImport: (sessionId: string): Promise<number> => invoke("commit_import", { sessionId })
+  commitImport: (sessionId: string): Promise<CommitImportResult> => invoke("commit_import", { sessionId })
   ,
   detectImportKind: (path: string): Promise<"known_bank" | "known_credit_card" | "unknown_csv"> => invoke("detect_import_kind", { path }),
   createCreditCardAccount: (name: string): Promise<string> => invoke("create_credit_card_account", { name }),
@@ -211,5 +232,25 @@ export const api = {
   merchantAliases:():Promise<MerchantAlias[]> => isTauri()?invoke("list_merchant_aliases"):Promise.resolve([]),
   saveMerchantAlias:(merchantKey:string,displayName:string):Promise<string> =>
     invoke("save_merchant_alias",{input:{merchantKey,displayName}}),
-  deleteMerchantAlias:(id:string):Promise<void> => invoke("delete_merchant_alias",{id})
+  deleteMerchantAlias:(id:string):Promise<void> => invoke("delete_merchant_alias",{id}),
+  netWorthHistory: async (months = 12): Promise<NetWorthPoint[]> => {
+    if (isTauri()) return invoke("net_worth_history", { months });
+    const base = 300000;
+    return Array.from({ length: months }, (_, i) => {
+      const totalInCents = base + i * 45000;
+      return {
+        month: `2026-${String(((i % 12) + 1)).padStart(2, "0")}`,
+        totalInCents,
+        perKind: [{ kind: "checking" as AccountType, amountInCents: totalInCents }],
+      };
+    });
+  },
+  upcomingItems: async (days = 15): Promise<UpcomingItem[]> => {
+    if (isTauri()) return invoke("upcoming_items", { days });
+    return [];
+  },
+  budgetOverview: async (month: string): Promise<BudgetOverview> => {
+    if (isTauri()) return invoke("budget_overview", { month });
+    return { categories: [], totals: { limitInCents: 0, spentInCents: 0 } };
+  }
 };

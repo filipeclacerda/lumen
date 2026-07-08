@@ -2,11 +2,11 @@ import { type DragEvent, useCallback, useEffect, useRef, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { Check, CheckCircle2, Circle, CreditCard, Download, FileText, FileUp, ListChecks, Plus, ShieldCheck, TableProperties, X } from "lucide-react";
+import { ArrowLeftRight, Check, CheckCircle2, Circle, CreditCard, Download, FileText, FileUp, ListChecks, Plus, ShieldCheck, TableProperties, X } from "lucide-react";
 import { api } from "../../shared/api";
 import { Modal } from "../../shared/ui/Modal";
 import { CategorySelect } from "../../shared/ui/CategorySelect";
-import { money, centsToInput, parseMoneyToCents, maskCurrency } from "../../shared/format";
+import { money, centsToInput, parseMoneyToCents, maskCurrency, normalizeText, suggestRulePattern } from "../../shared/format";
 import type {
   CreditCardImportPreview,
   CsvColumnRole,
@@ -16,6 +16,7 @@ import type {
   ImportPreview,
   ImportSourceKind,
   TemplateKind,
+  TransferCandidate,
 } from "../../shared/types";
 
 type MappingState = {
@@ -63,6 +64,8 @@ export function ImportPage() {
   const [cardDueDate, setCardDueDate] = useState("");
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [isReadingFile, setIsReadingFile] = useState(false);
+  const [transferCandidates, setTransferCandidates] = useState<TransferCandidate[]>([]);
+  const [linkingTransfer, setLinkingTransfer] = useState<string>();
 
   useEffect(() => {
     if (pendingCardPath) {
@@ -297,11 +300,41 @@ export function ImportPage() {
 
   async function commitBank() {
     if (!bankPreview) return;
-    const count = await api.commitImport(bankPreview.sessionId);
+    const { count, batchId } = await api.commitImport(bankPreview.sessionId);
     await maybeSaveMappingProfile();
     setMessage(`${count} transações importadas com segurança.`);
     resetFlow();
     await refresh();
+    await checkForTransferCandidates(batchId);
+  }
+
+  async function checkForTransferCandidates(batchId: string) {
+    try {
+      const candidates = await api.detectTransferCandidates(batchId);
+      if (candidates.length > 0) setTransferCandidates(candidates);
+    } catch (error: any) {
+      // Detection is a best-effort convenience; a failure here shouldn't block the import.
+      console.error("Falha ao detectar transferências entre contas:", error);
+    }
+  }
+
+  async function linkTransferCandidate(candidate: TransferCandidate) {
+    const key = `${candidate.debitTransactionId}:${candidate.creditTransactionId}`;
+    setLinkingTransfer(key);
+    try {
+      await api.linkTransferPair(candidate.debitTransactionId, candidate.creditTransactionId);
+      setTransferCandidates((current) => current.filter((c) => c !== candidate));
+      setMessage("Transferência vinculada com sucesso.");
+      await refresh();
+    } catch (error: any) {
+      setMessage(`Não foi possível vincular a transferência: ${error?.message || error}`);
+    } finally {
+      setLinkingTransfer(undefined);
+    }
+  }
+
+  function dismissTransferCandidate(candidate: TransferCandidate) {
+    setTransferCandidates((current) => current.filter((c) => c !== candidate));
   }
 
   async function commitCard() {
@@ -340,7 +373,7 @@ export function ImportPage() {
     
     if (categoryId && oldCategoryId !== categoryId && candidate) {
       setLearning({
-        sourceRow, categoryId, pattern: candidate.description, amountInCents: candidate.amountInCents, kind: 'bank'
+        sourceRow, categoryId, pattern: suggestRulePattern(candidate.normalizedDescription || candidate.description), amountInCents: candidate.amountInCents, kind: 'bank'
       });
     }
 
@@ -385,7 +418,7 @@ export function ImportPage() {
 
     if (categoryId && oldCategoryId !== categoryId && item) {
       setLearning({
-        sourceRow, categoryId, pattern: item.candidate.description, amountInCents: item.candidate.amountInCents, kind: 'card'
+        sourceRow, categoryId, pattern: suggestRulePattern(item.candidate.normalizedDescription || item.candidate.description), amountInCents: item.candidate.amountInCents, kind: 'card'
       });
     }
   }
@@ -403,24 +436,25 @@ export function ImportPage() {
       categoryId: learning.categoryId,
     });
     
-    const p = learning.pattern.toLowerCase();
+    const p = normalizeText(learning.pattern);
+    const matchesLearning = (description: string) => normalizeText(description).includes(p);
 
     if (learning.kind === 'bank' && bankPreview) {
-      const updates = bankPreview.candidates.filter(c => c.description.toLowerCase().includes(p) && c.suggestedCategoryId !== learning.categoryId);
+      const updates = bankPreview.candidates.filter(c => matchesLearning(c.normalizedDescription || c.description) && c.suggestedCategoryId !== learning.categoryId);
       for (const u of updates) {
         await api.setImportCategory(bankPreview.sessionId, u.sourceRow, learning.categoryId);
       }
       setBankPreview({
         ...bankPreview,
         candidates: bankPreview.candidates.map(c => 
-          c.description.toLowerCase().includes(p) ? { ...c, suggestedCategoryId: learning.categoryId, suggestedCategoryName: selectedCategory?.name } : c
+          matchesLearning(c.normalizedDescription || c.description) ? { ...c, suggestedCategoryId: learning.categoryId, suggestedCategoryName: selectedCategory?.name } : c
         )
       });
     }
 
     if (learning.kind === 'card' && cardPreview) {
       let currentPreview = cardPreview;
-      const updates = cardPreview.items.filter(i => i.candidate.description.toLowerCase().includes(p) && i.candidate.suggestedCategoryId !== learning.categoryId);
+      const updates = cardPreview.items.filter(i => matchesLearning(i.candidate.normalizedDescription || i.candidate.description) && i.candidate.suggestedCategoryId !== learning.categoryId);
       for (const u of updates) {
         currentPreview = await api.updateCreditCardImport(cardPreview.sessionId, u.candidate.sourceRow, u.included, learning.categoryId, undefined);
       }
@@ -621,7 +655,45 @@ export function ImportPage() {
         <button onClick={commitCard}>Confirmar fatura</button></div>
     </article>}
     {message && <p className="notice">{message}</p>}
-    
+
+    {transferCandidates.length > 0 && <article className="panel">
+      <div className="panel-title">
+        <div>
+          <p className="eyebrow">POSSÍVEIS TRANSFERÊNCIAS</p>
+          <h2>Detectamos possíveis transferências entre suas contas</h2>
+        </div>
+        <div className="metric-icon blue"><ArrowLeftRight /></div>
+      </div>
+      <p className="muted import-flow-hint">
+        Estes lançamentos parecem ser a mesma transferência aparecendo duas vezes — uma saída e uma entrada em contas diferentes.
+        Vincule-os para que deixem de contar como receita e despesa nos relatórios.
+      </p>
+      <div className="table-scroll">
+        <table>
+          <thead><tr><th>Saída</th><th>Entrada</th><th>Valor</th><th></th></tr></thead>
+          <tbody>
+            {transferCandidates.map((candidate) => {
+              const key = `${candidate.debitTransactionId}:${candidate.creditTransactionId}`;
+              const linking = linkingTransfer === key;
+              return <tr key={key}>
+                <td>{candidate.debitDescription}<small className="source-label">{candidate.debitAccountName} · {candidate.debitDate}</small></td>
+                <td>{candidate.creditDescription}<small className="source-label">{candidate.creditAccountName} · {candidate.creditDate}</small></td>
+                <td>{money(candidate.amountInCents)}</td>
+                <td>
+                  <div className="editor-actions" style={{ margin: 0 }}>
+                    <button className="secondary" disabled={linking} onClick={() => dismissTransferCandidate(candidate)}>Ignorar</button>
+                    <button disabled={linking} onClick={() => linkTransferCandidate(candidate)}>
+                      {linking ? "Vinculando..." : "Vincular como transferência"}
+                    </button>
+                  </div>
+                </td>
+              </tr>;
+            })}
+          </tbody>
+        </table>
+      </div>
+    </article>}
+
     {learning&&<div className="modal-backdrop"><article className="modal"><h2>Usar esta correção no futuro?</h2><p className="muted">Você pode criar uma regra local, deixar que o histórico aprenda sozinho ou manter a alteração somente nesta importação.</p>
       <label>Descrição contém<input value={learning.pattern} onChange={e=>setLearning({...learning,pattern:e.target.value})}/></label>
       <div className="editor-actions">

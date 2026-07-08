@@ -7,7 +7,16 @@ export const shortDate = (value: string) =>
 export const parseMoneyToCents = (input: string): number | null => {
   const clean = input.trim().replace(/\s|R\$/g, "");
   if (!clean) return null;
-  const normalized = clean.includes(",") ? clean.replace(/\./g, "").replace(",", ".") : clean;
+  let normalized: string;
+  if (clean.includes(",")) {
+    normalized = clean.replace(/\./g, "").replace(",", ".");
+  } else if (/^-?\d{1,3}(\.\d{3})+$/.test(clean)) {
+    // No comma but every dot group has exactly 3 digits (e.g. "1.234", "1.234.567"):
+    // in pt-BR that's a thousands separator, not a decimal point, so strip the dots.
+    normalized = clean.replace(/\./g, "");
+  } else {
+    normalized = clean;
+  }
   const value = Number(normalized);
   return Number.isFinite(value) ? Math.round(value * 100) : null;
 };
@@ -30,6 +39,25 @@ export const centsToInput = (cents: number) => {
   const formatted = maskCurrency(Math.abs(cents).toString());
   return isNegative && formatted ? "-" + formatted : formatted;
 };
+
+/** Lowercases and strips diacritics, for accent-insensitive text comparisons. */
+export const normalizeText = (value: string): string =>
+  value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "");
+
+/** Suggests a rule-matching pattern from a transaction description by stripping
+ * dates, installment markers ("PARC 02/06") and long digit runs (card/document
+ * numbers) that would otherwise make the rule too specific to ever match again. */
+export const suggestRulePattern = (description: string): string =>
+  description
+    .toUpperCase()
+    .replace(/\bPARC(ELA)?\.?\s*\d{1,2}\/\d{1,2}\b/g, " ")
+    .replace(/\b\d{2}\/\d{2}(\/\d{2,4})?\b/g, " ")
+    .replace(/\d{4,}/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
 /** Today's date as YYYY-MM-DD in local time, for date inputs. */
 export const todayIso = () => {

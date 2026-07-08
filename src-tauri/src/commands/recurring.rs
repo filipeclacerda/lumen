@@ -44,6 +44,13 @@ fn parse_month(value: &str) -> Result<(), AppError> {
         .map_err(|_| AppError::Validation("Período mensal inválido".into()))
 }
 
+/// Number of days in a "YYYY-MM" month.
+fn days_in_month(value: &str) -> u32 {
+    let next = shift_month(value, 1).unwrap();
+    let date = NaiveDate::parse_from_str(&format!("{next}-01"), "%Y-%m-%d").unwrap();
+    date.pred_opt().unwrap().day()
+}
+
 /// Adds `delta` months to a "YYYY-MM" value, wrapping across year boundaries.
 fn shift_month(value: &str, delta: i32) -> Result<String, AppError> {
     let date = NaiveDate::parse_from_str(&format!("{value}-01"), "%Y-%m-%d")
@@ -60,9 +67,9 @@ fn validate_recurring_input(input: &RecurringTransactionInput) -> Result<(), App
     if input.amount_in_cents == 0 {
         return Err(AppError::Validation("O valor não pode ser zero".into()));
     }
-    if !(1..=28).contains(&input.day_of_month) {
+    if !(1..=31).contains(&input.day_of_month) {
         return Err(AppError::Validation(
-            "O dia do mês deve estar entre 1 e 28".into(),
+            "O dia do mês deve estar entre 1 e 31".into(),
         ));
     }
     let description_length = input.description.trim().chars().count();
@@ -209,10 +216,13 @@ async fn sync_recurring_transactions_impl(db: &SqlitePool) -> Result<usize, AppE
         let mut cursor = first_pending;
         let mut new_last_generated = last_generated_month.clone();
         while cursor <= last_pending {
-            if cursor == current_month && day_of_month as u32 > today.day() {
+            // Clamp the configured day to the last day of the (possibly shorter) month, e.g. day
+            // 31 lands on Feb 28/29 in February.
+            let effective_day = (day_of_month as u32).min(days_in_month(&cursor));
+            if cursor == current_month && effective_day > today.day() {
                 break;
             }
-            let date = format!("{cursor}-{:02}", day_of_month);
+            let date = format!("{cursor}-{:02}", effective_day);
             let normalized = crate::domain::import::normalize_description(&description);
             let fp = manual_fingerprint(
                 &account_id,
@@ -311,6 +321,36 @@ mod tests {
             second_run, 0,
             "a second sync must not duplicate already-generated occurrences"
         );
+    }
+
+    #[tokio::test]
+    async fn day_31_clamps_to_last_day_of_a_shorter_month() {
+        let (_directory, db, account_id) = setup().await;
+        save_recurring_transaction_impl(
+            RecurringTransactionInput {
+                id: None,
+                account_id,
+                category_id: None,
+                description: "Mensalidade academia".into(),
+                amount_in_cents: -9900,
+                day_of_month: 31,
+                start_month: "2026-04".into(),
+                end_month: Some("2026-04".into()),
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+
+        // April 2026 has only 30 days; day 31 must clamp to April 30, not be skipped or overflow.
+        let generated = sync_recurring_transactions_impl(&db).await.unwrap();
+        assert_eq!(generated, 1);
+        let date: String = sqlx::query_scalar("SELECT date FROM transactions WHERE description=?")
+            .bind("Mensalidade academia")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(date, "2026-04-30");
     }
 
     #[tokio::test]
