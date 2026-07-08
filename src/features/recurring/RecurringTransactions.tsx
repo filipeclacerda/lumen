@@ -95,7 +95,7 @@ export function RecurringTransactions() {
 
   return <section>
     <header><div><p className="eyebrow">LANÇAMENTOS AUTOMÁTICOS</p><h1>Recorrências</h1>
-      <p className="muted">Aluguel, salário, assinaturas — cadastre uma vez e o Lúmen lança todo mês.</p></div>
+      <p className="muted">Aluguel, salário, assinaturas — cadastre uma vez e o Lumen lança todo mês.</p></div>
       <button className="secondary" onClick={syncNow}><Play size={16} /> Gerar pendentes agora</button>
     </header>
     <div className="rules-layout">

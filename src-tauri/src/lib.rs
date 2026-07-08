@@ -142,5 +142,5 @@ pub fn run() {
             commands::budget_overview
         ])
         .run(tauri::generate_context!())
-        .expect("erro ao executar Lúmen");
+        .expect("erro ao executar Lumen");
 }

@@ -65,13 +65,13 @@ export function UpdateNotice({ enabled }: { enabled: boolean }) {
         }
       });
       setInstallState("ready");
-      toast("Atualização instalada. Reiniciando o Lúmen…");
+      toast("Atualização instalada. Reiniciando o Lumen…");
       await new Promise(resolve => setTimeout(resolve, 900));
       await relaunch();
-    } catch(e) {
+    } catch (e) {
       setInstallState("idle");
       setProgress(0);
-      toast((e as {message?: string})?.message ?? "Não foi possível instalar a atualização.", "error");
+      toast((e as { message?: string })?.message ?? "Não foi possível instalar a atualização.", "error");
     }
   }
 
@@ -81,11 +81,11 @@ export function UpdateNotice({ enabled }: { enabled: boolean }) {
     <div className="update-banner" role="status">
       <div>
         <strong>Nova versão disponível</strong>
-        <span>Lúmen {updateInfo.latestVersion} já pode ser instalado.</span>
+        <span>Lumen {updateInfo.latestVersion} já pode ser instalado.</span>
       </div>
       <div className="update-banner-actions">
-        <button className="secondary" onClick={() => setDetailsOpen(true)}><Download size={15}/> Ver atualização</button>
-        <button className="icon-button" aria-label="Ignorar esta versão" title="Ignorar esta versão" onClick={closeForThisVersion}><X size={15}/></button>
+        <button className="secondary" onClick={() => setDetailsOpen(true)}><Download size={15} /> Ver atualização</button>
+        <button className="icon-button" aria-label="Ignorar esta versão" title="Ignorar esta versão" onClick={closeForThisVersion}><X size={15} /></button>
       </div>
     </div>
     {detailsOpen && <Modal title="Atualização disponível" onClose={() => !busy && setDetailsOpen(false)}>
@@ -93,12 +93,12 @@ export function UpdateNotice({ enabled }: { enabled: boolean }) {
         <p className="muted">Você está usando a versão {updateInfo.currentVersion}. A versão {updateInfo.latestVersion} está pronta para instalação.</p>
         {updateInfo.notes && <div className="update-notes">{updateInfo.notes}</div>}
         {busy && <div className="update-progress" aria-label={`Progresso da atualização ${progress}%`}>
-          <i style={{width: `${progress}%`}} />
+          <i style={{ width: `${progress}%` }} />
         </div>}
         <div className="editor-actions">
           <button className="secondary" onClick={closeForThisVersion} disabled={busy}>Agora não</button>
           <button onClick={installUpdate} disabled={busy}>
-            {busy ? <RefreshCw size={15}/> : <Download size={15}/>}
+            {busy ? <RefreshCw size={15} /> : <Download size={15} />}
             {installState === "downloading" ? `Baixando ${progress}%` : installState === "installing" ? "Instalando…" : installState === "ready" ? "Reiniciando…" : "Instalar agora"}
           </button>
         </div>

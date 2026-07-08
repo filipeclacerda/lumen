@@ -1,6 +1,6 @@
-# Contribuindo com o Lúmen
+# Contribuindo com o Lumen
 
-Obrigado por seu interesse em contribuir com o Lúmen! Este projeto é 100% open source e depende de contribuidores como você para crescer e melhorar.
+Obrigado por seu interesse em contribuir com o Lumen! Este projeto é 100% open source e depende de contribuidores como você para crescer e melhorar.
 
 ## 📋 Índice
 
@@ -60,13 +60,16 @@ npm install
 - [Git](https://git-scm.com/)
 
 **Windows:**
+
 - Visual Studio Build Tools com suporte a C++
 - WebView2 (geralmente já instalado no Windows 10/11)
 
 **Linux:**
+
 - Veja os pré-requisitos em [Tauri Linux Prerequisites](https://tauri.app/v1/guides/getting-started/prerequisites#linux)
 
 **macOS:**
+
 - Xcode Command Line Tools
 
 ### Rodando em Desenvolvimento
@@ -206,18 +209,21 @@ git checkout -b docs/melhora-readme
 ### Antes de Enviar
 
 1. **Sincronize com o upstream:**
+
    ```bash
    git fetch upstream
    git rebase upstream/main
    ```
 
 2. **Rode os testes:**
+
    ```bash
    npm test
    cargo test --manifest-path src-tauri/Cargo.toml
    ```
 
 3. **Rode o linter:**
+
    ```bash
    npm run lint
    cargo clippy --manifest-path src-tauri/Cargo.toml
@@ -231,11 +237,13 @@ git checkout -b docs/melhora-readme
 ### Enviando o PR
 
 1. Faça commit das mudanças:
+
    ```bash
    git commit -m "feat: adiciona funcionalidade X"
    ```
 
 2. Push para seu fork:
+
    ```bash
    git push origin feature/minha-feature
    ```
@@ -280,7 +288,7 @@ Por favor, use nosso template de PR e inclua:
 
 ## 🙏 Agradecimentos
 
-Obrigado por contribuir com o Lúmen! Cada contribuição ajuda a tornar as finanças mais privadas e acessíveis para todos.
+Obrigado por contribuir com o Lumen! Cada contribuição ajuda a tornar as finanças mais privadas e acessíveis para todos.
 
 <div align="center">
   <p>Feito com 💚 pela comunidade open source</p>

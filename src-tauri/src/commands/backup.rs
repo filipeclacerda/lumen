@@ -30,7 +30,7 @@ pub async fn restore_database(app: AppHandle, path: String) -> Result<(), AppErr
     let bytes = std::fs::read(&path)?;
     if !bytes.starts_with(SQLITE_HEADER) {
         return Err(AppError::Validation(
-            "O arquivo selecionado não é um backup válido do Lúmen".into(),
+            "O arquivo selecionado não é um backup válido do Lumen".into(),
         ));
     }
     // Stage the file; it is swapped in on the next startup, before the pool opens,

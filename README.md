@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="src-tauri/icons/128x128.png" width="128" alt="Logo do Lúmen" />
+  <img src="src-tauri/icons/128x128.png" width="128" alt="Logo do Lumen" />
 
-  <h1>Lúmen</h1>
+  <h1>Lumen</h1>
 
   <p>
     <strong>Gestor financeiro pessoal, local-first, privado e open source.</strong>
@@ -32,7 +32,7 @@
 
 ## Visão geral
 
-O **Lúmen** é uma aplicação desktop para controle financeiro pessoal criada para quem quer clareza sobre o próprio dinheiro sem abrir mão de autonomia e privacidade.
+O **Lumen** é uma aplicação desktop para controle financeiro pessoal criada para quem quer clareza sobre o próprio dinheiro sem abrir mão de autonomia e privacidade.
 
 Ele centraliza movimentações de contas e cartões, organiza categorias, importa extratos, acompanha recorrências, projeta orçamento mensal e gera relatórios para análise. A proposta é ajudar você a responder perguntas simples e importantes:
 
@@ -42,9 +42,9 @@ Ele centraliza movimentações de contas e cartões, organiza categorias, import
 - Que lançamentos futuros ou recorrentes merecem atenção?
 - Meus dados financeiros continuam sob meu controle?
 
-Diferente de ferramentas financeiras baseadas em conta online obrigatória, o Lúmen segue uma abordagem **local-first**: os dados são armazenados em um banco SQLite no próprio computador e a aplicação foi desenhada para funcionar sem depender de servidores externos para processar suas informações financeiras.
+Diferente de ferramentas financeiras baseadas em conta online obrigatória, o Lumen segue uma abordagem **local-first**: os dados são armazenados em um banco SQLite no próprio computador e a aplicação foi desenhada para funcionar sem depender de servidores externos para processar suas informações financeiras.
 
-> O Lúmen não substitui aconselhamento financeiro profissional. Ele é uma ferramenta de organização, análise e acompanhamento pessoal.
+> O Lumen não substitui aconselhamento financeiro profissional. Ele é uma ferramenta de organização, análise e acompanhamento pessoal.
 
 ---
 
@@ -52,11 +52,11 @@ Diferente de ferramentas financeiras baseadas em conta online obrigatória, o L�
 
 ### Privacidade por padrão
 
-Dados financeiros são sensíveis. Por isso, o Lúmen evita login obrigatório, sincronização forçada e processamento em servidores de terceiros. Importações, categorizações, relatórios e backups acontecem localmente.
+Dados financeiros são sensíveis. Por isso, o Lumen evita login obrigatório, sincronização forçada e processamento em servidores de terceiros. Importações, categorizações, relatórios e backups acontecem localmente.
 
 ### Open source de verdade
 
-O Lúmen é um projeto **100% open source**, distribuído sob a licença MIT. Isso significa que qualquer pessoa pode estudar o código, auditar o funcionamento, abrir issues, propor melhorias, criar forks e contribuir com o desenvolvimento.
+O Lumen é um projeto **100% open source**, distribuído sob a licença MIT. Isso significa que qualquer pessoa pode estudar o código, auditar o funcionamento, abrir issues, propor melhorias, criar forks e contribuir com o desenvolvimento.
 
 A transparência não é um detalhe secundário: ela faz parte da confiança que o projeto quer construir.
 
@@ -66,13 +66,13 @@ O objetivo é que você saiba onde seus dados estão, consiga exportar suas info
 
 ### Experiência desktop moderna
 
-Construído com Tauri, Rust, React e TypeScript, o Lúmen busca entregar uma aplicação leve, rápida e confortável para uso recorrente, com interface nativa, tema claro/escuro e navegação fluida.
+Construído com Tauri, Rust, React e TypeScript, o Lumen busca entregar uma aplicação leve, rápida e confortável para uso recorrente, com interface nativa, tema claro/escuro e navegação fluida.
 
 ---
 
 ## Status do projeto
 
-O Lúmen está em desenvolvimento ativo. A base principal já inclui importação, transações, categorias, cartões, orçamento, relatórios, recorrências, backup e exportação, mas o produto ainda evolui rapidamente.
+O Lumen está em desenvolvimento ativo. A base principal já inclui importação, transações, categorias, cartões, orçamento, relatórios, recorrências, backup e exportação, mas o produto ainda evolui rapidamente.
 
 Antes de usar com dados financeiros críticos:
 
@@ -85,27 +85,27 @@ Antes de usar com dados financeiros críticos:
 
 ## Funcionalidades
 
-| Área | O que o Lúmen oferece |
-| --- | --- |
-| **Visão geral** | Dashboard mensal com receitas, despesas, investimentos, sobra do mês, fluxo de caixa, próximos vencimentos e indicadores de saúde financeira. |
-| **Transações** | Listagem pesquisável, filtros por período, conta, categoria, status, origem e valor; criação, edição, exclusão com restauração e categorização em massa. |
-| **Importação** | Suporte a OFX, CSV bancário, CSV de cartão, layouts personalizados, perfis de mapeamento, templates oficiais e PDFs textuais de extrato do Sicoob. |
-| **Cartões de crédito** | Cadastro de cartões, importação de faturas, itens por fatura, estornos, pagamentos e vínculo entre pagamento bancário e fatura. |
-| **Contas** | Cadastro e organização de contas correntes, poupança, dinheiro e cartões de crédito. |
-| **Categorias e regras** | Categorias hierárquicas por tipo de movimento, cores, ícones, regras automáticas por texto, valor, conta, tipo e expressão regular. |
-| **Sugestões inteligentes** | Categorização por regras explícitas e sugestão por histórico de estabelecimentos, sempre processadas localmente. |
-| **Orçamento** | Limites mensais por categoria, acompanhamento do gasto, valor disponível, projeção do mês e alerta de status. |
-| **Recorrências** | Cadastro de receitas e despesas fixas, geração de pendências mensais e controle de recorrências ativas ou pausadas. |
-| **Relatórios** | Evolução mensal, distribuição por categoria, origem dos gastos, principais estabelecimentos, metas, tendências e alertas financeiros. |
-| **Exportação** | Exportação de transações em CSV, OFX e PDF, além de relatórios financeiros em PDF. |
-| **Backup e restauração** | Cópia local do banco SQLite, restauração validada e opção de reinicialização dos dados. |
-| **Usabilidade** | Tema claro/escuro, comando rápido com `Ctrl+K`, navegação por mês e interface preparada para uso diário. |
+| Área                       | O que o Lumen oferece                                                                                                                                    |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Visão geral**            | Dashboard mensal com receitas, despesas, investimentos, sobra do mês, fluxo de caixa, próximos vencimentos e indicadores de saúde financeira.            |
+| **Transações**             | Listagem pesquisável, filtros por período, conta, categoria, status, origem e valor; criação, edição, exclusão com restauração e categorização em massa. |
+| **Importação**             | Suporte a OFX, CSV bancário, CSV de cartão, layouts personalizados, perfis de mapeamento, templates oficiais e PDFs textuais de extrato do Sicoob.       |
+| **Cartões de crédito**     | Cadastro de cartões, importação de faturas, itens por fatura, estornos, pagamentos e vínculo entre pagamento bancário e fatura.                          |
+| **Contas**                 | Cadastro e organização de contas correntes, poupança, dinheiro e cartões de crédito.                                                                     |
+| **Categorias e regras**    | Categorias hierárquicas por tipo de movimento, cores, ícones, regras automáticas por texto, valor, conta, tipo e expressão regular.                      |
+| **Sugestões inteligentes** | Categorização por regras explícitas e sugestão por histórico de estabelecimentos, sempre processadas localmente.                                         |
+| **Orçamento**              | Limites mensais por categoria, acompanhamento do gasto, valor disponível, projeção do mês e alerta de status.                                            |
+| **Recorrências**           | Cadastro de receitas e despesas fixas, geração de pendências mensais e controle de recorrências ativas ou pausadas.                                      |
+| **Relatórios**             | Evolução mensal, distribuição por categoria, origem dos gastos, principais estabelecimentos, metas, tendências e alertas financeiros.                    |
+| **Exportação**             | Exportação de transações em CSV, OFX e PDF, além de relatórios financeiros em PDF.                                                                       |
+| **Backup e restauração**   | Cópia local do banco SQLite, restauração validada e opção de reinicialização dos dados.                                                                  |
+| **Usabilidade**            | Tema claro/escuro, comando rápido com `Ctrl+K`, navegação por mês e interface preparada para uso diário.                                                 |
 
 ---
 
 ## Privacidade e segurança
 
-O Lúmen foi desenhado para reduzir exposição desnecessária de informações financeiras.
+O Lumen foi desenhado para reduzir exposição desnecessária de informações financeiras.
 
 - O banco principal é um arquivo SQLite local (`financa.db`).
 - O frontend não acessa o banco diretamente; operações passam por comandos nativos do Tauri.
@@ -222,15 +222,15 @@ Os artefatos de instalação são gerados pela pipeline do Tauri em `src-tauri/t
 
 ## Scripts úteis
 
-| Comando | Descrição |
-| --- | --- |
-| `npm run dev` | Inicia apenas o servidor Vite. |
-| `npm run tauri dev` | Executa a aplicação desktop em modo de desenvolvimento. |
-| `npm test` | Roda os testes do frontend com Vitest. |
-| `npm run build` | Compila TypeScript e gera o build web. |
-| `npm run lint` | Executa ESLint no projeto. |
-| `npm run tauri build` | Gera o build desktop empacotado. |
-| `cargo test --manifest-path src-tauri/Cargo.toml` | Roda os testes Rust. |
+| Comando                                           | Descrição                                               |
+| ------------------------------------------------- | ------------------------------------------------------- |
+| `npm run dev`                                     | Inicia apenas o servidor Vite.                          |
+| `npm run tauri dev`                               | Executa a aplicação desktop em modo de desenvolvimento. |
+| `npm test`                                        | Roda os testes do frontend com Vitest.                  |
+| `npm run build`                                   | Compila TypeScript e gera o build web.                  |
+| `npm run lint`                                    | Executa ESLint no projeto.                              |
+| `npm run tauri build`                             | Gera o build desktop empacotado.                        |
+| `cargo test --manifest-path src-tauri/Cargo.toml` | Roda os testes Rust.                                    |
 
 ---
 
@@ -253,7 +253,7 @@ Sugestões de roadmap são bem-vindas em issues e discussions.
 
 ## Contribuindo
 
-Contribuições são muito bem-vindas. O Lúmen é **open source por escolha de produto e de comunidade**: melhorias no código, documentação, design, acessibilidade, testes, importadores, correções de bugs e ideias de UX ajudam o projeto a ficar mais útil para todos.
+Contribuições são muito bem-vindas. O Lumen é **open source por escolha de produto e de comunidade**: melhorias no código, documentação, design, acessibilidade, testes, importadores, correções de bugs e ideias de UX ajudam o projeto a ficar mais útil para todos.
 
 Antes de contribuir, leia:
 
@@ -285,7 +285,7 @@ Depois, abra um Pull Request explicando o problema, a solução e como testar.
 
 ## Licença
 
-O Lúmen é um projeto **open source** licenciado sob os termos da licença MIT.
+O Lumen é um projeto **open source** licenciado sob os termos da licença MIT.
 
 Consulte [LICENSE](LICENSE) para o texto completo.
 

@@ -10,6 +10,7 @@ projeto adota o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 Patch para corrigir a inicialização da build instalada no Windows.
 
 ### Corrigido
+
 - Corrigido o reparo automático de checksums de migrações SQL quando builds com
   finais de linha diferentes (`LF`/`CRLF`) já haviam criado ou atualizado o banco
   local, evitando que o app instalado abrisse em tela branca e encerrasse durante
@@ -18,6 +19,7 @@ Patch para corrigir a inicialização da build instalada no Windows.
   logs de `stderr`, facilitando diagnóstico de builds instaladas.
 
 ### Projeto
+
 - Versão atualizada para `0.3.7`.
 - Migrações SQL passam a ter final de linha `LF` fixado via `.gitattributes`.
 
@@ -28,6 +30,7 @@ orçamento por categoria, gráficos padronizados e uma leitura mais clara da sob
 mensal.
 
 ### Adicionado
+
 - **Tela de Orçamento** para definir limites mensais por categoria de despesa,
   acompanhar gasto, disponível, status do limite e projeção do mês.
 - **Sobra mensal no dashboard**, substituindo o gráfico de patrimônio por uma
@@ -40,6 +43,7 @@ mensal.
   regras e transações.
 
 ### Alterado
+
 - **Gráficos centralizados em Recharts** com componentes compartilhados,
   tooltips, formatação monetária e paleta única para dashboard e relatórios.
 - A aba **Categorias** dos relatórios passa a cobrir gastos, receitas e
@@ -52,6 +56,7 @@ mensal.
   vinculadas, pendências e correções que podem virar regras futuras.
 
 ### Corrigido
+
 - Removido o outline/foco visual que permanecia ao clicar nos gráficos.
 - Ajustadas cores de tooltip e hover nos gráficos de categorias para manter
   contraste no tema escuro.
@@ -62,6 +67,7 @@ mensal.
 - O CI deixa de tentar assinar artefatos de updater nos testes.
 
 ### Projeto
+
 - Versão atualizada para `0.3.6`.
 - Configuração do Vite ajustada para melhorar watch e suporte ao Vitest.
 - Arquivos `*.tsbuildinfo` e worktrees locais da `.claude` passam a ser
@@ -69,19 +75,21 @@ mensal.
 
 ## [0.3.5] - 2026-07-07
 
-Foco em preparar o Lúmen para avisar e instalar novas versões pelo próprio app.
+Foco em preparar o Lumen para avisar e instalar novas versões pelo próprio app.
 
 ### Adicionado
+
 - **Aviso de nova versão** com banner persistente e modal de instalação quando
   houver atualização disponível.
 - **Instalação pelo app** usando o updater oficial do Tauri, com download,
-  instalação e reinício automático do Lúmen.
+  instalação e reinício automático do Lumen.
 - **Checagem manual de atualização** na tela de Configurações para builds
   instalados.
 - **Artefatos de updater assinados** no build Tauri, com endpoint apontando para
   o `latest.json` publicado nas releases do GitHub.
 
 ### Alterado
+
 - O fluxo de release passa a receber `TAURI_SIGNING_PRIVATE_KEY` e
   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` pelos secrets do GitHub Actions.
 - A checagem de atualização fica desabilitada em `tauri dev`, evitando erros
@@ -89,18 +97,20 @@ Foco em preparar o Lúmen para avisar e instalar novas versões pelo próprio ap
 - A versão do app foi alinhada em `0.3.5` nos manifests do frontend e do Tauri.
 
 ### Segurança
+
 - Arquivos de chave (`*.key*`) passam a ser ignorados pelo Git para evitar que a
   chave privada do updater seja commitada por acidente.
 
 ## [0.3.4] - 2026-07-07
 
-Esta versão amplia o Lúmen com mais automação no dia a dia, relatórios mais
+Esta versão amplia o Lumen com mais automação no dia a dia, relatórios mais
 completos e uma importação mais inteligente.
 
 ### Adicionado
+
 - **Nova tela de Recorrências** para cadastrar receitas e despesas fixas,
   pausar/reativar lançamentos e gerar pendências do mês.
-- **Sugestão de categoria por histórico**: o Lúmen passa a reconhecer
+- **Sugestão de categoria por histórico**: o Lumen passa a reconhecer
   estabelecimentos recorrentes e sugerir categorias quando houver confiança
   suficiente.
 - **Gestão de estabelecimentos e apelidos**, com agrupamento por chave de
@@ -112,6 +122,7 @@ completos e uma importação mais inteligente.
   por tipo de movimento.
 
 ### Alterado
+
 - Categorias reorganizadas por tipo: receitas, despesas, investimentos e
   transferências.
 - Suporte a reordenação e hierarquia de categorias.
@@ -123,6 +134,7 @@ completos e uma importação mais inteligente.
   lote, exclusão com desfazer e criação de regra a partir de correções manuais.
 
 ### Corrigido
+
 - Ajuste no cálculo de faturas de cartão: compras, estornos e pagamentos agora
   entram com a convenção correta de sinal.
 - Correção dos totais de fatura já existentes por migration.
@@ -130,6 +142,7 @@ completos e uma importação mais inteligente.
   como despesa.
 
 ### Projeto
+
 - Versão atualizada para `0.3.4`.
 - README atualizado com badges e link correto do repositório.
 - Adicionados templates de issues, template de pull request, guia de
@@ -141,6 +154,7 @@ Foco em tornar a importação de faturas de cartão mais clara, guiada e à prov
 erros, com cadastro rápido de cartão sem sair do fluxo.
 
 ### Adicionado
+
 - **Cadastro rápido de cartão durante a importação**: um seletor de cartões com
   botão **+** ao lado permite cadastrar um novo cartão sem sair da tela, por meio
   de um modal de cadastro rápido. Quando ainda não há cartões, um estado vazio
@@ -153,6 +167,7 @@ erros, com cadastro rápido de cartão sem sair do fluxo.
 - **Identificação dos campos obrigatórios** com asterisco (`*`) e legenda.
 
 ### Corrigido
+
 - A **prévia da fatura de cartão não aparecia** quando não havia conta bancária
   cadastrada — a verificação exigia conta bancária mesmo em importações de cartão.
 - **CSV reconhecido por um layout salvo era enviado ao parser do template oficial**,
@@ -166,6 +181,7 @@ erros, com cadastro rápido de cartão sem sair do fluxo.
   obrigatório na tela de mapeamento.
 
 ### Alterado
+
 - As opções de mapeamento de colunas passam a listar os papéis obrigatórios
   primeiro (**Data, Valor, Descrição**); "Valor com sinal" foi renomeado para
   **"Valor"**.

@@ -30,62 +30,62 @@ const nav = [
 ] as const;
 
 export function App() {
-  const client=useQueryClient();
-  const navigate=useNavigate();
-  const [theme,setThemeState]=useState<Theme>(getTheme());
-  const toggleTheme=()=>{const next:Theme=theme==="dark"?"light":"dark";setTheme(next);setThemeState(next)};
+  const client = useQueryClient();
+  const navigate = useNavigate();
+  const [theme, setThemeState] = useState<Theme>(getTheme());
+  const toggleTheme = () => { const next: Theme = theme === "dark" ? "light" : "dark"; setTheme(next); setThemeState(next) };
   const [collapsed, setCollapsed] = useState(false);
-  const {data:bootstrap,isLoading}=useQuery({queryKey:["bootstrap"],queryFn:api.bootstrap});
-  useEffect(()=>{
-    if(!bootstrap?.onboardingCompleted)return;
-    api.syncRecurringTransactions().then(async count=>{
-      if(count>0){
+  const { data: bootstrap, isLoading } = useQuery({ queryKey: ["bootstrap"], queryFn: api.bootstrap });
+  useEffect(() => {
+    if (!bootstrap?.onboardingCompleted) return;
+    api.syncRecurringTransactions().then(async count => {
+      if (count > 0) {
         await Promise.all([
-          client.invalidateQueries({queryKey:["transactions"]}),
-          client.invalidateQueries({queryKey:["summary"]}),
-          client.invalidateQueries({queryKey:["financial-report"]})
+          client.invalidateQueries({ queryKey: ["transactions"] }),
+          client.invalidateQueries({ queryKey: ["summary"] }),
+          client.invalidateQueries({ queryKey: ["financial-report"] })
         ]);
       }
     });
     // Runs once per app session, right after the profile/account are known to exist.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[bootstrap?.onboardingCompleted]);
-  if(isLoading||!bootstrap)return <div className="app-loading">Preparando seu espaço financeiro…</div>;
-  if(!bootstrap.onboardingCompleted)return <Onboarding bootstrap={bootstrap} onFinished={async destination=>{
+  }, [bootstrap?.onboardingCompleted]);
+  if (isLoading || !bootstrap) return <div className="app-loading">Preparando seu espaço financeiro…</div>;
+  if (!bootstrap.onboardingCompleted) return <Onboarding bootstrap={bootstrap} onFinished={async destination => {
     await Promise.all([
-      client.invalidateQueries({queryKey:["bootstrap"]}),
-      client.invalidateQueries({queryKey:["profile"]}),
-      client.invalidateQueries({queryKey:["accounts"]})
+      client.invalidateQueries({ queryKey: ["bootstrap"] }),
+      client.invalidateQueries({ queryKey: ["profile"] }),
+      client.invalidateQueries({ queryKey: ["accounts"] })
     ]);
     navigate(destination);
-  }}/>;
+  }} />;
   return <div className={`shell ${collapsed ? "collapsed" : ""}`}>
     <aside>
       <div className="brand">
         <button className="hamburger" onClick={() => setCollapsed(!collapsed)} aria-label="Menu">
-          <Menu size={20}/>
+          <Menu size={20} />
         </button>
-        <div>Lúmen<br/><small>iluminando suas finanças</small></div>
+        <div>Lumen<br /><small>iluminando suas finanças</small></div>
       </div>
-      <nav>{nav.map(([to, label, Icon]) => <NavLink key={to} to={to} end={to === "/"}><Icon size={18}/><span>{label}</span></NavLink>)}</nav>
+      <nav>{nav.map(([to, label, Icon]) => <NavLink key={to} to={to} end={to === "/"}><Icon size={18} /><span>{label}</span></NavLink>)}</nav>
       <div className="sidebar-footer">
-        <button className="theme-toggle" onClick={toggleTheme} aria-label={theme==="dark"?"Ativar tema claro":"Ativar tema escuro"} title={theme==="dark"?"Tema claro":"Tema escuro"}>
-          {theme==="dark"?<Sun size={18}/>:<Moon size={18}/>}<span>{theme==="dark"?"Tema claro":"Tema escuro"}</span>
+        <button className="theme-toggle" onClick={toggleTheme} aria-label={theme === "dark" ? "Ativar tema claro" : "Ativar tema escuro"} title={theme === "dark" ? "Tema claro" : "Tema escuro"}>
+          {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}<span>{theme === "dark" ? "Tema claro" : "Tema escuro"}</span>
         </button>
         <div className="privacy">🔒 Seus dados ficam neste computador</div>
       </div>
     </aside>
-    <main><UpdateNotice enabled={bootstrap.onboardingCompleted}/><CommandPalette/><Routes>
-      <Route path="/" element={<Dashboard/>}/>
-      <Route path="/transactions" element={<Transactions/>}/>
-      <Route path="/recurring" element={<RecurringTransactions/>}/>
-      <Route path="/budget" element={<BudgetPage/>}/>
-      <Route path="/import" element={<ImportPage/>}/>
-      <Route path="/accounts" element={<AccountsCards/>}/>
-      <Route path="/categories" element={<CategoriesRules/>}/>
-      <Route path="/reports" element={<Reports/>}/>
-      <Route path="/settings" element={<SettingsPage/>}/>
-      <Route path="*" element={<Empty/>}/>
+    <main><UpdateNotice enabled={bootstrap.onboardingCompleted} /><CommandPalette /><Routes>
+      <Route path="/" element={<Dashboard />} />
+      <Route path="/transactions" element={<Transactions />} />
+      <Route path="/recurring" element={<RecurringTransactions />} />
+      <Route path="/budget" element={<BudgetPage />} />
+      <Route path="/import" element={<ImportPage />} />
+      <Route path="/accounts" element={<AccountsCards />} />
+      <Route path="/categories" element={<CategoriesRules />} />
+      <Route path="/reports" element={<Reports />} />
+      <Route path="/settings" element={<SettingsPage />} />
+      <Route path="*" element={<Empty />} />
     </Routes></main>
   </div>;
 }

@@ -3,7 +3,7 @@ name: 🐛 Reportar Bug
 about: Crie um relatório para nos ajudar a melhorar
 title: "[BUG] "
 labels: bug
-assignees: ''
+assignees: ""
 ---
 
 ## Descrição do Bug
@@ -32,7 +32,7 @@ Se aplicável, adicione screenshots para ajudar a explicar seu problema.
 **Desktop (preencha as seguintes informações):**
 
 - **OS:** [ex: Windows 11, macOS 14, Ubuntu 22.04]
-- **Versão do Lúmen:** [ex: 0.3.0]
+- **Versão do Lumen:** [ex: 0.3.0]
 - **Como instalou:** [ex: Build local, Installer MSI, Installer NSIS]
 
 **Informações adicionais do sistema:**
