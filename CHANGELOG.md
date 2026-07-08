@@ -5,6 +5,22 @@ Todas as mudanças relevantes deste projeto são documentadas neste arquivo.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o
 projeto adota o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.3.7] - 2026-07-08
+
+Patch para corrigir a inicialização da build instalada no Windows.
+
+### Corrigido
+- Corrigido o reparo automático de checksums de migrações SQL quando builds com
+  finais de linha diferentes (`LF`/`CRLF`) já haviam criado ou atualizado o banco
+  local, evitando que o app instalado abrisse em tela branca e encerrasse durante
+  o `setup`.
+- O erro interno de inicialização do banco passa a aparecer com mais detalhes nos
+  logs de `stderr`, facilitando diagnóstico de builds instaladas.
+
+### Projeto
+- Versão atualizada para `0.3.7`.
+- Migrações SQL passam a ter final de linha `LF` fixado via `.gitattributes`.
+
 ## [0.3.6] - 2026-07-08
 
 Foco em tornar o dashboard e os relatórios mais úteis no dia a dia, com
@@ -162,3 +178,4 @@ erros, com cadastro rápido de cartão sem sair do fluxo.
 [0.3.4]: https://github.com/filipeclacerda/lumen/compare/v0.3.0...v0.3.4
 [0.3.5]: https://github.com/filipeclacerda/lumen/compare/v0.3.4...v0.3.5
 [0.3.6]: https://github.com/filipeclacerda/lumen/compare/v0.3.5...v0.3.6
+[0.3.7]: https://github.com/filipeclacerda/lumen/compare/v0.3.6...v0.3.7

@@ -39,7 +39,7 @@ pub fn run() {
                 std::fs::rename(&staged, &db_path)?;
             }
             let db = tauri::async_runtime::block_on(infrastructure::database::connect(&db_path))
-                .map_err(|e| Box::<dyn std::error::Error>::from(e.to_string()))?;
+                .map_err(|e| Box::<dyn std::error::Error>::from(format!("{e:?}")))?;
             // Idempotent maintenance, but it can touch many imported rows after an upgrade.
             // Run it after the app is managed so opening the window is not gated by the backfill.
             let db_for_backfill = db.clone();
@@ -49,7 +49,9 @@ pub fn run() {
                 credit_card_sessions: Mutex::new(HashMap::new()),
             });
             tauri::async_runtime::spawn(async move {
-                if let Err(error) = commands::backfill_merchant_keys_impl(&db_for_backfill, false).await {
+                if let Err(error) =
+                    commands::backfill_merchant_keys_impl(&db_for_backfill, false).await
+                {
                     eprintln!("Falha ao preencher merchant_key em segundo plano: {error}");
                 }
             });
