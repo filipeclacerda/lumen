@@ -596,6 +596,37 @@ nav a span {
 /* Dashboard cash flow chart */
 .chart-panel{margin-bottom:22px}
 .chart-wrap{margin-top:10px}
+.recharts-responsive-container,
+.recharts-wrapper,
+.recharts-surface,
+.recharts-wrapper *,
+.chart-wrap *,
+.donut-chart-wrap * {
+  outline: none !important;
+  box-shadow: none !important;
+  -webkit-tap-highlight-color: transparent;
+}
+.recharts-responsive-container:focus,
+.recharts-responsive-container:focus-visible,
+.recharts-responsive-container:focus-within,
+.recharts-wrapper:focus,
+.recharts-wrapper:focus-visible,
+.recharts-wrapper:focus-within,
+.recharts-surface:focus,
+.recharts-surface:focus-visible,
+.recharts-layer:focus,
+.recharts-layer:focus-visible,
+.chart-wrap *:focus,
+.chart-wrap *:focus-visible,
+.donut-chart-wrap *:focus,
+.donut-chart-wrap *:focus-visible {
+  outline: 0 !important;
+  box-shadow: none !important;
+}
+.category-bars-chart .recharts-bar-rectangle,
+.category-bars-chart .recharts-active-bar {
+  stroke: transparent !important;
+}
 .chart-wrap .recharts-legend-item-text{color:var(--text-muted)!important}
 
 /* Transfer form */

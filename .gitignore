@@ -7,3 +7,5 @@ src-tauri/target/
 *.db-shm
 .env
 *.key*
+*.tsbuildinfo
+.claude/worktrees/

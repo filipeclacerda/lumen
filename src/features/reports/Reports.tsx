@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { save } from "@tauri-apps/plugin-dialog";
-import { AlertTriangle, ArrowDownRight, ArrowUpRight, CalendarRange, CreditCard, Download, Landmark, Pencil, Plus, Target, Trash2, TrendingUp, X } from "lucide-react";
+import { AlertTriangle, ArrowDownRight, ArrowUpRight, CalendarRange, CreditCard, Download, Pencil, Plus, Target, Trash2, TrendingUp, X } from "lucide-react";
 import { api } from "../../shared/api";
 import { money, maskCurrency, shortDate, parseMoneyToCents, centsToInput } from "../../shared/format";
 import { currentMonth as curMonth, monthLabel, shiftMonth } from "../../shared/period";
@@ -10,12 +10,19 @@ import type { CategoryReport, FinancialReport, FinancialTarget, KindBreakdown, R
 import { CategoryDonut, UNCATEGORIZED_CATEGORY_KEY } from "./CategoryDonut";
 import { CategoryTrendChart } from "./CategoryTrendChart";
 import { CategorySelect } from "../../shared/ui/CategorySelect";
+import {
+  CumulativeExpensesChart,
+  CategoryBarsChart,
+  SourceComparisonChart,
+  SpendingBarsChart,
+} from "../../shared/ui/Charts";
 import { useToast } from "../../shared/ui/toast";
 
 const currentMonth=curMonth();
 type ReportTab = "overview" | "categories" | "goals" | "credit";
 type CategoryKindTab = "expense" | "income" | "investment";
 const categoryKindLabels:Record<CategoryKindTab,string>={expense:"Gastos",income:"Receitas",investment:"Investimentos"};
+const categoryValueLabels:Record<CategoryKindTab,string>={expense:"Gasto",income:"Receita",investment:"Investimento"};
 function changeLabel(value?:number|null, inverse=false){
   if(value===undefined||value===null)return "Sem base anterior";
   const improved=inverse?value<=0:value>=0;
@@ -110,15 +117,17 @@ export function Reports(){
     {!invalidPeriod&&isLoading&&<article className="panel report-loading">Calculando seus relatórios…</article>}
     {error&&<p className="form-error">Não foi possível gerar o relatório: {String(error)}</p>}
     {!invalidPeriod&&report&&<ReportContent report={report} filter={filter} profileIncome={profile?.monthlyIncomeInCents} targets={targets}
+      compareWithPreviousMonth={preset==="1"}
       onEdit={setEditing} onDelete={removeTarget} onMerchantRenamed={refresh}/>}
     {editing&&<TargetEditor target={editing} month={endMonth} categories={categories.filter(c=>c.kind==="expense")}
       onClose={()=>setEditing(undefined)} onSaved={async()=>{setEditing(undefined);await refresh()}}/>}
   </section>
 }
 
-function ReportContent({report,filter,profileIncome,targets,onEdit,onDelete,onMerchantRenamed}:{
+function ReportContent({report,filter,profileIncome,targets,onEdit,onDelete,onMerchantRenamed,compareWithPreviousMonth}:{
   report:FinancialReport;filter:ReportFilter;profileIncome?:number;targets:FinancialTarget[];
   onEdit:(target:FinancialTarget)=>void;onDelete:(id:string)=>void;onMerchantRenamed:()=>void;
+  compareWithPreviousMonth: boolean;
 }){
   const [activeTab,setActiveTab]=useState<ReportTab>("overview");
   const [renamingMerchant,setRenamingMerchant]=useState<{key:string;name:string}>();
@@ -145,7 +154,7 @@ function ReportContent({report,filter,profileIncome,targets,onEdit,onDelete,onMe
     <div className="report-tabs" role="tablist" aria-label="Seções do relatório">{tabs.map(tab=>
       <button key={tab.id} role="tab" aria-selected={activeTab===tab.id} className={activeTab===tab.id?"active":""}
         onClick={()=>setActiveTab(tab.id)}>{tab.label}</button>)}</div>
-    {activeTab==="overview"&&<OverviewTab report={report} filter={filter} onRenameMerchant={setRenamingMerchant}/>}
+    {activeTab==="overview"&&<OverviewTab report={report} filter={filter} compareWithPreviousMonth={compareWithPreviousMonth} onRenameMerchant={setRenamingMerchant}/>}
     {activeTab==="categories"&&<CategoriesTab report={report} filter={filter}/>}
     {activeTab==="goals"&&<GoalsTab report={report} profileIncome={profileIncome} targets={targets} onEdit={onEdit} onDelete={onDelete}/>}
     {activeTab==="credit"&&<CreditTab report={report}/>}
@@ -155,11 +164,22 @@ function ReportContent({report,filter,profileIncome,targets,onEdit,onDelete,onMe
   </>
 }
 
-function OverviewTab({report,filter,onRenameMerchant}:{
+function OverviewTab({report,filter,onRenameMerchant,compareWithPreviousMonth}:{
   report:FinancialReport;filter:ReportFilter;onRenameMerchant:(merchant:{key:string;name:string})=>void;
+  compareWithPreviousMonth: boolean;
 }){
   const summary=report.summary;
   const latest=report.latestMonthSummary;
+  const spendingData = compareWithPreviousMonth && report.monthly.length === 1
+    ? [{
+      month: shiftMonth(filter.endMonth, -1),
+      incomeInCents: report.previousSummary.incomeInCents,
+      expensesInCents: report.previousSummary.expensesInCents,
+      investmentsInCents: report.previousSummary.investmentsInCents,
+      savingsInCents: report.previousSummary.savingsInCents,
+      savingsRatePercent: report.previousSummary.savingsRatePercent,
+    }, ...report.monthly]
+    : report.monthly;
   return <>
     <div className="report-grid main-charts">
       <article className="panel"><div className="panel-title"><div><h2>Resumo do período</h2><small>Entradas, saídas e economia no filtro atual</small></div></div>
@@ -176,11 +196,11 @@ function OverviewTab({report,filter,onRenameMerchant}:{
           <ComparisonLine label="Economia" value={latest.savingsChangePercent}/>
         </div></article>
       <article className="panel"><div className="panel-title"><div><h2>Evolução dos gastos</h2><small>Total gasto em cada mês filtrado</small></div></div>
-        <SpendingBars data={report.monthly}/></article>
+        <SpendingBarsChart data={spendingData}/></article>
     </div>
     <div className="report-grid">
       <article className="panel"><div className="panel-title"><div><h2>Gasto acumulado</h2><small>Evolução dentro de {monthLabel(filter.endMonth)}</small></div></div>
-        <CumulativeChart report={report}/></article>
+        <CumulativeExpensesChart data={report.daily}/></article>
       <article className="panel"><div className="panel-title"><div><h2>Principais estabelecimentos</h2><small>Somados no período selecionado</small></div></div>
         <MerchantRanking report={report} onRenameMerchant={onRenameMerchant}/></article>
     </div>
@@ -200,7 +220,7 @@ function OverviewTab({report,filter,onRenameMerchant}:{
           <div><span>Sem categoria</span><b>{report.uncategorizedCount} · {money(report.uncategorizedInCents)}</b></div>
         </div></article>
       <article className="panel"><div className="panel-title"><div><h2>Cartão x conta bancária</h2><small>Participação nas despesas</small></div></div>
-        <SourceComparison report={report}/></article>
+        <SourceComparisonChart sources={report.sources}/></article>
     </div>
   </>
 }
@@ -221,7 +241,13 @@ function CategoriesTab({report,filter}:{report:FinancialReport;filter:ReportFilt
       <button key={item} className={kind===item?"active":""} onClick={()=>setKind(item)}>{categoryKindLabels[item]}</button>)}</div>
     <div className="category-breakdown">
       <CategoryDonut categories={categories} selectedCategoryKey={selectedCategoryKey} onSelect={setSelectedCategoryKey}/>
-      <CategoryBars categories={categories} selectedCategoryKey={selectedCategoryKey} onSelect={setSelectedCategoryKey}/>
+      <CategoryBarsChart
+        categories={categories}
+        selectedCategoryKey={selectedCategoryKey}
+        onSelect={setSelectedCategoryKey}
+        getCategoryKey={categoryKey}
+        valueLabel={categoryValueLabels[kind]}
+      />
     </div>
     <p className="muted category-total">Total em {categoryKindLabels[kind].toLowerCase()}: <b>{money(total)}</b></p>
     {selectedCategoryKey&&<CategoryTrendPanel categoryKey={selectedCategoryKey}
@@ -257,7 +283,7 @@ function CreditTab({report}:{report:FinancialReport}){
         <div><b>{report.invoices.openCount}</b> abertas <b>{report.invoices.paidCount}</b> pagas</div>
         <p>{report.cardSharePercent.toFixed(1)}% das despesas foram feitas no cartão.</p></div></article>
     <article className="panel"><div className="panel-title"><div><h2>Origem dos gastos</h2><small>Cartão comparado às contas bancárias</small></div></div>
-      <SourceComparison report={report}/></article>
+      <SourceComparisonChart sources={report.sources}/></article>
   </div>
 }
 
@@ -283,43 +309,6 @@ function ComparisonLine({label,value,inverse=false}:{label:string;value?:number|
   return <div><span>{label}</span><b className={status}>{text}</b></div>
 }
 
-function SpendingBars({data}:{data:FinancialReport["monthly"]}){
-  if(!data.length)return <EmptyChart/>;
-  const max=Math.max(...data.map(item=>item.expensesInCents),1);
-  return <div className="monthly-spending-bars" role="img" aria-label="Comparação dos gastos mensais">
-    {data.map(item=><div className="monthly-spending-item" key={item.month} tabIndex={0}
-      aria-label={`${monthLabel(item.month)}: ${money(item.expensesInCents)} em gastos`}>
-      <span className="monthly-spending-bar" style={{height:`${Math.max(item.expensesInCents/max*100,3)}%`}}/>
-      <b>{money(item.expensesInCents)}</b><small>{monthLabel(item.month)}</small>
-      <div className="chart-tooltip">
-        <strong>{monthLabel(item.month)}</strong>
-        <span>Receitas <b>{money(item.incomeInCents)}</b></span>
-        <span>Gastos <b>{money(item.expensesInCents)}</b></span>
-        <span>Economia <b>{money(item.savingsInCents)}</b></span>
-        <span>Aportes <b>{money(item.investmentsInCents)}</b></span>
-      </div>
-    </div>)}</div>
-}
-function CategoryBars({categories,selectedCategoryKey,onSelect}:{
-  categories:CategoryReport[];selectedCategoryKey?:string;onSelect:(categoryKey:string|undefined)=>void;
-}){
-  const visible=categories.filter(item=>item.amountInCents>0).slice(0,8);
-  if(!visible.length)return <EmptyChart/>;
-  const max=Math.max(...visible.map(item=>item.amountInCents),1);
-  return <div className="category-bars">{visible.map((item,index)=>{
-    const key=categoryKey(item);
-    const selected=key===selectedCategoryKey;
-    return <div key={key} className={`category-bar-clickable ${selected?"category-bar-selected":""}`}
-      role="button" tabIndex={0}
-      onClick={()=>onSelect(key===selectedCategoryKey?undefined:key)}
-      onKeyDown={event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();onSelect(key===selectedCategoryKey?undefined:key)}}}>
-      <div className="category-bar-heading"><span><i style={{background:item.color??palette[index%palette.length]}}/>{item.category}</span>
-        <b>{money(item.amountInCents)} <small>{item.sharePercent.toFixed(1)}%</small></b></div>
-      <div className="category-bar-track"><i style={{width:`${item.amountInCents/max*100}%`,background:item.color??palette[index%palette.length]}}/></div>
-    </div>;
-  })}</div>
-}
-
 function CategoryTrendPanel({categoryKey:selectionKey,categoryName,filter,onClose}:{
   categoryKey:string;categoryName:string;filter:ReportFilter;onClose:()=>void;
 }){
@@ -341,54 +330,6 @@ function CategoryTrendPanel({categoryKey:selectionKey,categoryName,filter,onClos
     {isLoading?<p className="muted">Carregando tendência…</p>:<CategoryTrendChart data={data}/>}
   </div>
 }
-const palette=["#247258","#e5a142","#728bba","#a778ba","#d66d68","#4c94a8"];
-function SourceComparison({report}:{report:FinancialReport}){
-  return <div className="source-chart">{report.sources.map(source=><div key={source.source}>
-    <div className={`source-icon ${source.source==="credit_card"?"card":"bank"}`}>{source.source==="credit_card"?<CreditCard/>:<Landmark/>}</div>
-    <span><b>{source.source==="credit_card"?"Cartão de crédito":"Conta bancária"}</b><small>{source.sharePercent.toFixed(1)}% dos gastos</small></span>
-    <strong>{money(source.amountInCents)}</strong><div className="source-bar"><i style={{width:`${source.sharePercent}%`}}/></div>
-  </div>)}</div>
-}
-function CumulativeChart({report}:{report:FinancialReport}){
-  const [hovered,setHovered]=useState<number|undefined>();
-  const data=report.daily;if(!data.length)return <EmptyChart/>;
-  const width=650,height=170,pad=28,max=Math.max(...data.map(x=>x.cumulativeInCents),1);
-  const coords=data.map((d,i)=>({
-    point:d,
-    x:pad+i*(width-pad*2)/Math.max(data.length-1,1),
-    y:height-pad-d.cumulativeInCents/max*(height-pad*2)
-  }));
-  const points=coords.map(d=>`${d.x},${d.y}`).join(" ");
-  const active=coords[hovered??coords.length-1]?.point;
-  const total=data[data.length-1].cumulativeInCents;
-  const average=Math.round(total/data.length);
-  const strongest=data.reduce((best,item)=>item.amountInCents>best.amountInCents?item:best,data[0]);
-  return <div className="cumulative-chart-wrap">
-    <div className="svg-chart small-chart"><svg role="img" aria-label="Gastos acumulados durante o mês" viewBox={`0 0 ${width} ${height}`}
-      onMouseLeave={()=>setHovered(undefined)}>
-      <defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#2b8466" stopOpacity=".28"/><stop offset="1" stopColor="#2b8466" stopOpacity="0"/></linearGradient></defs>
-      <polygon points={`${pad},${height-pad} ${points} ${width-pad},${height-pad}`} fill="url(#area)"/>
-      <polyline points={points} className="chart-line income-line"/>
-      {coords.map((item,index)=><g key={item.point.date} onMouseEnter={()=>setHovered(index)} onFocus={()=>setHovered(index)} tabIndex={0}>
-        <line className={`chart-hover-line ${hovered===index?"active":""}`} x1={item.x} x2={item.x} y1={pad} y2={height-pad}/>
-        <circle className="chart-point-hit" cx={item.x} cy={item.y} r={16}/>
-        <circle className={`chart-point ${hovered===index?"active":""}`} cx={item.x} cy={item.y} r={4}/>
-      </g>)}
-      <text x={pad} y={height-3}>{shortDate(data[0].date)}</text><text x={width-pad} y={height-3} textAnchor="end">{shortDate(data[data.length-1].date)}</text>
-    </svg></div>
-    {active&&<div className="cumulative-focus">
-      <span>{shortDate(active.date)}</span>
-      <b>{money(active.cumulativeInCents)}</b>
-      <small>{money(active.amountInCents)} gastos no dia</small>
-    </div>}
-    <div className="cumulative-metrics">
-      <div><span>Acumulado</span><b>{money(total)}</b></div>
-      <div><span>Maior dia</span><b>{shortDate(strongest.date)} · {money(strongest.amountInCents)}</b></div>
-      <div><span>Média por dia com gasto</span><b>{money(average)}</b></div>
-    </div>
-  </div>
-}
-function EmptyChart(){return <div className="chart-empty"><TrendingUp/><span>Sem dados suficientes para este gráfico.</span></div>}
 
 function RenameMerchantModal({merchant,onClose,onSaved}:{merchant:{key:string;name:string};onClose:()=>void;onSaved:()=>void}){
   const [name,setName]=useState(merchant.name);

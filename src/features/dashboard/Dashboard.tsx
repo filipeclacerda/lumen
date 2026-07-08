@@ -6,9 +6,10 @@ import { api } from "../../shared/api";
 import { money, shortDate } from "../../shared/format";
 import { currentMonth, monthTitle, shiftMonth } from "../../shared/period";
 import { MonthNavigator } from "../../shared/ui/MonthNavigator";
+import { CategoryBarsChart } from "../../shared/ui/Charts";
 import { TransactionForm } from "../transactions/TransactionForm";
 import { CashFlowChart } from "./CashFlowChart";
-import { NetWorthChart } from "./NetWorthChart";
+import { MonthlySurplusChart } from "./MonthlySurplusChart";
 import type { DashboardSummary, FinancialGoal, FinancialReport, Transaction } from "../../shared/types";
 
 /// Picks the single personalized highlight for the onboarding `financialGoal`, using whatever
@@ -60,10 +61,6 @@ export function Dashboard() {
     queryKey: ["financial-report", cashFlowFilter],
     queryFn: () => api.financialReport(cashFlowFilter),
   });
-  const { data: netWorth = [] } = useQuery({
-    queryKey: ["net-worth-history", 12],
-    queryFn: () => api.netWorthHistory(12),
-  });
   const { data: upcoming = [] } = useQuery({
     queryKey: ["upcoming-items", 15],
     queryFn: () => api.upcomingItems(15),
@@ -74,7 +71,12 @@ export function Dashboard() {
   });
 
   if (!summary) return <p>Carregando visão geral…</p>;
-  const max = Math.max(...summary.byCategory.map(x => x.amountInCents), 1);
+  const categoryTotal = summary.byCategory.reduce((sum, category) => sum + category.amountInCents, 0);
+  const categoryBars = summary.byCategory.map(category => ({
+    category: category.category,
+    amountInCents: category.amountInCents,
+    sharePercent: categoryTotal ? (category.amountInCents / categoryTotal) * 100 : 0,
+  }));
   const netIncomeInCents = summary.incomeInCents - summary.expensesInCents;
   const incomeProgress = profile?.monthlyIncomeInCents
     ? Math.round(summary.incomeInCents / profile.monthlyIncomeInCents * 100)
@@ -137,16 +139,17 @@ export function Dashboard() {
         </div>
       </article>
     )}
-    {netWorth.length > 1 && (
+    {report && report.monthly.length > 1 && (
       <article className="panel chart-panel">
-        <div className="panel-title"><h2>Patrimônio</h2><span>Últimos 12 meses</span></div>
-        <NetWorthChart points={netWorth} />
+        <div className="panel-title"><h2>Sobra mensal</h2><span>Receitas menos gastos e investimentos</span></div>
+        <MonthlySurplusChart monthly={report.monthly} />
       </article>
     )}
     <div className="grid">
       <article className="panel"><div className="panel-title"><h2>Gastos por categoria</h2><span>Este mês</span></div>
-        {summary.byCategory.length === 0 && <p className="muted">Nenhum gasto categorizado neste mês ainda.</p>}
-        {summary.byCategory.map((x, i) => <div className="category" key={x.category}><span className={`dot d${i}`}/><label>{x.category}</label><div className="bar"><i style={{width:`${x.amountInCents/max*100}%`}}/></div><b>{money(x.amountInCents)}</b></div>)}
+        {summary.byCategory.length === 0
+          ? <p className="muted">Nenhum gasto categorizado neste mês ainda.</p>
+          : <CategoryBarsChart categories={categoryBars} onSelect={() => {}} />}
       </article>
       <article className="panel"><div className="panel-title"><h2>Últimas transações</h2><Link to="/transactions">Ver todas →</Link></div>
         {transactions.slice(0,4).map(t => <div className="transaction" key={t.id}><div className="tx-icon">{t.description[0]}</div><div><b>{t.description}</b><small>{shortDate(t.date)} · {t.category ?? "Sem categoria"}</small></div><strong className={t.amountInCents > 0 ? "positive" : ""}>{money(t.amountInCents)}</strong></div>)}

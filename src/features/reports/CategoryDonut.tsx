@@ -1,8 +1,14 @@
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
-import { money } from "../../shared/format";
+import {
+  chartMoneyFormatter,
+  chartPalette,
+  chartTooltipLabelStyle,
+  chartTooltipStyle,
+  chartTooltipItemStyle,
+  EmptyChart,
+} from "../../shared/ui/Charts";
 import type { CategoryReport } from "../../shared/types";
 
-const palette = ["#247258", "#e5a142", "#728bba", "#a778ba", "#d66d68", "#4c94a8", "#9c7661", "#568a91"];
 export const UNCATEGORIZED_CATEGORY_KEY = "__uncategorized";
 
 type Props = {
@@ -14,7 +20,7 @@ type Props = {
 /** Interactive donut of spending by category — click a slice to drill into its trend and transactions. */
 export function CategoryDonut({ categories, selectedCategoryKey, onSelect }: Props) {
   const data = categories.filter(c => c.amountInCents > 0).slice(0, 8);
-  if (!data.length) return null;
+  if (!data.length) return <EmptyChart message="Sem categorias para montar o donut." />;
   const total = data.reduce((sum, c) => sum + c.amountInCents, 0);
 
   return (
@@ -38,7 +44,7 @@ export function CategoryDonut({ categories, selectedCategoryKey, onSelect }: Pro
             {data.map((entry, index) => (
               <Cell
                 key={entry.categoryId ?? entry.category}
-                fill={entry.color ?? palette[index % palette.length]}
+                fill={entry.color ?? chartPalette[index % chartPalette.length]}
                 opacity={!selectedCategoryKey || selectedCategoryKey === (entry.categoryId ?? UNCATEGORIZED_CATEGORY_KEY) ? 1 : 0.35}
                 stroke="var(--surface)"
                 strokeWidth={2}
@@ -46,15 +52,14 @@ export function CategoryDonut({ categories, selectedCategoryKey, onSelect }: Pro
             ))}
           </Pie>
           <Tooltip
-            formatter={(value, _name, item) => [money(Number(value)), item?.payload?.category]}
-            contentStyle={{
-              background: "var(--surface)", border: "1px solid var(--border-strong)",
-              borderRadius: "var(--radius-sm)", color: "var(--text)", fontSize: 13,
-            }}
+            formatter={(value, _name, item) => [chartMoneyFormatter(value), item?.payload?.category]}
+            contentStyle={chartTooltipStyle}
+            labelStyle={chartTooltipLabelStyle}
+            itemStyle={chartTooltipItemStyle}
           />
         </PieChart>
       </ResponsiveContainer>
-      <p className="muted donut-hint">{money(total)} no total · clique numa fatia para ver a tendência</p>
+      <p className="muted donut-hint">{chartMoneyFormatter(total)} no total · clique numa fatia para ver a tendência</p>
     </div>
   );
 }

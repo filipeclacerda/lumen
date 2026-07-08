@@ -1,12 +1,14 @@
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { money } from "../../shared/format";
+import {
+  chartMoneyFormatter,
+  chartTooltipItemStyle,
+  chartTooltipLabelStyle,
+  chartTooltipStyle,
+  moneyAxisFormatter,
+} from "../../shared/ui/Charts";
 import { monthLabel } from "../../shared/period";
 import type { CategoryTrendPoint } from "../../shared/types";
-
 type Props = { data: CategoryTrendPoint[] };
-
-const compact = (cents: number) =>
-  new Intl.NumberFormat("pt-BR", { notation: "compact", maximumFractionDigits: 1 }).format(cents / 100);
 
 /** Last-12-months trend line for a single category, shown when the user drills into it. */
 export function CategoryTrendChart({ data }: Props) {
@@ -22,13 +24,12 @@ export function CategoryTrendChart({ data }: Props) {
         </defs>
         <CartesianGrid stroke="var(--border)" vertical={false} />
         <XAxis dataKey="label" tick={{ fill: "var(--text-muted)", fontSize: 12 }} axisLine={{ stroke: "var(--border-strong)" }} tickLine={false} />
-        <YAxis tickFormatter={compact} tick={{ fill: "var(--text-muted)", fontSize: 12 }} axisLine={false} tickLine={false} width={56} />
+        <YAxis tickFormatter={moneyAxisFormatter} tick={{ fill: "var(--text-muted)", fontSize: 12 }} axisLine={false} tickLine={false} width={56} />
         <Tooltip
-          formatter={value => money(Number(value ?? 0))}
-          contentStyle={{
-            background: "var(--surface)", border: "1px solid var(--border-strong)",
-            borderRadius: "var(--radius-sm)", color: "var(--text)", fontSize: 13,
-          }}
+          formatter={value => chartMoneyFormatter(value)}
+          contentStyle={chartTooltipStyle}
+          labelStyle={chartTooltipLabelStyle}
+          itemStyle={chartTooltipItemStyle}
         />
         <Area dataKey="amount" stroke="var(--brand)" strokeWidth={2} fill="url(#categoryTrendFill)" />
       </AreaChart>
