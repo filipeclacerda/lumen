@@ -22,15 +22,25 @@ pub struct ImportCandidate {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum SuggestionSource { Rule, History }
+pub enum SuggestionSource {
+    Rule,
+    History,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum DuplicateStatus { New, Probable, Exact }
+pub enum DuplicateStatus {
+    New,
+    Probable,
+    Exact,
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum ImportSourceKind { Bank, CreditCard }
+pub enum ImportSourceKind {
+    Bank,
+    CreditCard,
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -100,11 +110,20 @@ pub struct NormalizedImportRow {
 }
 
 pub fn normalize_description(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ").to_uppercase()
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_uppercase()
 }
 
-pub fn mapping_signature(headers: &[String], delimiter: &str, source_kind: ImportSourceKind) -> String {
-    let normalized_headers = headers.iter()
+pub fn mapping_signature(
+    headers: &[String],
+    delimiter: &str,
+    source_kind: ImportSourceKind,
+) -> String {
+    let normalized_headers = headers
+        .iter()
         .map(|header| header.trim().to_lowercase())
         .collect::<Vec<_>>()
         .join("|");
@@ -117,14 +136,18 @@ pub fn mapping_signature(headers: &[String], delimiter: &str, source_kind: Impor
 }
 
 pub fn fingerprint(account_id: &str, candidate: &ImportCandidate) -> String {
-    let input = format!("{}|{}|{}|{}", account_id, candidate.date, candidate.amount_in_cents, candidate.normalized_description);
+    let input = format!(
+        "{}|{}|{}|{}",
+        account_id, candidate.date, candidate.amount_in_cents, candidate.normalized_description
+    );
     format!("{:x}", Sha256::digest(input.as_bytes()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test] fn descriptions_are_stable() {
+    #[test]
+    fn descriptions_are_stable() {
         assert_eq!(normalize_description("  Café   Central "), "CAFÉ CENTRAL");
     }
 }

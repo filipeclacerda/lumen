@@ -5,12 +5,19 @@ import { useSearchParams } from "react-router-dom";
 import { api } from "../../shared/api";
 import { money, shortDate } from "../../shared/format";
 import { CategorySelect } from "../../shared/ui/CategorySelect";
-import type { Transaction } from "../../shared/types";
+import type { ReportSource, Transaction } from "../../shared/types";
 import { TransactionForm } from "./TransactionForm";
 
 export function Transactions() {
   const [searchParams, setSearchParams] = useSearchParams();
   const categoryFilter = searchParams.get("category") ?? "";
+  const uncategorizedFilter = searchParams.get("uncategorized") === "1";
+  const startMonthFilter = searchParams.get("startMonth") ?? "";
+  const endMonthFilter = searchParams.get("endMonth") ?? "";
+  const sourceParam = searchParams.get("source");
+  const sourceFilter = (sourceParam === "bank" || sourceParam === "credit_card" ? sourceParam : "") as ReportSource | "";
+  const accountFilter = searchParams.get("accountId") ?? "";
+  const queryMonth = startMonthFilter && startMonthFilter === endMonthFilter ? startMonthFilter : undefined;
   const [search, setSearch] = useState("");
   const [showNew, setShowNew] = useState(false);
   const [editing, setEditing] = useState<Transaction>();
@@ -23,14 +30,30 @@ export function Transactions() {
   >();
   const [notice, setNotice] = useState("");
   const client = useQueryClient();
-  const { data = [], isLoading } = useQuery({ queryKey: ["transactions"], queryFn: () => api.transactions() });
+  const { data = [], isLoading } = useQuery({ queryKey: ["transactions", queryMonth], queryFn: () => api.transactions(queryMonth) });
   const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: () => api.categories() });
-  const categoryFilterName = categories.find(c => c.id === categoryFilter)?.name;
+  const categoryFilterName = uncategorizedFilter ? "Sem categoria" : categories.find(c => c.id === categoryFilter)?.name;
+  const hasReportFilters = Boolean(categoryFilter||uncategorizedFilter||startMonthFilter||endMonthFilter||sourceFilter||accountFilter);
+  const sourceLabel = sourceFilter === "bank" ? "conta bancária" : sourceFilter === "credit_card" ? "cartão de crédito" : "";
+  const filterSummary = [
+    categoryFilterName&&`categoria: ${categoryFilterName}`,
+    startMonthFilter&&endMonthFilter&&`${startMonthFilter} a ${endMonthFilter}`,
+    sourceLabel&&`origem: ${sourceLabel}`,
+    accountFilter&&`conta selecionada`
+  ].filter(Boolean).join(" · ");
   const rows = data
     .filter(t => t.description.toLowerCase().includes(search.toLowerCase()))
-    .filter(t => !categoryFilter || t.categoryId === categoryFilter);
-  function clearCategoryFilter() {
-    setSearchParams(params => { params.delete("category"); return params; });
+    .filter(t => !startMonthFilter || t.date.slice(0,7) >= startMonthFilter)
+    .filter(t => !endMonthFilter || t.date.slice(0,7) <= endMonthFilter)
+    .filter(t => !sourceFilter || (sourceFilter==="credit_card" ? t.accountKind==="credit_card" : t.accountKind!=="credit_card"))
+    .filter(t => !accountFilter || t.accountId === accountFilter)
+    .filter(t => uncategorizedFilter ? !t.categoryId : !categoryFilter || t.categoryId === categoryFilter);
+  function clearReportFilters() {
+    setSearchParams(params => {
+      const next = new URLSearchParams(params);
+      ["category","uncategorized","startMonth","endMonth","source","accountId"].forEach(key=>next.delete(key));
+      return next;
+    });
   }
   const allVisibleSelected = rows.length > 0 && rows.every(t=>selected.has(t.id));
   function toggle(id:string) {
@@ -99,13 +122,13 @@ export function Transactions() {
     }
     setUndo(undefined); await refresh();
   }
-  return <section><header><div><p className="eyebrow">MOVIMENTAÇÕES</p><h1>Transações</h1><p className="muted">{data.length} lançamentos no período</p></div>
+  return <section><header><div><p className="eyebrow">MOVIMENTAÇÕES</p><h1>Transações</h1><p className="muted">{rows.length} de {data.length} lançamentos exibidos</p></div>
     <button onClick={()=>setShowNew(true)}><Plus size={17}/> Nova transação</button></header>
     {showNew&&<TransactionForm onClose={()=>setShowNew(false)}/>}
     {editing&&<TransactionForm existing={editing} onClose={()=>setEditing(undefined)}/>}
     {notice&&<div className="notice notice-action"><span>{notice}</span>{undo&&<button className="text-button" onClick={undoLast}><Undo2 size={15}/> Desfazer</button>}</div>}
-    {categoryFilter&&<div className="notice notice-action"><span>Filtrando por categoria: <b>{categoryFilterName??"Sem categoria"}</b></span>
-      <button className="text-button" onClick={clearCategoryFilter}><X size={15}/> Remover filtro</button></div>}
+    {hasReportFilters&&<div className="notice notice-action"><span>Filtros do relatório: <b>{filterSummary||"ativos"}</b></span>
+      <button className="text-button" onClick={clearReportFilters}><X size={15}/> Remover filtros</button></div>}
     <article className="panel"><div className="transactions-toolbar"><div className="toolbar"><Search size={18}/><input aria-label="Buscar transações" placeholder="Buscar por descrição…" value={search} onChange={e=>setSearch(e.target.value)}/></div>
       {selected.size>0&&<div className="bulk-actions"><b>{selected.size} selecionada{selected.size>1?"s":""}</b><CategorySelect
           value={bulkCategory}

@@ -27,9 +27,16 @@ pub async fn backfill_merchant_keys_impl(db: &SqlitePool, force: bool) -> Result
         let rows = sqlx::query(
             "SELECT id, normalized_description FROM transactions
              WHERE (?1 = 1) OR (merchant_key IS NULL)
-             ORDER BY id LIMIT ?2 OFFSET ?3"
-        ).bind(force).bind(BACKFILL_BATCH_SIZE).bind(offset).fetch_all(db).await?;
-        if rows.is_empty() { break; }
+             ORDER BY id LIMIT ?2 OFFSET ?3",
+        )
+        .bind(force)
+        .bind(BACKFILL_BATCH_SIZE)
+        .bind(offset)
+        .fetch_all(db)
+        .await?;
+        if rows.is_empty() {
+            break;
+        }
         let batch_len = rows.len();
         let mut tx = db.begin().await?;
         for row in rows {
@@ -37,28 +44,48 @@ pub async fn backfill_merchant_keys_impl(db: &SqlitePool, force: bool) -> Result
             let normalized: String = row.get("normalized_description");
             let key = merchant_key(&normalized);
             sqlx::query("UPDATE transactions SET merchant_key=? WHERE id=?")
-                .bind(key).bind(id).execute(&mut *tx).await?;
+                .bind(key)
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
         }
         tx.commit().await?;
         total += batch_len;
-        if force { offset += BACKFILL_BATCH_SIZE; }
-        if (batch_len as i64) < BACKFILL_BATCH_SIZE { break; }
+        if force {
+            offset += BACKFILL_BATCH_SIZE;
+        }
+        if (batch_len as i64) < BACKFILL_BATCH_SIZE {
+            break;
+        }
     }
     Ok(total)
 }
 
 #[tauri::command]
-pub async fn backfill_merchant_keys(force: bool, state: State<'_, AppState>) -> Result<usize, AppError> {
+pub async fn backfill_merchant_keys(
+    force: bool,
+    state: State<'_, AppState>,
+) -> Result<usize, AppError> {
     backfill_merchant_keys_impl(&state.db, force).await
 }
 
 #[tauri::command]
-pub async fn list_merchant_aliases(state: State<'_, AppState>) -> Result<Vec<MerchantAlias>, AppError> {
-    let rows = sqlx::query("SELECT id,merchant_key,display_name FROM merchant_aliases ORDER BY display_name")
-        .fetch_all(&state.db).await?;
-    Ok(rows.into_iter().map(|row| MerchantAlias {
-        id: row.get("id"), merchant_key: row.get("merchant_key"), display_name: row.get("display_name"),
-    }).collect())
+pub async fn list_merchant_aliases(
+    state: State<'_, AppState>,
+) -> Result<Vec<MerchantAlias>, AppError> {
+    let rows = sqlx::query(
+        "SELECT id,merchant_key,display_name FROM merchant_aliases ORDER BY display_name",
+    )
+    .fetch_all(&state.db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| MerchantAlias {
+            id: row.get("id"),
+            merchant_key: row.get("merchant_key"),
+            display_name: row.get("display_name"),
+        })
+        .collect())
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,21 +96,33 @@ pub struct SaveMerchantAliasInput {
 }
 
 #[tauri::command]
-pub async fn save_merchant_alias(input: SaveMerchantAliasInput, state: State<'_, AppState>) -> Result<String, AppError> {
+pub async fn save_merchant_alias(
+    input: SaveMerchantAliasInput,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
     save_merchant_alias_impl(&state.db, &input.merchant_key, &input.display_name).await
 }
 
-async fn save_merchant_alias_impl(db: &SqlitePool, merchant_key: &str, display_name: &str) -> Result<String, AppError> {
+async fn save_merchant_alias_impl(
+    db: &SqlitePool,
+    merchant_key: &str,
+    display_name: &str,
+) -> Result<String, AppError> {
     let display_name = display_name.trim();
     if display_name.is_empty() || display_name.chars().count() > 120 {
-        return Err(AppError::Validation("O nome do estabelecimento deve ter entre 1 e 120 caracteres".into()));
+        return Err(AppError::Validation(
+            "O nome do estabelecimento deve ter entre 1 e 120 caracteres".into(),
+        ));
     }
     if merchant_key.trim().is_empty() {
         return Err(AppError::Validation("Estabelecimento inválido".into()));
     }
-    let id = sqlx::query_scalar::<_, String>("SELECT id FROM merchant_aliases WHERE merchant_key=?")
-        .bind(merchant_key).fetch_optional(db).await?
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let id =
+        sqlx::query_scalar::<_, String>("SELECT id FROM merchant_aliases WHERE merchant_key=?")
+            .bind(merchant_key)
+            .fetch_optional(db)
+            .await?
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
     sqlx::query(
         "INSERT INTO merchant_aliases(id,merchant_key,display_name) VALUES(?,?,?)
          ON CONFLICT(merchant_key) DO UPDATE SET display_name=excluded.display_name,updated_at=datetime('now')"
@@ -93,7 +132,10 @@ async fn save_merchant_alias_impl(db: &SqlitePool, merchant_key: &str, display_n
 
 #[tauri::command]
 pub async fn delete_merchant_alias(id: String, state: State<'_, AppState>) -> Result<(), AppError> {
-    sqlx::query("DELETE FROM merchant_aliases WHERE id=?").bind(id).execute(&state.db).await?;
+    sqlx::query("DELETE FROM merchant_aliases WHERE id=?")
+        .bind(id)
+        .execute(&state.db)
+        .await?;
     Ok(())
 }
 
@@ -103,16 +145,19 @@ mod tests {
 
     async fn setup() -> (tempfile::TempDir, SqlitePool) {
         let directory = tempfile::tempdir().unwrap();
-        let db = crate::infrastructure::database::connect(&directory.path().join("merchants.db")).await.unwrap();
+        let db = crate::infrastructure::database::connect(&directory.path().join("merchants.db"))
+            .await
+            .unwrap();
         (directory, db)
     }
 
     #[tokio::test]
     async fn backfill_fills_only_missing_keys_and_is_idempotent() {
         let (_directory, db) = setup().await;
-        sqlx::query(
-            "INSERT INTO accounts(id,name,kind) VALUES('acc','Conta','checking')"
-        ).execute(&db).await.unwrap();
+        sqlx::query("INSERT INTO accounts(id,name,kind) VALUES('acc','Conta','checking')")
+            .execute(&db)
+            .await
+            .unwrap();
         for i in 0..1200 {
             sqlx::query(
                 "INSERT INTO transactions(id,account_id,date,description,normalized_description,amount_cents,fingerprint,status)
@@ -123,12 +168,18 @@ mod tests {
         }
         let updated = backfill_merchant_keys_impl(&db, false).await.unwrap();
         assert_eq!(updated, 1200);
-        let key: String = sqlx::query_scalar("SELECT merchant_key FROM transactions WHERE id='tx-0'")
-            .fetch_one(&db).await.unwrap();
+        let key: String =
+            sqlx::query_scalar("SELECT merchant_key FROM transactions WHERE id='tx-0'")
+                .fetch_one(&db)
+                .await
+                .unwrap();
         assert_eq!(key, "SUPERMERCADO BH");
 
         let second_run = backfill_merchant_keys_impl(&db, false).await.unwrap();
-        assert_eq!(second_run, 0, "a second backfill without force must not touch already-filled rows");
+        assert_eq!(
+            second_run, 0,
+            "a second backfill without force must not touch already-filled rows"
+        );
 
         let forced_run = backfill_merchant_keys_impl(&db, true).await.unwrap();
         assert_eq!(forced_run, 1200, "force=true recomputes every row");
@@ -138,21 +189,38 @@ mod tests {
     async fn save_merchant_alias_upserts_by_merchant_key() {
         let (_directory, db) = setup().await;
         let key = "SUPERMERCADO BH";
-        let id_first = save_merchant_alias_impl(&db, key, "Supermercado BH").await.unwrap();
-        let id_second = save_merchant_alias_impl(&db, key, "Super BH").await.unwrap();
-        assert_eq!(id_first, id_second, "same merchant_key must update the existing alias, not create a new one");
+        let id_first = save_merchant_alias_impl(&db, key, "Supermercado BH")
+            .await
+            .unwrap();
+        let id_second = save_merchant_alias_impl(&db, key, "Super BH")
+            .await
+            .unwrap();
+        assert_eq!(
+            id_first, id_second,
+            "same merchant_key must update the existing alias, not create a new one"
+        );
 
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM merchant_aliases WHERE merchant_key=?")
-            .bind(key).fetch_one(&db).await.unwrap();
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM merchant_aliases WHERE merchant_key=?")
+                .bind(key)
+                .fetch_one(&db)
+                .await
+                .unwrap();
         assert_eq!(count, 1);
-        let name: String = sqlx::query_scalar("SELECT display_name FROM merchant_aliases WHERE merchant_key=?")
-            .bind(key).fetch_one(&db).await.unwrap();
+        let name: String =
+            sqlx::query_scalar("SELECT display_name FROM merchant_aliases WHERE merchant_key=?")
+                .bind(key)
+                .fetch_one(&db)
+                .await
+                .unwrap();
         assert_eq!(name, "Super BH");
     }
 
     #[tokio::test]
     async fn save_merchant_alias_rejects_blank_name() {
         let (_directory, db) = setup().await;
-        assert!(save_merchant_alias_impl(&db, "SUPERMERCADO BH", "  ").await.is_err());
+        assert!(save_merchant_alias_impl(&db, "SUPERMERCADO BH", "  ")
+            .await
+            .is_err());
     }
 }

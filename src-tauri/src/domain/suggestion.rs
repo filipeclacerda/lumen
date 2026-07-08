@@ -36,12 +36,19 @@ fn amount_compatible(category_kind: &str, amount_in_cents: i64) -> bool {
 /// Decides whether a merchant's categorization history is confident enough to suggest a
 /// category automatically. Only called for candidates that no explicit rule already matched —
 /// regra explícita sempre vence histórico (ADR, PLANO_FASE3.md Etapa 2).
-pub fn suggest_from_history(stats: &[MerchantCategoryStat], amount_in_cents: i64) -> Option<HistorySuggestion> {
+pub fn suggest_from_history(
+    stats: &[MerchantCategoryStat],
+    amount_in_cents: i64,
+) -> Option<HistorySuggestion> {
     if stats.is_empty() {
         return None;
     }
     let total: i64 = stats.iter().map(|s| s.count).sum();
-    let top = stats.iter().max_by(|a, b| a.count.cmp(&b.count).then_with(|| a.last_used.cmp(&b.last_used)))?;
+    let top = stats.iter().max_by(|a, b| {
+        a.count
+            .cmp(&b.count)
+            .then_with(|| a.last_used.cmp(&b.last_used))
+    })?;
     if top.count < MIN_OCCURRENCES {
         return None;
     }
@@ -52,7 +59,10 @@ pub fn suggest_from_history(stats: &[MerchantCategoryStat], amount_in_cents: i64
     if !amount_compatible(&top.category_kind, amount_in_cents) {
         return None;
     }
-    Some(HistorySuggestion { category_id: top.category_id.clone(), category_name: top.category_name.clone() })
+    Some(HistorySuggestion {
+        category_id: top.category_id.clone(),
+        category_name: top.category_name.clone(),
+    })
 }
 
 #[cfg(test)]
@@ -61,8 +71,11 @@ mod tests {
 
     fn stat(category_id: &str, kind: &str, count: i64, last_used: &str) -> MerchantCategoryStat {
         MerchantCategoryStat {
-            category_id: category_id.into(), category_name: Some(category_id.into()),
-            category_kind: kind.into(), count, last_used: last_used.into(),
+            category_id: category_id.into(),
+            category_name: Some(category_id.into()),
+            category_kind: kind.into(),
+            count,
+            last_used: last_used.into(),
         }
     }
 
@@ -94,7 +107,10 @@ mod tests {
     #[test]
     fn refuses_when_sign_is_incompatible_with_category_kind() {
         let stats = vec![stat("groceries", "expense", 3, "2026-06-01")];
-        assert!(suggest_from_history(&stats, 5000).is_none(), "credit should not get an expense suggestion");
+        assert!(
+            suggest_from_history(&stats, 5000).is_none(),
+            "credit should not get an expense suggestion"
+        );
     }
 
     #[test]

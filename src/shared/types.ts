@@ -180,6 +180,7 @@ export type TransactionLink = {
 };
 export type ReportSource = "all" | "bank" | "credit_card";
 export type ReportFilter = { startMonth:string; endMonth:string; source:ReportSource; accountId?:string };
+export type CategoryTrendFilter = { categoryId?:string; endMonth:string; source:ReportSource; accountId?:string; months:number };
 export type ReportSummary = {
   incomeInCents:number; expensesInCents:number; investmentsInCents:number; savingsInCents:number;
   incomeChangePercent?:number; expenseChangePercent?:number; savingsChangePercent?:number;

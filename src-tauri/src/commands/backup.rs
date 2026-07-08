@@ -6,7 +6,8 @@ use crate::{application::state::AppState, error::AppError};
 const SQLITE_HEADER: &[u8] = b"SQLite format 3\0";
 
 fn data_dir(app: &AppHandle) -> Result<std::path::PathBuf, AppError> {
-    app.path().app_data_dir()
+    app.path()
+        .app_data_dir()
         .map_err(|_| AppError::Validation("Não foi possível localizar a pasta de dados".into()))
 }
 
@@ -23,7 +24,10 @@ fn format_amount(cents: i64) -> String {
 }
 
 #[tauri::command]
-pub async fn export_transactions_csv(path: String, state: State<'_, AppState>) -> Result<usize, AppError> {
+pub async fn export_transactions_csv(
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<usize, AppError> {
     let rows = sqlx::query(
         "SELECT t.date,a.name account_name,t.description,COALESCE(c.name,'Sem categoria') category,t.amount_cents
          FROM transactions t JOIN accounts a ON a.id=t.account_id
@@ -41,8 +45,11 @@ pub async fn export_transactions_csv(path: String, state: State<'_, AppState>) -
         let amount: i64 = row.get("amount_cents");
         out.push_str(&format!(
             "{};{};{};{};{}\r\n",
-            csv_field(&date), csv_field(&account), csv_field(&description),
-            csv_field(&category), csv_field(&format_amount(amount))
+            csv_field(&date),
+            csv_field(&account),
+            csv_field(&description),
+            csv_field(&category),
+            csv_field(&format_amount(amount))
         ));
     }
     std::fs::write(&path, out)?;
@@ -50,9 +57,15 @@ pub async fn export_transactions_csv(path: String, state: State<'_, AppState>) -
 }
 
 #[tauri::command]
-pub async fn backup_database(app: AppHandle, path: String, state: State<'_, AppState>) -> Result<(), AppError> {
+pub async fn backup_database(
+    app: AppHandle,
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
     // Flush the WAL into the main file so the copy is a complete snapshot.
-    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)").execute(&state.db).await?;
+    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&state.db)
+        .await?;
     let source = data_dir(&app)?.join("financa.db");
     std::fs::copy(&source, &path)?;
     Ok(())
@@ -62,7 +75,9 @@ pub async fn backup_database(app: AppHandle, path: String, state: State<'_, AppS
 pub async fn restore_database(app: AppHandle, path: String) -> Result<(), AppError> {
     let bytes = std::fs::read(&path)?;
     if !bytes.starts_with(SQLITE_HEADER) {
-        return Err(AppError::Validation("O arquivo selecionado não é um backup válido do Lúmen".into()));
+        return Err(AppError::Validation(
+            "O arquivo selecionado não é um backup válido do Lúmen".into(),
+        ));
     }
     // Stage the file; it is swapped in on the next startup, before the pool opens,
     // to avoid corrupting the database that is currently in use.

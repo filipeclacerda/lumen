@@ -21,13 +21,13 @@ export function CategoryTrendChart({ data }: Props) {
           </linearGradient>
         </defs>
         <CartesianGrid stroke="var(--border)" vertical={false} />
-        <XAxis dataKey="label" tick={{ fill: "var(--text-muted)", fontSize: 11 }} axisLine={{ stroke: "var(--border-strong)" }} tickLine={false} />
-        <YAxis tickFormatter={compact} tick={{ fill: "var(--text-muted)", fontSize: 11 }} axisLine={false} tickLine={false} width={48} />
+        <XAxis dataKey="label" tick={{ fill: "var(--text-muted)", fontSize: 12 }} axisLine={{ stroke: "var(--border-strong)" }} tickLine={false} />
+        <YAxis tickFormatter={compact} tick={{ fill: "var(--text-muted)", fontSize: 12 }} axisLine={false} tickLine={false} width={56} />
         <Tooltip
           formatter={value => money(Number(value ?? 0))}
           contentStyle={{
             background: "var(--surface)", border: "1px solid var(--border-strong)",
-            borderRadius: "var(--radius-sm)", color: "var(--text)", fontSize: 12,
+            borderRadius: "var(--radius-sm)", color: "var(--text)", fontSize: 13,
           }}
         />
         <Area dataKey="amount" stroke="var(--brand)" strokeWidth={2} fill="url(#categoryTrendFill)" />

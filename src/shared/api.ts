@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Account, AccountType, AppBootstrap, Category, CategorizationRule, CategoryTrendPoint, CreditCardImportPreview, CreditCardInvoice, CreditCardInvoiceItem, CsvMappingDraft, CsvMappingProfile, DashboardSummary, FinancialReport, FinancialTarget, FinancialTargetInput, ImportFileInspection, ImportPreview, MerchantAlias, OnboardingInput, OnboardingResult, PaymentMatchCandidate, RecurringTransaction, RecurringTransactionInput, ReportFilter, RuleImpact, RuleInput, TemplateKind, Transaction, TransactionInput, TransactionLink, TransferInput, UserProfile } from "./types";
+import type { Account, AccountType, AppBootstrap, Category, CategorizationRule, CategoryTrendFilter, CategoryTrendPoint, CreditCardImportPreview, CreditCardInvoice, CreditCardInvoiceItem, CsvMappingDraft, CsvMappingProfile, DashboardSummary, FinancialReport, FinancialTarget, FinancialTargetInput, ImportFileInspection, ImportPreview, MerchantAlias, OnboardingInput, OnboardingResult, PaymentMatchCandidate, RecurringTransaction, RecurringTransactionInput, ReportFilter, RuleImpact, RuleInput, TemplateKind, Transaction, TransactionInput, TransactionLink, TransferInput, UserProfile } from "./types";
 
 const demoTransactions: Transaction[] = [
   { id: "1", accountId: "card", accountName:"Cartão principal", accountKind:"credit_card", date: "2026-06-26", description: "Supermercado Aurora", amountInCents: -28490, categoryId: "groceries", category: "Supermercado", categorySource: "rule", status: "cleared" },
@@ -191,8 +191,16 @@ export const api = {
   saveFinancialTargetOverride:(targetId:string,month:string,amountInCents:number):Promise<void>=>
     invoke("save_financial_target_override",{targetId,month,amountInCents}),
   deleteFinancialTarget:(id:string):Promise<void>=>invoke("delete_financial_target",{id}),
-  categoryTrend:(categoryId:string|undefined,months=12):Promise<CategoryTrendPoint[]> =>
-    isTauri()?invoke("category_trend",{categoryId:categoryId||null,months}):Promise.resolve([]),
+  categoryTrend:(filter:CategoryTrendFilter):Promise<CategoryTrendPoint[]> => {
+    if(isTauri()) return invoke("category_trend",{filter:{...filter,categoryId:filter.categoryId||null}});
+    const end = filter.endMonth;
+    const base = [
+      {month:"2026-01",amountInCents:71000},{month:"2026-02",amountInCents:83000},
+      {month:"2026-03",amountInCents:64500},{month:"2026-04",amountInCents:93000},
+      {month:"2026-05",amountInCents:78500},{month:end,amountInCents:filter.categoryId?88000:2690}
+    ];
+    return Promise.resolve(base.slice(-Math.max(1,Math.min(filter.months,24))));
+  },
   recurringTransactions:async():Promise<RecurringTransaction[]> => isTauri()?invoke("list_recurring_transactions"):[],
   saveRecurringTransaction:(input:RecurringTransactionInput):Promise<string> =>
     invoke("save_recurring_transaction",{input}),

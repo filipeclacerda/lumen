@@ -1,10 +1,14 @@
+use crate::domain::credit_card::CreditCardImportItem;
+use crate::domain::import::ImportCandidate;
+use sqlx::SqlitePool;
 use std::collections::HashMap;
 use tokio::sync::Mutex;
-use sqlx::SqlitePool;
-use crate::domain::import::ImportCandidate;
-use crate::domain::credit_card::CreditCardImportItem;
 
-pub struct ImportSession { pub account_id: String, pub file_name: String, pub candidates: Vec<ImportCandidate> }
+pub struct ImportSession {
+    pub account_id: String,
+    pub file_name: String,
+    pub candidates: Vec<ImportCandidate>,
+}
 pub struct CreditCardImportSession {
     pub account_id: String,
     pub file_name: String,

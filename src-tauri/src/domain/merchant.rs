@@ -4,8 +4,17 @@ use std::sync::OnceLock;
 /// Prefixos de meio de pagamento/adquirente que não identificam o estabelecimento em si.
 /// Lista fácil de estender conforme surgirem novos extratos reais.
 const PAYMENT_PREFIXES: &[&str] = &[
-    "PAG*", "PG *", "PAGSEGURO*", "MP *", "MERCADOPAGO*", "PIX QRS",
-    "COMPRA COM CARTAO", "COMPRA CARTAO", "DEB AUT", "TED", "DOC",
+    "PAG*",
+    "PG *",
+    "PAGSEGURO*",
+    "MP *",
+    "MERCADOPAGO*",
+    "PIX QRS",
+    "COMPRA COM CARTAO",
+    "COMPRA CARTAO",
+    "DEB AUT",
+    "TED",
+    "DOC",
 ];
 
 /// Sufixos societários que não ajudam a distinguir estabelecimentos ("LTDA" x "ME").
@@ -24,14 +33,16 @@ struct Patterns {
 fn patterns() -> &'static Patterns {
     static PATTERNS: OnceLock<Patterns> = OnceLock::new();
     PATTERNS.get_or_init(|| Patterns {
-        prefixes: PAYMENT_PREFIXES.iter()
+        prefixes: PAYMENT_PREFIXES
+            .iter()
             .map(|prefix| Regex::new(&format!(r"^{}\s*", regex::escape(prefix))).unwrap())
             .collect(),
         trailing_installment: Regex::new(r"\s*\b\d{1,2}/\d{1,2}\b\s*$").unwrap(),
         long_number: Regex::new(r"\d{5,}").unwrap(),
         date: Regex::new(r"\b\d{1,2}[/-]\d{1,2}([/-]\d{2,4})?\b").unwrap(),
         time: Regex::new(r"\b\d{1,2}:\d{2}(:\d{2})?\b").unwrap(),
-        suffixes: COMPANY_SUFFIXES.iter()
+        suffixes: COMPANY_SUFFIXES
+            .iter()
             .map(|suffix| Regex::new(&format!(r"\b{}\b\.?\s*$", regex::escape(suffix))).unwrap())
             .collect(),
         whitespace: Regex::new(r"\s+").unwrap(),
@@ -59,7 +70,11 @@ pub fn merchant_key(normalized_description: &str) -> String {
     for suffix in &p.suffixes {
         value = suffix.replace(&value, "").into_owned();
     }
-    value = p.whitespace.replace_all(value.trim(), " ").trim().to_string();
+    value = p
+        .whitespace
+        .replace_all(value.trim(), " ")
+        .trim()
+        .to_string();
 
     if value.is_empty() {
         normalized_description.to_string()
@@ -75,8 +90,14 @@ mod tests {
     #[test]
     fn merges_payment_installment_and_company_suffix_variants() {
         assert_eq!(merchant_key("SUPERMERCADO BH LTDA"), "SUPERMERCADO BH");
-        assert_eq!(merchant_key("COMPRA CARTAO SUPERMERCADO BH 02/06"), "SUPERMERCADO BH");
-        assert_eq!(merchant_key("COMPRA CARTAO 1234 SUPERMERCADO BH 03/10"), "1234 SUPERMERCADO BH");
+        assert_eq!(
+            merchant_key("COMPRA CARTAO SUPERMERCADO BH 02/06"),
+            "SUPERMERCADO BH"
+        );
+        assert_eq!(
+            merchant_key("COMPRA CARTAO 1234 SUPERMERCADO BH 03/10"),
+            "1234 SUPERMERCADO BH"
+        );
     }
 
     #[test]
@@ -96,13 +117,19 @@ mod tests {
 
     #[test]
     fn strips_long_numbers_but_keeps_short_ones() {
-        assert_eq!(merchant_key("SUPERMERCADO BH AUT123456"), "SUPERMERCADO BH AUT");
+        assert_eq!(
+            merchant_key("SUPERMERCADO BH AUT123456"),
+            "SUPERMERCADO BH AUT"
+        );
         assert_eq!(merchant_key("POSTO BR 24H"), "POSTO BR 24H");
     }
 
     #[test]
     fn strips_dates_and_times() {
-        assert_eq!(merchant_key("SUPERMERCADO BH 02/06/2026"), "SUPERMERCADO BH");
+        assert_eq!(
+            merchant_key("SUPERMERCADO BH 02/06/2026"),
+            "SUPERMERCADO BH"
+        );
         assert_eq!(merchant_key("SUPERMERCADO BH 14:32"), "SUPERMERCADO BH");
     }
 
@@ -114,7 +141,10 @@ mod tests {
 
     #[test]
     fn never_merges_distinct_content_words() {
-        assert_ne!(merchant_key("POSTO BR CENTRO"), merchant_key("POSTO BR ZONA SUL"));
+        assert_ne!(
+            merchant_key("POSTO BR CENTRO"),
+            merchant_key("POSTO BR ZONA SUL")
+        );
     }
 
     #[test]

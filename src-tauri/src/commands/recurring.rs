@@ -49,7 +49,11 @@ fn shift_month(value: &str, delta: i32) -> Result<String, AppError> {
     let date = NaiveDate::parse_from_str(&format!("{value}-01"), "%Y-%m-%d")
         .map_err(|_| AppError::Validation("Período mensal inválido".into()))?;
     let index = date.year() * 12 + date.month() as i32 - 1 + delta;
-    Ok(format!("{:04}-{:02}", index.div_euclid(12), index.rem_euclid(12) + 1))
+    Ok(format!(
+        "{:04}-{:02}",
+        index.div_euclid(12),
+        index.rem_euclid(12) + 1
+    ))
 }
 
 fn validate_recurring_input(input: &RecurringTransactionInput) -> Result<(), AppError> {
@@ -57,24 +61,32 @@ fn validate_recurring_input(input: &RecurringTransactionInput) -> Result<(), App
         return Err(AppError::Validation("O valor não pode ser zero".into()));
     }
     if !(1..=28).contains(&input.day_of_month) {
-        return Err(AppError::Validation("O dia do mês deve estar entre 1 e 28".into()));
+        return Err(AppError::Validation(
+            "O dia do mês deve estar entre 1 e 28".into(),
+        ));
     }
     let description_length = input.description.trim().chars().count();
     if !(1..=200).contains(&description_length) {
-        return Err(AppError::Validation("A descrição deve ter entre 1 e 200 caracteres".into()));
+        return Err(AppError::Validation(
+            "A descrição deve ter entre 1 e 200 caracteres".into(),
+        ));
     }
     parse_month(&input.start_month)?;
     if let Some(end) = &input.end_month {
         parse_month(end)?;
         if end < &input.start_month {
-            return Err(AppError::Validation("O mês final não pode ser anterior ao mês inicial".into()));
+            return Err(AppError::Validation(
+                "O mês final não pode ser anterior ao mês inicial".into(),
+            ));
         }
     }
     Ok(())
 }
 
 #[tauri::command]
-pub async fn list_recurring_transactions(state: State<'_, AppState>) -> Result<Vec<RecurringTransaction>, AppError> {
+pub async fn list_recurring_transactions(
+    state: State<'_, AppState>,
+) -> Result<Vec<RecurringTransaction>, AppError> {
     let rows = sqlx::query(
         "SELECT r.id,r.account_id,a.name account_name,r.category_id,c.name category_name,
          r.description,r.amount_cents,r.day_of_month,r.start_month,r.end_month,r.last_generated_month,r.active
@@ -83,22 +95,37 @@ pub async fn list_recurring_transactions(state: State<'_, AppState>) -> Result<V
          LEFT JOIN categories c ON c.id=r.category_id
          WHERE r.deleted_at IS NULL ORDER BY r.active DESC, r.description"
     ).fetch_all(&state.db).await?;
-    Ok(rows.into_iter().map(|row| RecurringTransaction {
-        id: row.get("id"), account_id: row.get("account_id"), account_name: row.get("account_name"),
-        category_id: row.get("category_id"), category_name: row.get("category_name"),
-        description: row.get("description"), amount_in_cents: row.get("amount_cents"),
-        day_of_month: row.get("day_of_month"), start_month: row.get("start_month"),
-        end_month: row.get("end_month"), last_generated_month: row.get("last_generated_month"),
-        active: row.get::<i64, _>("active") != 0,
-    }).collect())
+    Ok(rows
+        .into_iter()
+        .map(|row| RecurringTransaction {
+            id: row.get("id"),
+            account_id: row.get("account_id"),
+            account_name: row.get("account_name"),
+            category_id: row.get("category_id"),
+            category_name: row.get("category_name"),
+            description: row.get("description"),
+            amount_in_cents: row.get("amount_cents"),
+            day_of_month: row.get("day_of_month"),
+            start_month: row.get("start_month"),
+            end_month: row.get("end_month"),
+            last_generated_month: row.get("last_generated_month"),
+            active: row.get::<i64, _>("active") != 0,
+        })
+        .collect())
 }
 
 #[tauri::command]
-pub async fn save_recurring_transaction(input: RecurringTransactionInput, state: State<'_, AppState>) -> Result<String, AppError> {
+pub async fn save_recurring_transaction(
+    input: RecurringTransactionInput,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
     save_recurring_transaction_impl(input, &state.db).await
 }
 
-async fn save_recurring_transaction_impl(input: RecurringTransactionInput, db: &SqlitePool) -> Result<String, AppError> {
+async fn save_recurring_transaction_impl(
+    input: RecurringTransactionInput,
+    db: &SqlitePool,
+) -> Result<String, AppError> {
     validate_recurring_input(&input)?;
     ensure_account_active(db, &input.account_id).await?;
     ensure_category_active(db, &input.category_id).await?;
@@ -116,14 +143,21 @@ async fn save_recurring_transaction_impl(input: RecurringTransactionInput, db: &
 }
 
 #[tauri::command]
-pub async fn set_recurring_transaction_active(id: String, active: bool, state: State<'_, AppState>) -> Result<(), AppError> {
+pub async fn set_recurring_transaction_active(
+    id: String,
+    active: bool,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
     sqlx::query("UPDATE recurring_transactions SET active=?,updated_at=datetime('now') WHERE id=? AND deleted_at IS NULL")
         .bind(active as i64).bind(id).execute(&state.db).await?;
     Ok(())
 }
 
 #[tauri::command]
-pub async fn archive_recurring_transaction(id: String, state: State<'_, AppState>) -> Result<(), AppError> {
+pub async fn archive_recurring_transaction(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
     sqlx::query("UPDATE recurring_transactions SET deleted_at=datetime('now'),active=0,updated_at=datetime('now') WHERE id=?")
         .bind(id).execute(&state.db).await?;
     Ok(())
@@ -161,20 +195,38 @@ async fn sync_recurring_transactions_impl(db: &SqlitePool) -> Result<usize, AppE
             Some(month) => shift_month(month, 1)?,
             None => start_month.clone(),
         };
-        if first_pending > current_month { continue; }
-        let last_pending = end_month.clone().filter(|end| *end < current_month).unwrap_or_else(|| current_month.clone());
-        if first_pending > last_pending { continue; }
+        if first_pending > current_month {
+            continue;
+        }
+        let last_pending = end_month
+            .clone()
+            .filter(|end| *end < current_month)
+            .unwrap_or_else(|| current_month.clone());
+        if first_pending > last_pending {
+            continue;
+        }
 
         let mut cursor = first_pending;
         let mut new_last_generated = last_generated_month.clone();
         while cursor <= last_pending {
-            if cursor == current_month && day_of_month as u32 > today.day() { break; }
+            if cursor == current_month && day_of_month as u32 > today.day() {
+                break;
+            }
             let date = format!("{cursor}-{:02}", day_of_month);
             let normalized = crate::domain::import::normalize_description(&description);
-            let fp = manual_fingerprint(&account_id, &date, &description, &normalized, amount_in_cents);
+            let fp = manual_fingerprint(
+                &account_id,
+                &date,
+                &description,
+                &normalized,
+                amount_in_cents,
+            );
             let collides: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM transactions WHERE fingerprint=? AND deleted_at IS NULL"
-            ).bind(&fp).fetch_one(db).await?;
+                "SELECT COUNT(*) FROM transactions WHERE fingerprint=? AND deleted_at IS NULL",
+            )
+            .bind(&fp)
+            .fetch_one(db)
+            .await?;
             if collides == 0 {
                 let transaction_id = Uuid::new_v4().to_string();
                 let source = category_id.as_ref().map(|_| "manual");
@@ -205,13 +257,22 @@ mod tests {
 
     async fn setup() -> (tempfile::TempDir, SqlitePool, String) {
         let directory = tempfile::tempdir().unwrap();
-        let db = crate::infrastructure::database::connect(&directory.path().join("recurring.db")).await.unwrap();
+        let db = crate::infrastructure::database::connect(&directory.path().join("recurring.db"))
+            .await
+            .unwrap();
         let onboarding = OnboardingInput {
-            display_name: "Pessoa Teste".into(), monthly_income_in_cents: None, income_day: None,
-            financial_goal: None, account_name: "Conta".into(), account_kind: "checking".into(),
+            display_name: "Pessoa Teste".into(),
+            monthly_income_in_cents: None,
+            income_day: None,
+            financial_goal: None,
+            account_name: "Conta".into(),
+            account_kind: "checking".into(),
             opening_balance_in_cents: None,
         };
-        let account_id = complete_onboarding_impl(onboarding, &db).await.unwrap().account_id;
+        let account_id = complete_onboarding_impl(onboarding, &db)
+            .await
+            .unwrap()
+            .account_id;
         (directory, db, account_id)
     }
 
@@ -225,29 +286,52 @@ mod tests {
     async fn sync_backfills_missed_months_and_stays_idempotent() {
         let (_directory, db, account_id) = setup().await;
         let past_month = shift_month(&Local::now().format("%Y-%m").to_string(), -2).unwrap();
-        save_recurring_transaction_impl(RecurringTransactionInput {
-            id: None, account_id: account_id.clone(), category_id: None,
-            description: "Assinatura de streaming".into(), amount_in_cents: -2990,
-            day_of_month: 5, start_month: past_month, end_month: None,
-        }, &db).await.unwrap();
+        save_recurring_transaction_impl(
+            RecurringTransactionInput {
+                id: None,
+                account_id: account_id.clone(),
+                category_id: None,
+                description: "Assinatura de streaming".into(),
+                amount_in_cents: -2990,
+                day_of_month: 5,
+                start_month: past_month,
+                end_month: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
 
         let first_run = sync_recurring_transactions_impl(&db).await.unwrap();
         // Backfills the two past months plus the current one (if day 5 already elapsed) or the two past months.
         assert!(first_run >= 2);
 
         let second_run = sync_recurring_transactions_impl(&db).await.unwrap();
-        assert_eq!(second_run, 0, "a second sync must not duplicate already-generated occurrences");
+        assert_eq!(
+            second_run, 0,
+            "a second sync must not duplicate already-generated occurrences"
+        );
     }
 
     #[tokio::test]
     async fn sync_does_not_generate_future_occurrence_in_current_month() {
         let (_directory, db, account_id) = setup().await;
         let current_month = Local::now().format("%Y-%m").to_string();
-        save_recurring_transaction_impl(RecurringTransactionInput {
-            id: None, account_id, category_id: None,
-            description: "Aluguel".into(), amount_in_cents: -150000,
-            day_of_month: 28, start_month: current_month.clone(), end_month: None,
-        }, &db).await.unwrap();
+        save_recurring_transaction_impl(
+            RecurringTransactionInput {
+                id: None,
+                account_id,
+                category_id: None,
+                description: "Aluguel".into(),
+                amount_in_cents: -150000,
+                day_of_month: 28,
+                start_month: current_month.clone(),
+                end_month: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
 
         let today = Local::now().date_naive();
         let generated = sync_recurring_transactions_impl(&db).await.unwrap();
