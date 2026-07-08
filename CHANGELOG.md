@@ -5,6 +5,52 @@ Todas as mudanças relevantes deste projeto são documentadas neste arquivo.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o
 projeto adota o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.3.6] - 2026-07-08
+
+Foco em tornar o dashboard e os relatórios mais úteis no dia a dia, com
+orçamento por categoria, gráficos padronizados e uma leitura mais clara da sobra
+mensal.
+
+### Adicionado
+- **Tela de Orçamento** para definir limites mensais por categoria de despesa,
+  acompanhar gasto, disponível, status do limite e projeção do mês.
+- **Sobra mensal no dashboard**, substituindo o gráfico de patrimônio por uma
+  visão direta de receitas menos gastos e investimentos.
+- **Próximos vencimentos** no dashboard para acompanhar lançamentos pendentes dos
+  próximos 15 dias.
+- **Exportação de relatórios em PDF** e melhorias nas exportações para análise
+  fora do app.
+- **Comando rápido (`Ctrl+K`)** para navegar entre telas e buscar categorias,
+  regras e transações.
+
+### Alterado
+- **Gráficos centralizados em Recharts** com componentes compartilhados,
+  tooltips, formatação monetária e paleta única para dashboard e relatórios.
+- A aba **Categorias** dos relatórios passa a cobrir gastos, receitas e
+  investimentos com textos e tooltips corretos para cada tipo.
+- O gráfico **Evolução dos gastos**, no filtro **Mês**, passa a comparar o mês
+  atual com o mês anterior.
+- Relatórios e dashboard ganharam cálculos e indicadores mais completos,
+  incluindo metas, tendências por categoria, origem dos gastos e concentração.
+- Importação e transações receberam melhor tratamento de transferências
+  vinculadas, pendências e correções que podem virar regras futuras.
+
+### Corrigido
+- Removido o outline/foco visual que permanecia ao clicar nos gráficos.
+- Ajustadas cores de tooltip e hover nos gráficos de categorias para manter
+  contraste no tema escuro.
+- Corrigidos sinais e agrupamentos de transferências para evitar que sejam
+  somadas como despesa.
+- Corrigido o tratamento de recorrências no dia 31 e dos vínculos entre pernas
+  de transferências.
+- O CI deixa de tentar assinar artefatos de updater nos testes.
+
+### Projeto
+- Versão atualizada para `0.3.6`.
+- Configuração do Vite ajustada para melhorar watch e suporte ao Vitest.
+- Arquivos `*.tsbuildinfo` e worktrees locais da `.claude` passam a ser
+  ignorados pelo Git.
+
 ## [0.3.5] - 2026-07-07
 
 Foco em preparar o Lúmen para avisar e instalar novas versões pelo próprio app.
@@ -29,6 +75,49 @@ Foco em preparar o Lúmen para avisar e instalar novas versões pelo próprio ap
 ### Segurança
 - Arquivos de chave (`*.key*`) passam a ser ignorados pelo Git para evitar que a
   chave privada do updater seja commitada por acidente.
+
+## [0.3.4] - 2026-07-07
+
+Esta versão amplia o Lúmen com mais automação no dia a dia, relatórios mais
+completos e uma importação mais inteligente.
+
+### Adicionado
+- **Nova tela de Recorrências** para cadastrar receitas e despesas fixas,
+  pausar/reativar lançamentos e gerar pendências do mês.
+- **Sugestão de categoria por histórico**: o Lúmen passa a reconhecer
+  estabelecimentos recorrentes e sugerir categorias quando houver confiança
+  suficiente.
+- **Gestão de estabelecimentos e apelidos**, com agrupamento por chave de
+  estabelecimento e opção de renomear nos relatórios.
+- **Relatórios expandidos** com evolução mensal, ranking de categorias,
+  principais estabelecimentos, metas, tendências por categoria e indicadores de
+  faturas.
+- **Novo seletor de categorias** com busca, ícones, cores, hierarquia e filtro
+  por tipo de movimento.
+
+### Alterado
+- Categorias reorganizadas por tipo: receitas, despesas, investimentos e
+  transferências.
+- Suporte a reordenação e hierarquia de categorias.
+- Importação de CSV mais inteligente, com categorias sugeridas por regra ou
+  histórico e criação rápida de regra a partir de uma correção.
+- Dashboard com navegação por mês, fluxo de caixa dos últimos meses, taxa de
+  poupança, ritmo diário e projeção de gastos.
+- Tela de transações com filtro por categoria, seleção em massa, categorização em
+  lote, exclusão com desfazer e criação de regra a partir de correções manuais.
+
+### Corrigido
+- Ajuste no cálculo de faturas de cartão: compras, estornos e pagamentos agora
+  entram com a convenção correta de sinal.
+- Correção dos totais de fatura já existentes por migration.
+- Transferências passam a ser tratadas separadamente, evitando que sejam somadas
+  como despesa.
+
+### Projeto
+- Versão atualizada para `0.3.4`.
+- README atualizado com badges e link correto do repositório.
+- Adicionados templates de issues, template de pull request, guia de
+  contribuição e código de conduta.
 
 ## [0.3.0] - 2026-06-28
 
@@ -70,4 +159,6 @@ erros, com cadastro rápido de cartão sem sair do fluxo.
   publicação, acelerando os builds.
 
 [0.3.0]: https://github.com/filipeclacerda/lumen/compare/v0.2.2...v0.3.0
+[0.3.4]: https://github.com/filipeclacerda/lumen/compare/v0.3.0...v0.3.4
 [0.3.5]: https://github.com/filipeclacerda/lumen/compare/v0.3.4...v0.3.5
+[0.3.6]: https://github.com/filipeclacerda/lumen/compare/v0.3.5...v0.3.6
