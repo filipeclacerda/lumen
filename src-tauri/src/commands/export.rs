@@ -496,5 +496,18 @@ mod tests {
         let rows = fetch_export_rows(&pool, &filter).await.unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].account_name, "Conta Corrente");
+
+        let advanced_filter = TransactionFilter {
+            status: Some("pending".into()),
+            movement_type: Some("expense".into()),
+            min_abs_amount_in_cents: Some(4000),
+            max_abs_amount_in_cents: Some(5000),
+            start_date: Some("2026-06-02".into()),
+            end_date: Some("2026-06-02".into()),
+            ..Default::default()
+        };
+        let advanced_rows = fetch_export_rows(&pool, &advanced_filter).await.unwrap();
+        assert_eq!(advanced_rows.len(), 1);
+        assert_eq!(advanced_rows[0].account_name, "Cartão \"Ouro\"");
     }
 }

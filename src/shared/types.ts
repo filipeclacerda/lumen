@@ -35,6 +35,9 @@ export type TransactionFilter = {
   month?: string; startMonth?: string; endMonth?: string;
   source?: ReportSource; accountId?: string; categoryId?: string;
   uncategorized?: boolean; search?: string; limit?: number; offset?: number;
+  startDate?: string; endDate?: string; status?: "cleared" | "pending";
+  movementType?: "income" | "expense" | "transfer" | "investment";
+  minAbsAmountInCents?: number; maxAbsAmountInCents?: number;
 };
 export type TransactionPage = { items: Transaction[]; totalCount: number };
 export type TransactionInput = {

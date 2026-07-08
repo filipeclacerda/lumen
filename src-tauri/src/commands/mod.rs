@@ -148,11 +148,17 @@ pub struct TransactionFilter {
     month: Option<String>,
     start_month: Option<String>,
     end_month: Option<String>,
+    start_date: Option<String>,
+    end_date: Option<String>,
     source: Option<String>,
     account_id: Option<String>,
     category_id: Option<String>,
     uncategorized: Option<bool>,
     search: Option<String>,
+    status: Option<String>,
+    movement_type: Option<String>,
+    min_abs_amount_in_cents: Option<i64>,
+    max_abs_amount_in_cents: Option<i64>,
     limit: Option<i64>,
     offset: Option<i64>,
 }
@@ -885,6 +891,18 @@ const TRANSACTION_FILTER_WHERE: &str = "
     AND (?6 IS NULL OR t.category_id=?6)
     AND (?7=0 OR t.category_id IS NULL)
     AND (?8 IS NULL OR t.normalized_description LIKE ?8 OR t.description LIKE ?8)
+    AND (?9 IS NULL OR t.date >= ?9)
+    AND (?10 IS NULL OR t.date <= ?10)
+    AND (?11 IS NULL OR t.status = ?11)
+    AND (
+        ?12 IS NULL
+        OR (?12='income' AND t.amount_cents>0 AND COALESCE(c.kind,'') NOT IN ('transfer','investment'))
+        OR (?12='expense' AND t.amount_cents<0 AND COALESCE(c.kind,'') NOT IN ('transfer','investment'))
+        OR (?12='transfer' AND c.kind='transfer')
+        OR (?12='investment' AND c.kind='investment')
+    )
+    AND (?13 IS NULL OR ABS(t.amount_cents) >= ?13)
+    AND (?14 IS NULL OR ABS(t.amount_cents) <= ?14)
 ";
 
 fn bind_transaction_filter<'q>(
@@ -906,7 +924,13 @@ fn bind_transaction_filter<'q>(
         .bind(&filter.account_id)
         .bind(&filter.category_id)
         .bind(uncategorized)
-        .bind(search_like);
+        .bind(search_like)
+        .bind(&filter.start_date)
+        .bind(&filter.end_date)
+        .bind(&filter.status)
+        .bind(&filter.movement_type)
+        .bind(&filter.min_abs_amount_in_cents)
+        .bind(&filter.max_abs_amount_in_cents);
     query
 }
 
@@ -943,7 +967,7 @@ async fn query_transactions_page(
          LEFT JOIN categories c ON c.id=t.category_id
          WHERE {TRANSACTION_FILTER_WHERE}
          ORDER BY t.date DESC, t.id DESC
-         LIMIT ?9 OFFSET ?10"
+         LIMIT ?15 OFFSET ?16"
     );
     let items_query = bind_transaction_filter(sqlx::query(&items_sql), filter, &search_like)
         .bind(limit)
@@ -2773,6 +2797,123 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(ranged.total_count, 5);
+    }
+
+    #[tokio::test]
+    async fn list_transactions_page_filters_status_movement_dates_and_amounts() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = crate::infrastructure::database::connect(&directory.path().join("advanced-filter.db"))
+            .await
+            .unwrap();
+        let onboarding = OnboardingInput {
+            display_name: "Pessoa Teste".into(),
+            monthly_income_in_cents: None,
+            income_day: None,
+            financial_goal: None,
+            account_name: "Conta".into(),
+            account_kind: "checking".into(),
+            opening_balance_in_cents: None,
+        };
+        let account_id = complete_onboarding_impl(onboarding, &db)
+            .await
+            .unwrap()
+            .account_id;
+
+        let pending_id = create_transaction_impl(
+            TransactionInput {
+                id: None,
+                account_id: account_id.clone(),
+                date: "2026-06-01".into(),
+                description: "Padaria".into(),
+                amount_in_cents: -2500,
+                category_id: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE transactions SET status='pending' WHERE id=?")
+            .bind(&pending_id)
+            .execute(&db)
+            .await
+            .unwrap();
+        let market_id = create_transaction_impl(
+            TransactionInput {
+                id: None,
+                account_id: account_id.clone(),
+                date: "2026-06-05".into(),
+                description: "Mercado".into(),
+                amount_in_cents: -9000,
+                category_id: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+        let salary_id = create_transaction_impl(
+            TransactionInput {
+                id: None,
+                account_id,
+                date: "2026-06-09".into(),
+                description: "Salário".into(),
+                amount_in_cents: 120000,
+                category_id: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+
+        let pending = query_transactions_page(
+            &db,
+            &TransactionFilter {
+                status: Some("pending".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(pending.total_count, 1);
+        assert_eq!(pending.items[0].id, pending_id);
+
+        let expense_range = query_transactions_page(
+            &db,
+            &TransactionFilter {
+                movement_type: Some("expense".into()),
+                min_abs_amount_in_cents: Some(3000),
+                max_abs_amount_in_cents: Some(10000),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(expense_range.total_count, 1);
+        assert_eq!(expense_range.items[0].id, market_id);
+
+        let income = query_transactions_page(
+            &db,
+            &TransactionFilter {
+                movement_type: Some("income".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(income.total_count, 1);
+        assert_eq!(income.items[0].id, salary_id);
+
+        let exact_dates = query_transactions_page(
+            &db,
+            &TransactionFilter {
+                start_date: Some("2026-06-04".into()),
+                end_date: Some("2026-06-06".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(exact_dates.total_count, 1);
+        assert_eq!(exact_dates.items[0].id, market_id);
     }
 
     #[tokio::test]

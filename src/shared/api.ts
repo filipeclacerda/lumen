@@ -64,9 +64,23 @@ export const api = {
     if (isTauri()) return invoke("list_transactions_page", { filter });
     const items = demoTransactions.filter(t =>
       (!filter.search || t.description.toLowerCase().includes(filter.search.toLowerCase())) &&
+      (!filter.startDate || t.date >= filter.startDate) &&
+      (!filter.endDate || t.date <= filter.endDate) &&
+      (!filter.startMonth || t.date.slice(0, 7) >= filter.startMonth) &&
+      (!filter.endMonth || t.date.slice(0, 7) <= filter.endMonth) &&
       (!filter.accountId || t.accountId === filter.accountId) &&
       (!filter.categoryId || t.categoryId === filter.categoryId) &&
-      (!filter.uncategorized || !t.categoryId)
+      (!filter.uncategorized || !t.categoryId) &&
+      (!filter.status || t.status === filter.status) &&
+      (!filter.source || filter.source === "all" || (filter.source === "credit_card" ? t.accountKind === "credit_card" : t.accountKind !== "credit_card")) &&
+      (!filter.movementType || (
+        filter.movementType === "income" ? t.amountInCents > 0 :
+        filter.movementType === "expense" ? t.amountInCents < 0 :
+        filter.movementType === "investment" ? t.category === "Investimentos" :
+        t.category === "Transferências"
+      )) &&
+      (!filter.minAbsAmountInCents || Math.abs(t.amountInCents) >= filter.minAbsAmountInCents) &&
+      (!filter.maxAbsAmountInCents || Math.abs(t.amountInCents) <= filter.maxAbsAmountInCents)
     );
     return { items, totalCount: items.length };
   },

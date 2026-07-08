@@ -1,292 +1,298 @@
 <div align="center">
-  <img src="src-tauri/icons/128x128.png" width="128" alt="Lúmen Logo" style="margin-bottom: 20px;" />
+  <img src="src-tauri/icons/128x128.png" width="128" alt="Logo do Lúmen" />
 
   <h1>Lúmen</h1>
 
   <p>
-    <b>Iluminando suas finanças, respeitando sua privacidade.</b>
+    <strong>Gestor financeiro pessoal, local-first, privado e open source.</strong>
   </p>
 
   <p>
-    <a href="https://github.com/filipeclacerda/lumen/actions"><img src="https://img.shields.io/github/actions/workflow/status/filipeclacerda/lumen/ci.yml?branch=main&logo=github&label=CI" alt="CI Status"/></a>
-    <a href="https://github.com/filipeclacerda/lumen/releases"><img src="https://img.shields.io/github/v/release/filipeclacerda/lumen?logo=github&label=version" alt="Version"/></a>
-    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License"/></a>
-    <a href="https://github.com/filipeclacerda/lumen/stargazers"><img src="https://img.shields.io/github/stars/filipeclacerda/lumen?logo=github" alt="Stars"/></a>
+    <a href="https://github.com/filipeclacerda/lumen/actions"><img src="https://img.shields.io/github/actions/workflow/status/filipeclacerda/lumen/ci.yml?branch=main&logo=github&label=CI" alt="Status do CI" /></a>
+    <a href="https://github.com/filipeclacerda/lumen/releases"><img src="https://img.shields.io/github/v/release/filipeclacerda/lumen?logo=github&label=version" alt="Versão mais recente" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="Licença MIT" /></a>
+    <a href="https://github.com/filipeclacerda/lumen/stargazers"><img src="https://img.shields.io/github/stars/filipeclacerda/lumen?logo=github" alt="Stars no GitHub" /></a>
   </p>
 
   <p>
-    Um gerenciador financeiro desktop moderno, local-first e 100% open source.
-    Sem nuvem, sem assinatura e sem coleta de dados.
+    Organize contas, cartões, transações, orçamentos e relatórios sem entregar seus dados financeiros a uma nuvem de terceiros.
   </p>
 
   <p>
-    <a href="#-o-que-é-o-lúmen">O que é</a> •
-    <a href="#-por-que-o-lúmen">Por que usar</a> •
-    <a href="#-funcionalidades">Funcionalidades</a> •
-    <a href="#-tecnologias">Tecnologias</a> •
-    <a href="#-como-executar">Como executar</a>
+    <a href="#visão-geral">Visão geral</a> •
+    <a href="#princípios-do-projeto">Princípios</a> •
+    <a href="#funcionalidades">Funcionalidades</a> •
+    <a href="#privacidade-e-segurança">Privacidade</a> •
+    <a href="#como-executar">Como executar</a> •
+    <a href="#contribuindo">Contribuindo</a>
   </p>
 </div>
 
 ---
 
-## 💡 O que é o Lúmen?
+## Visão geral
 
-O **Lúmen** é um gerenciador financeiro desktop criado para ajudar você a entender melhor sua vida financeira sem abrir mão da privacidade.
+O **Lúmen** é uma aplicação desktop para controle financeiro pessoal criada para quem quer clareza sobre o próprio dinheiro sem abrir mão de autonomia e privacidade.
 
-Diferente de muitos aplicativos financeiros baseados em nuvem, o Lúmen foi pensado com uma abordagem **local-first**: seus dados ficam armazenados e processados exclusivamente na sua própria máquina.
+Ele centraliza movimentações de contas e cartões, organiza categorias, importa extratos, acompanha recorrências, projeta orçamento mensal e gera relatórios para análise. A proposta é ajudar você a responder perguntas simples e importantes:
 
-Sem login obrigatório.
-Sem servidores intermediando seus extratos.
-Sem coleta silenciosa de informações financeiras.
+- Para onde meu dinheiro foi neste mês?
+- Quanto sobrou depois de gastos e investimentos?
+- Quais categorias ou estabelecimentos mais pesam no orçamento?
+- Que lançamentos futuros ou recorrentes merecem atenção?
+- Meus dados financeiros continuam sob meu controle?
 
-A proposta é simples: oferecer uma experiência moderna, rápida e elegante para organizar contas, acompanhar gastos, importar extratos e visualizar sua saúde financeira com clareza.
+Diferente de ferramentas financeiras baseadas em conta online obrigatória, o Lúmen segue uma abordagem **local-first**: os dados são armazenados em um banco SQLite no próprio computador e a aplicação foi desenhada para funcionar sem depender de servidores externos para processar suas informações financeiras.
 
----
-
-## ❓ Por que o Lúmen?
-
-### 🔒 Privacidade de verdade
-
-Seus dados financeiros são sensíveis. Por isso, o Lúmen foi projetado para funcionar localmente, mantendo o banco de dados no seu próprio computador.
-
-Nada de enviar extratos para servidores externos.
-Nada de sincronização forçada em nuvem.
-Nada de vender ou analisar seus dados.
-
-Você mantém o controle.
-
-### 🌱 100% open source
-
-O Lúmen é um projeto **100% open source**.
-
-Isso significa que qualquer pessoa pode estudar o código, auditar o funcionamento, sugerir melhorias, abrir issues ou contribuir com novas funcionalidades.
-
-Transparência é parte central do projeto.
-
-### ⚡ Experiência desktop moderna
-
-Construído com **Tauri**, **Rust**, **React** e **TypeScript**, o Lúmen combina uma interface moderna com o desempenho de uma aplicação nativa.
-
-O objetivo é entregar uma experiência leve, rápida e agradável, sem depender de navegadores pesados ou serviços externos.
-
-### 🧠 Organização inteligente
-
-O Lúmen ajuda a reduzir o trabalho manual ao importar extratos, revisar transações e categorizar gastos de forma cada vez mais prática.
-
-A ideia é que, com o tempo, o app ajude você a entender melhor seus hábitos financeiros e tomar decisões com mais clareza.
+> O Lúmen não substitui aconselhamento financeiro profissional. Ele é uma ferramenta de organização, análise e acompanhamento pessoal.
 
 ---
 
-## ✨ Funcionalidades
+## Princípios do projeto
 
-### 📊 Dashboard financeiro
+### Privacidade por padrão
 
-Visualize rapidamente a saúde financeira do mês:
+Dados financeiros são sensíveis. Por isso, o Lúmen evita login obrigatório, sincronização forçada e processamento em servidores de terceiros. Importações, categorizações, relatórios e backups acontecem localmente.
 
-* entradas e saídas consolidadas;
-* comparação entre renda planejada e movimentações reais;
-* visão geral das transações;
-* indicadores para entender melhor seus gastos.
+### Open source de verdade
 
-### 📥 Importação de extratos
+O Lúmen é um projeto **100% open source**, distribuído sob a licença MIT. Isso significa que qualquer pessoa pode estudar o código, auditar o funcionamento, abrir issues, propor melhorias, criar forks e contribuir com o desenvolvimento.
 
-Importe arquivos financeiros diretamente no aplicativo:
+A transparência não é um detalhe secundário: ela faz parte da confiança que o projeto quer construir.
 
-* suporte a arquivos `.csv`;
-* suporte a arquivos `.ofx`;
-* suporte a PDFs textuais de extratos do Sicoob;
-* prévia antes de confirmar a importação;
-* commit atômico das transações;
-* deduplicação para evitar lançamentos repetidos.
+### Controle nas mãos do usuário
 
-### 🧾 Lista de transações
+O objetivo é que você saiba onde seus dados estão, consiga exportar suas informações e tenha liberdade para adaptar o app ao seu fluxo. O projeto prioriza formatos abertos, backup local e uma arquitetura simples de inspecionar.
 
-Acompanhe suas movimentações em uma interface pesquisável e organizada:
+### Experiência desktop moderna
 
-* busca por descrição;
-* visualização de valores em centavos para maior precisão;
-* distinção entre receitas, despesas e transferências;
-* estrutura preparada para evolução de filtros, edição e organização avançada.
-
-### 🧠 Categorização automática
-
-O Lúmen conta com uma base local de categorias brasileiras e um mecanismo de categorização por regras.
-
-A proposta é facilitar a organização recorrente de gastos, mantendo tudo processado localmente.
-
-### 👤 Onboarding local
-
-Ao iniciar o app, você pode configurar informações básicas para personalizar a experiência:
-
-* perfil local;
-* renda de referência;
-* primeira conta;
-* edição posterior das informações.
-
-### 🛡️ Arquitetura focada em segurança
-
-O frontend não acessa o banco de dados diretamente. A comunicação com os dados locais passa pela camada nativa da aplicação, reduzindo a exposição indevida de informações sensíveis.
-
-> **Nota importante:** o projeto ainda está em evolução. Antes do uso com dados financeiros reais, a integração com criptografia local, como SQLCipher e proteção via Windows Credential Manager/DPAPI, é um marco importante do roadmap.
+Construído com Tauri, Rust, React e TypeScript, o Lúmen busca entregar uma aplicação leve, rápida e confortável para uso recorrente, com interface nativa, tema claro/escuro e navegação fluida.
 
 ---
 
-## 🛠 Tecnologias
+## Status do projeto
 
-O Lúmen utiliza um stack moderno com foco em desempenho, segurança e manutenibilidade:
+O Lúmen está em desenvolvimento ativo. A base principal já inclui importação, transações, categorias, cartões, orçamento, relatórios, recorrências, backup e exportação, mas o produto ainda evolui rapidamente.
 
-* **Tauri 2** — aplicação desktop leve e multiplataforma;
-* **Rust** — backend nativo seguro e performático;
-* **React** — construção da interface;
-* **TypeScript** — tipagem estática no frontend;
-* **SQLite** — banco de dados local;
-* **Vite** — ambiente de desenvolvimento rápido;
-* **CSS Vanilla** — estilização com tokens para tema claro e escuro.
+Antes de usar com dados financeiros críticos:
 
----
-
-## 🎨 Identidade visual
-
-A interface do Lúmen foi pensada para transmitir clareza, confiança e liberdade financeira.
-
-A paleta principal utiliza tons de verde esmeralda:
-
-* **Tema claro:** `#176148`
-* **Tema escuro:** `#3ea57e`
-
-O design busca uma experiência limpa, moderna e confortável, com suporte nativo a tema claro e escuro por meio de variáveis CSS.
+- mantenha backups atualizados;
+- revise prévias de importação antes de confirmar lançamentos;
+- acompanhe o [CHANGELOG](CHANGELOG.md) para entender mudanças entre versões;
+- considere que criptografia nativa do banco local ainda está no roadmap.
 
 ---
 
-## 🚀 Como executar
+## Funcionalidades
+
+| Área | O que o Lúmen oferece |
+| --- | --- |
+| **Visão geral** | Dashboard mensal com receitas, despesas, investimentos, sobra do mês, fluxo de caixa, próximos vencimentos e indicadores de saúde financeira. |
+| **Transações** | Listagem pesquisável, filtros por período, conta, categoria, status, origem e valor; criação, edição, exclusão com restauração e categorização em massa. |
+| **Importação** | Suporte a OFX, CSV bancário, CSV de cartão, layouts personalizados, perfis de mapeamento, templates oficiais e PDFs textuais de extrato do Sicoob. |
+| **Cartões de crédito** | Cadastro de cartões, importação de faturas, itens por fatura, estornos, pagamentos e vínculo entre pagamento bancário e fatura. |
+| **Contas** | Cadastro e organização de contas correntes, poupança, dinheiro e cartões de crédito. |
+| **Categorias e regras** | Categorias hierárquicas por tipo de movimento, cores, ícones, regras automáticas por texto, valor, conta, tipo e expressão regular. |
+| **Sugestões inteligentes** | Categorização por regras explícitas e sugestão por histórico de estabelecimentos, sempre processadas localmente. |
+| **Orçamento** | Limites mensais por categoria, acompanhamento do gasto, valor disponível, projeção do mês e alerta de status. |
+| **Recorrências** | Cadastro de receitas e despesas fixas, geração de pendências mensais e controle de recorrências ativas ou pausadas. |
+| **Relatórios** | Evolução mensal, distribuição por categoria, origem dos gastos, principais estabelecimentos, metas, tendências e alertas financeiros. |
+| **Exportação** | Exportação de transações em CSV, OFX e PDF, além de relatórios financeiros em PDF. |
+| **Backup e restauração** | Cópia local do banco SQLite, restauração validada e opção de reinicialização dos dados. |
+| **Usabilidade** | Tema claro/escuro, comando rápido com `Ctrl+K`, navegação por mês e interface preparada para uso diário. |
+
+---
+
+## Privacidade e segurança
+
+O Lúmen foi desenhado para reduzir exposição desnecessária de informações financeiras.
+
+- O banco principal é um arquivo SQLite local (`financa.db`).
+- O frontend não acessa o banco diretamente; operações passam por comandos nativos do Tauri.
+- Arquivos importados são lidos para gerar prévias e confirmar lançamentos no próprio computador.
+- Backups são arquivos locais escolhidos pelo usuário.
+- Não há conta online obrigatória, assinatura ou coleta silenciosa de dados financeiros pelo projeto.
+
+### Nota importante sobre criptografia
+
+O banco local ainda não é criptografado pela própria aplicação. Até que a criptografia nativa seja implementada, recomenda-se proteger o computador com recursos do sistema operacional, como senha forte, disco criptografado e backups guardados em local seguro.
+
+Itens como SQLCipher, Windows Credential Manager/DPAPI e melhorias adicionais de proteção local fazem parte das prioridades de segurança do roadmap.
+
+---
+
+## Arquitetura
+
+O projeto separa a interface, a camada nativa e o domínio financeiro para manter o código mais auditável e evolutivo.
+
+```mermaid
+flowchart LR
+  UI["React + TypeScript"] --> API["Tauri commands"]
+  API --> Rust["Rust: aplicação e domínio"]
+  Rust --> SQLite[("SQLite local")]
+  Rust --> Importers["Importadores CSV / OFX / PDF"]
+  Rust --> Reports["Relatórios e exportações"]
+```
+
+### Stack principal
+
+- **Tauri 2** para empacotamento desktop leve.
+- **Rust** para comandos nativos, regras de domínio, importação e persistência.
+- **SQLite + SQLx** para banco local e migrations.
+- **React 19 + TypeScript** para a interface.
+- **TanStack Query** para estado assíncrono.
+- **React Router** para navegação.
+- **Recharts** para gráficos.
+- **Vite, Vitest e ESLint** para desenvolvimento, testes e qualidade.
+
+### Estrutura do repositório
+
+```text
+.
+├── src/                     # Frontend React/TypeScript
+│   ├── app/                 # Shell principal e rotas
+│   ├── features/            # Telas por domínio: dashboard, transações, importação etc.
+│   └── shared/              # API, tipos, formatação e componentes compartilhados
+├── src-tauri/               # Aplicação Tauri/Rust
+│   ├── src/                 # Comandos, domínio, infraestrutura e estado da aplicação
+│   ├── migrations/          # Evolução do banco SQLite
+│   └── icons/               # Ícones e assets nativos
+├── docs/adr/                # Decisões arquiteturais
+├── CHANGELOG.md             # Histórico de versões
+├── CONTRIBUTING.md          # Guia de contribuição
+└── LICENSE                  # Licença MIT
+```
+
+---
+
+## Como executar
 
 ### Pré-requisitos
 
-Antes de começar, certifique-se de ter instalado:
+Instale antes de começar:
 
-* [Node.js](https://nodejs.org/)
-* [Rust](https://www.rust-lang.org/tools/install)
-* Dependências nativas do [Tauri](https://tauri.app/)
+- [Node.js 22+](https://nodejs.org/)
+- [Rust](https://www.rust-lang.org/tools/install)
+- [Git](https://git-scm.com/)
+- Dependências nativas do [Tauri](https://tauri.app/)
 
-No Windows, também é necessário ter o ambiente MSVC configurado, incluindo o Visual Studio Build Tools com suporte a desenvolvimento desktop em C++.
+No Windows, também é necessário ter o ambiente MSVC configurado, normalmente por meio do Visual Studio Build Tools com suporte a desenvolvimento desktop em C++.
 
----
-
-### Instalação
-
-Clone o repositório:
+### Instalação local
 
 ```bash
 git clone https://github.com/filipeclacerda/lumen.git
 cd lumen
-```
-
-Instale as dependências do frontend:
-
-```bash
 npm install
 ```
 
-Execute a aplicação desktop em modo de desenvolvimento:
+### Desenvolvimento
 
 ```bash
 npm run tauri dev
 ```
 
----
+Esse comando inicia o Vite e abre a aplicação desktop via Tauri.
 
-## 🧪 Testes
-
-Execute os testes do frontend:
+### Testes e qualidade
 
 ```bash
+# Testes do frontend
 npm test
-```
 
-Gere o build web:
-
-```bash
+# Build do frontend
 npm run build
-```
 
-Execute os testes Rust:
+# Lint do frontend
+npm run lint
 
-```bash
+# Testes do backend Rust
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
----
-
-## 📦 Build
-
-Para gerar uma versão desktop da aplicação:
+### Build desktop
 
 ```bash
 npm run tauri build
 ```
 
-O instalador será gerado na pasta de saída do Tauri.
+Os artefatos de instalação são gerados pela pipeline do Tauri em `src-tauri/target/release/bundle`.
 
 ---
 
-## 🗺️ Roadmap
+## Scripts úteis
 
-Alguns próximos marcos planejados para o projeto:
-
-* criptografia do banco local;
-* integração com Windows Credential Manager/DPAPI;
-* CRUD completo de transações;
-* regras avançadas de categorização;
-* suporte aprimorado a cartões de crédito;
-* orçamentos mensais;
-* metas financeiras;
-* backup local;
-* instalador assinado;
-* melhorias de acessibilidade;
-* refinamento visual da interface.
+| Comando | Descrição |
+| --- | --- |
+| `npm run dev` | Inicia apenas o servidor Vite. |
+| `npm run tauri dev` | Executa a aplicação desktop em modo de desenvolvimento. |
+| `npm test` | Roda os testes do frontend com Vitest. |
+| `npm run build` | Compila TypeScript e gera o build web. |
+| `npm run lint` | Executa ESLint no projeto. |
+| `npm run tauri build` | Gera o build desktop empacotado. |
+| `cargo test --manifest-path src-tauri/Cargo.toml` | Roda os testes Rust. |
 
 ---
 
-## 🤝 Como contribuir
+## Roadmap
 
-Contribuições são muito bem-vindas.
+Algumas frentes importantes para as próximas evoluções:
 
-O Lúmen é um projeto **100% open source** e qualquer ajuda é válida: correção de bugs, sugestões de interface, melhorias de documentação, testes, novas funcionalidades ou revisão de código.
+- criptografia nativa do banco local;
+- integração com mecanismos seguros do sistema operacional para proteção de chaves;
+- melhorias de acessibilidade;
+- refinamento do instalador e do processo de atualização;
+- importadores adicionais e layouts bancários mais ricos;
+- evolução dos relatórios e indicadores de planejamento;
+- cobertura de testes ampliada para fluxos críticos;
+- melhorias contínuas de performance e experiência de uso.
 
-Para contribuir:
+Sugestões de roadmap são bem-vindas em issues e discussions.
 
-1. Faça um fork do projeto.
-2. Crie uma branch para sua alteração:
+---
+
+## Contribuindo
+
+Contribuições são muito bem-vindas. O Lúmen é **open source por escolha de produto e de comunidade**: melhorias no código, documentação, design, acessibilidade, testes, importadores, correções de bugs e ideias de UX ajudam o projeto a ficar mais útil para todos.
+
+Antes de contribuir, leia:
+
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- [CHANGELOG.md](CHANGELOG.md)
+
+Fluxo básico:
 
 ```bash
 git checkout -b feature/minha-melhoria
-```
-
-3. Faça o commit das alterações:
-
-```bash
-git commit -m "Adiciona minha melhoria"
-```
-
-4. Envie para o seu fork:
-
-```bash
+# faça suas alterações
+npm test
+cargo test --manifest-path src-tauri/Cargo.toml
+git commit -m "feat: descreve minha melhoria"
 git push origin feature/minha-melhoria
 ```
 
-5. Abra um Pull Request.
+Depois, abra um Pull Request explicando o problema, a solução e como testar.
+
+### Boas práticas para issues
+
+- Não publique extratos reais, dados bancários, documentos ou informações pessoais.
+- Ao reportar bugs de importação, anonimize exemplos antes de anexar.
+- Inclua versão do app, sistema operacional e passos de reprodução quando possível.
+- Para propostas grandes, abra uma issue primeiro para alinhar escopo.
 
 ---
 
-## 📄 Licença
+## Licença
 
-Este projeto é open source, distribuído sob a licença MIT. Consulte o arquivo [LICENSE](./LICENSE) para o texto completo.
+O Lúmen é um projeto **open source** licenciado sob os termos da licença MIT.
+
+Consulte [LICENSE](LICENSE) para o texto completo.
 
 ---
 
 <div align="center">
   <p>
-    Feito com cuidado para quem valoriza estética, autonomia e privacidade.
+    Feito para quem quer entender melhor o próprio dinheiro sem abrir mão de privacidade, autonomia e transparência.
   </p>
 </div>

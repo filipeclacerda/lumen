@@ -1,29 +1,70 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CreditCard, Download, Landmark, Pencil, Plus, Repeat, Search, Tags, Trash2, Undo2, ArrowUpRight, ArrowDownRight, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ArrowDownRight, ArrowUpRight, CalendarRange, CreditCard, Download, Filter, Landmark, Pencil, Plus, Repeat, Search, SlidersHorizontal, Tags, Trash2, Undo2, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "../../shared/api";
 import { money, shortDate, suggestRulePattern } from "../../shared/format";
+import { currentMonth } from "../../shared/period";
 import { CategorySelect } from "../../shared/ui/CategorySelect";
+import { MoneyInput } from "../../shared/ui/MoneyInput";
 import { useToast } from "../../shared/ui/toast";
-import type { ReportSource, Transaction } from "../../shared/types";
+import type { Account, ReportSource, Transaction, TransactionFilter } from "../../shared/types";
 import { TransactionForm } from "./TransactionForm";
 
 const PAGE_SIZE = 100;
+const FILTER_KEYS = [
+  "category", "uncategorized", "startMonth", "endMonth", "source", "accountId",
+  "startDate", "endDate", "status", "movementType", "minAmount", "maxAmount",
+] as const;
+
+type QuickFilter = "all" | "month" | "uncategorized" | "expense" | "income" | "pending";
+type MovementFilter = NonNullable<TransactionFilter["movementType"]>;
+
+const movementLabels: Record<MovementFilter, string> = {
+  income: "Receitas",
+  expense: "Despesas",
+  transfer: "Transferências",
+  investment: "Investimentos",
+};
+
+function centsParam(value: string | null) {
+  if (!value) return undefined;
+  const cents = Number(value);
+  return Number.isFinite(cents) && cents > 0 ? cents : undefined;
+}
+
+function setOrDelete(params: URLSearchParams, key: string, value?: string) {
+  if (value) params.set(key, value);
+  else params.delete(key);
+}
+
+function filteredAccounts(accounts: Account[], source: ReportSource | "") {
+  return accounts.filter(account => !source || source === "all" || (source === "credit_card" ? account.kind === "credit_card" : account.kind !== "credit_card"));
+}
 
 export function Transactions() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const monthNow = currentMonth();
   const categoryFilter = searchParams.get("category") ?? "";
   const uncategorizedFilter = searchParams.get("uncategorized") === "1";
   const startMonthFilter = searchParams.get("startMonth") ?? "";
   const endMonthFilter = searchParams.get("endMonth") ?? "";
+  const startDateFilter = searchParams.get("startDate") ?? "";
+  const endDateFilter = searchParams.get("endDate") ?? "";
+  const statusParam = searchParams.get("status");
+  const statusFilter = statusParam === "cleared" || statusParam === "pending" ? statusParam : "";
+  const movementParam = searchParams.get("movementType");
+  const movementFilter = (movementParam === "income" || movementParam === "expense" || movementParam === "transfer" || movementParam === "investment" ? movementParam : "") as MovementFilter | "";
   const sourceParam = searchParams.get("source");
   const sourceFilter = (sourceParam === "bank" || sourceParam === "credit_card" ? sourceParam : "") as ReportSource | "";
   const accountFilter = searchParams.get("accountId") ?? "";
+  const minAmountFilter = centsParam(searchParams.get("minAmount"));
+  const maxAmountFilter = centsParam(searchParams.get("maxAmount"));
   const qParam = searchParams.get("q") ?? "";
   const [search, setSearch] = useState(qParam);
   const [debouncedSearch, setDebouncedSearch] = useState(qParam);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const toast = useToast();
   const [page, setPage] = useState(0);
@@ -39,14 +80,11 @@ export function Transactions() {
   const [notice, setNotice] = useState("");
   const client = useQueryClient();
 
-  // Debounce the search box so typing doesn't spam the backend with a query per keystroke.
   useEffect(() => {
     const timeout = setTimeout(() => setDebouncedSearch(search), 300);
     return () => clearTimeout(timeout);
   }, [search]);
 
-  // Seeds the search box from a `?q=` URL param (e.g. navigated here from the command palette),
-  // then drops the param so it doesn't linger once the box has taken over.
   useEffect(() => {
     if (!qParam) return;
     setSearch(qParam);
@@ -59,19 +97,38 @@ export function Transactions() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qParam]);
 
-  // Any filter change resets pagination back to the first page.
   useEffect(() => {
     setPage(0);
-  }, [debouncedSearch, categoryFilter, uncategorizedFilter, startMonthFilter, endMonthFilter, sourceFilter, accountFilter]);
+    setSelected(new Set());
+  }, [debouncedSearch, categoryFilter, uncategorizedFilter, startMonthFilter, endMonthFilter, startDateFilter, endDateFilter, statusFilter, movementFilter, sourceFilter, accountFilter, minAmountFilter, maxAmountFilter]);
 
-  const filter = {
+  const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: () => api.categories() });
+  const { data: accounts = [] } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
+  const sourceAccounts = useMemo(() => filteredAccounts(accounts, sourceFilter), [accounts, sourceFilter]);
+
+  useEffect(() => {
+    if (!accountFilter || sourceAccounts.some(account => account.id === accountFilter)) return;
+    setSearchParams(params => {
+      const next = new URLSearchParams(params);
+      next.delete("accountId");
+      return next;
+    }, { replace: true });
+  }, [accountFilter, setSearchParams, sourceAccounts]);
+
+  const filter: TransactionFilter = {
     startMonth: startMonthFilter || undefined,
     endMonth: endMonthFilter || undefined,
+    startDate: startDateFilter || undefined,
+    endDate: endDateFilter || undefined,
     source: sourceFilter || undefined,
     accountId: accountFilter || undefined,
     categoryId: uncategorizedFilter ? undefined : (categoryFilter || undefined),
     uncategorized: uncategorizedFilter || undefined,
     search: debouncedSearch || undefined,
+    status: statusFilter || undefined,
+    movementType: movementFilter || undefined,
+    minAbsAmountInCents: minAmountFilter,
+    maxAbsAmountInCents: maxAmountFilter,
     limit: PAGE_SIZE,
     offset: page * PAGE_SIZE,
   };
@@ -81,22 +138,85 @@ export function Transactions() {
   });
   const items = data?.items ?? [];
   const totalCount = data?.totalCount ?? 0;
-  const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: () => api.categories() });
-  const categoryFilterName = uncategorizedFilter ? "Sem categoria" : categories.find(c => c.id === categoryFilter)?.name;
-  const hasReportFilters = Boolean(categoryFilter||uncategorizedFilter||startMonthFilter||endMonthFilter||sourceFilter||accountFilter);
-  const sourceLabel = sourceFilter === "bank" ? "conta bancária" : sourceFilter === "credit_card" ? "cartão de crédito" : "";
-  const filterSummary = [
-    categoryFilterName&&`categoria: ${categoryFilterName}`,
-    startMonthFilter&&endMonthFilter&&`${startMonthFilter} a ${endMonthFilter}`,
-    sourceLabel&&`origem: ${sourceLabel}`,
-    accountFilter&&`conta selecionada`
-  ].filter(Boolean).join(" · ");
   const rows = items;
-  function clearReportFilters() {
+  const categoryFilterName = uncategorizedFilter ? "Sem categoria" : categories.find(c => c.id === categoryFilter)?.name;
+  const sourceLabel = sourceFilter === "bank" ? "Conta bancária" : sourceFilter === "credit_card" ? "Cartão de crédito" : "";
+  const accountLabel = accounts.find(a => a.id === accountFilter)?.name;
+  const hasActiveFilters = Boolean(
+    search || categoryFilter || uncategorizedFilter || startMonthFilter || endMonthFilter || startDateFilter ||
+    endDateFilter || sourceFilter || accountFilter || statusFilter || movementFilter || minAmountFilter || maxAmountFilter
+  );
+  const quickActive: QuickFilter | "" =
+    !hasActiveFilters ? "all" :
+    startMonthFilter === monthNow && endMonthFilter === monthNow && !categoryFilter && !uncategorizedFilter && !statusFilter && !movementFilter && !startDateFilter && !endDateFilter && !sourceFilter && !accountFilter && !minAmountFilter && !maxAmountFilter && !search ? "month" :
+    uncategorizedFilter && !statusFilter && !movementFilter ? "uncategorized" :
+    movementFilter === "expense" && !statusFilter && !uncategorizedFilter ? "expense" :
+    movementFilter === "income" && !statusFilter && !uncategorizedFilter ? "income" :
+    statusFilter === "pending" && !movementFilter && !uncategorizedFilter ? "pending" :
+    "";
+  const activeChips = [
+    debouncedSearch && { key: "search", label: `Busca: ${debouncedSearch}` },
+    categoryFilterName && { key: uncategorizedFilter ? "uncategorized" : "category", label: `Categoria: ${categoryFilterName}` },
+    startMonthFilter && endMonthFilter && { key: "months", label: `Meses: ${startMonthFilter} a ${endMonthFilter}` },
+    startDateFilter && { key: "startDate", label: `Desde ${shortDate(startDateFilter)}` },
+    endDateFilter && { key: "endDate", label: `Até ${shortDate(endDateFilter)}` },
+    sourceLabel && { key: "source", label: `Origem: ${sourceLabel}` },
+    accountLabel && { key: "accountId", label: `Conta: ${accountLabel}` },
+    statusFilter && { key: "status", label: statusFilter === "pending" ? "Pendentes" : "Confirmadas" },
+    movementFilter && { key: "movementType", label: movementLabels[movementFilter] },
+    minAmountFilter && { key: "minAmount", label: `Mín. ${money(minAmountFilter)}` },
+    maxAmountFilter && { key: "maxAmount", label: `Máx. ${money(maxAmountFilter)}` },
+  ].filter(Boolean) as {key:string;label:string}[];
+
+  function updateParams(mutator: (next: URLSearchParams) => void) {
     setSearchParams(params => {
       const next = new URLSearchParams(params);
-      ["category","uncategorized","startMonth","endMonth","source","accountId"].forEach(key=>next.delete(key));
+      mutator(next);
       return next;
+    });
+  }
+  function applyQuick(value: QuickFilter) {
+    setSearch("");
+    setDebouncedSearch("");
+    updateParams(next => {
+      FILTER_KEYS.forEach(key => next.delete(key));
+      next.delete("q");
+      if (value === "month") {
+        next.set("startMonth", monthNow);
+        next.set("endMonth", monthNow);
+      } else if (value === "uncategorized") {
+        next.set("uncategorized", "1");
+      } else if (value === "expense" || value === "income") {
+        next.set("movementType", value);
+      } else if (value === "pending") {
+        next.set("status", "pending");
+      }
+    });
+  }
+  function clearAllFilters() {
+    setSearch("");
+    setDebouncedSearch("");
+    updateParams(next => {
+      FILTER_KEYS.forEach(key => next.delete(key));
+      next.delete("q");
+    });
+  }
+  function removeFilter(key: string) {
+    if (key === "search") {
+      setSearch("");
+      setDebouncedSearch("");
+      return;
+    }
+    updateParams(next => {
+      if (key === "months") {
+        next.delete("startMonth"); next.delete("endMonth");
+      } else if (key === "category") {
+        next.delete("category");
+      } else if (key === "uncategorized") {
+        next.delete("uncategorized");
+      } else {
+        next.delete(key);
+      }
     });
   }
   const allVisibleSelected = rows.length > 0 && rows.every(t=>selected.has(t.id));
@@ -110,14 +230,20 @@ export function Transactions() {
       return next;
     });
   }
-  const exportFilter = {
+  const exportFilter: TransactionFilter = {
     startMonth: filter.startMonth,
     endMonth: filter.endMonth,
+    startDate: filter.startDate,
+    endDate: filter.endDate,
     source: filter.source,
     accountId: filter.accountId,
     categoryId: filter.categoryId,
     uncategorized: filter.uncategorized,
     search: filter.search,
+    status: filter.status,
+    movementType: filter.movementType,
+    minAbsAmountInCents: filter.minAbsAmountInCents,
+    maxAbsAmountInCents: filter.maxAbsAmountInCents,
   };
   async function exportFile(kind: "csv" | "ofx" | "pdf") {
     if (!("__TAURI_INTERNALS__" in window)) {
@@ -187,7 +313,6 @@ export function Transactions() {
       const count=await api.restoreTransactions(undo.ids);
       setNotice(`${count} transações restauradas.`);
     } else {
-      // Regroup by former category so the rollback runs as few bulk calls as possible.
       const groups=new Map<string|undefined,string[]>();
       undo.previous.forEach(p=>{
         const list=groups.get(p.categoryId)??[];
@@ -202,6 +327,7 @@ export function Transactions() {
   const rangeEnd = Math.min(totalCount, page * PAGE_SIZE + rows.length);
   const hasMore = page * PAGE_SIZE + rows.length < totalCount;
   const hasPrevious = page > 0;
+
   return <section><header><div><p className="eyebrow">MOVIMENTAÇÕES</p><h1>Transações</h1><p className="muted">{totalCount === 0 ? "0 lançamentos" : `${rangeStart}–${rangeEnd} de ${totalCount} lançamentos`}</p></div>
     <div style={{display:"flex", gap:"10px"}}>
       <button className="secondary" disabled={exporting} onClick={() => exportFile("csv")}><Download size={17}/> CSV</button>
@@ -212,9 +338,8 @@ export function Transactions() {
     {showNew&&<TransactionForm onClose={()=>setShowNew(false)}/>}
     {editing&&<TransactionForm existing={editing} onClose={()=>setEditing(undefined)}/>}
     {notice&&<div className="notice notice-action"><span>{notice}</span>{undo&&<button className="text-button" onClick={undoLast}><Undo2 size={15}/> Desfazer</button>}</div>}
-    {hasReportFilters&&<div className="notice notice-action"><span>Filtros do relatório: <b>{filterSummary||"ativos"}</b></span>
-      <button className="text-button" onClick={clearReportFilters}><X size={15}/> Remover filtros</button></div>}
     <article className="panel"><div className="transactions-toolbar"><div className="toolbar"><Search size={18}/><input aria-label="Buscar transações" placeholder="Buscar por descrição…" value={search} onChange={e=>setSearch(e.target.value)}/></div>
+      <button className="secondary" onClick={()=>setAdvancedOpen(open=>!open)} aria-expanded={advancedOpen}><SlidersHorizontal size={15}/> Filtros</button>
       {selected.size>0&&<div className="bulk-actions"><b>{selected.size} selecionada{selected.size>1?"s":""}</b><CategorySelect
           value={bulkCategory}
           onChange={id => setBulkCategory(id ?? "")}
@@ -224,6 +349,53 @@ export function Transactions() {
         />
         <button className="secondary" onClick={applyBulkCategory}><Tags size={15}/> Categorizar</button>
         <button className="danger" onClick={()=>setConfirmDelete(true)}><Trash2 size={15}/> Excluir</button></div>}</div>
+      <div className="quick-filters" role="group" aria-label="Filtros rápidos">
+        {([
+          ["all","Todos"],["month","Este mês"],["uncategorized","Sem categoria"],
+          ["expense","Despesas"],["income","Receitas"],["pending","Pendentes"],
+        ] as [QuickFilter,string][]).map(([value,label])=>
+          <button key={value} className={quickActive===value?"active":""} onClick={()=>applyQuick(value)}>{label}</button>)}
+      </div>
+      {advancedOpen&&<div className="transaction-filter-panel">
+        <label><CalendarRange size={15}/> De<input type="month" value={startMonthFilter} onChange={e=>updateParams(next=>setOrDelete(next,"startMonth",e.target.value))}/></label>
+        <label>Até<input type="month" value={endMonthFilter} onChange={e=>updateParams(next=>setOrDelete(next,"endMonth",e.target.value))}/></label>
+        <label>Data inicial<input type="date" value={startDateFilter} onChange={e=>updateParams(next=>setOrDelete(next,"startDate",e.target.value))}/></label>
+        <label>Data final<input type="date" value={endDateFilter} onChange={e=>updateParams(next=>setOrDelete(next,"endDate",e.target.value))}/></label>
+        <label>Origem<select value={sourceFilter||"all"} onChange={e=>updateParams(next=>{
+          const value=e.target.value as ReportSource;
+          setOrDelete(next,"source",value==="all"?undefined:value);
+          next.delete("accountId");
+        })}>
+          <option value="all">Todas</option><option value="bank">Conta bancária</option><option value="credit_card">Cartão de crédito</option>
+        </select></label>
+        <label>Conta<select value={accountFilter} onChange={e=>updateParams(next=>setOrDelete(next,"accountId",e.target.value))}>
+          <option value="">Todas as contas</option>{sourceAccounts.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}
+        </select></label>
+        <label>Status<select value={statusFilter} onChange={e=>updateParams(next=>setOrDelete(next,"status",e.target.value))}>
+          <option value="">Todos</option><option value="cleared">Confirmadas</option><option value="pending">Pendentes</option>
+        </select></label>
+        <label>Tipo<select value={movementFilter} onChange={e=>updateParams(next=>setOrDelete(next,"movementType",e.target.value))}>
+          <option value="">Todos</option><option value="expense">Despesas</option><option value="income">Receitas</option>
+          <option value="transfer">Transferências</option><option value="investment">Investimentos</option>
+        </select></label>
+        <div className="filter-category-field">
+          <span>Categoria</span>
+          <CategorySelect value={categoryFilter} onChange={id=>updateParams(next=>{
+            setOrDelete(next,"category",id);
+            if(id)next.delete("uncategorized");
+          })} categories={categories} allowEmpty emptyLabel="Todas as categorias"/>
+        </div>
+        <label className="check-label filter-check"><input type="checkbox" checked={uncategorizedFilter} onChange={e=>updateParams(next=>{
+          if(e.target.checked){next.set("uncategorized","1");next.delete("category");}
+          else next.delete("uncategorized");
+        })}/> Sem categoria</label>
+        <label>Valor mínimo<MoneyInput key={`min-${minAmountFilter??0}`} defaultCents={minAmountFilter??0} onChange={cents=>updateParams(next=>setOrDelete(next,"minAmount",cents&&cents>0?String(cents):undefined))}/></label>
+        <label>Valor máximo<MoneyInput key={`max-${maxAmountFilter??0}`} defaultCents={maxAmountFilter??0} onChange={cents=>updateParams(next=>setOrDelete(next,"maxAmount",cents&&cents>0?String(cents):undefined))}/></label>
+      </div>}
+      {activeChips.length>0&&<div className="active-filter-chips"><Filter size={14}/>
+        {activeChips.map(chip=><button key={chip.key} className="filter-chip" onClick={()=>removeFilter(chip.key)}>{chip.label}<X size={12}/></button>)}
+        <button className="text-button" onClick={clearAllFilters}>Limpar filtros</button>
+      </div>}
       <div className="table-scroll"><table><thead><tr><th className="select-cell"><input type="checkbox" aria-label="Selecionar transações visíveis" checked={allVisibleSelected} onChange={toggleAll}/></th><th>Data</th><th>Descrição</th><th>Origem</th><th>Categoria</th><th>Status</th><th className="amount">Valor</th><th></th></tr></thead>
       <tbody>
         {rows.length === 0 && <tr><td colSpan={8} style={{textAlign:"center", padding:"60px 20px", color:"var(--text-soft)"}}>{isLoading?"Carregando transações…":"Nenhuma transação encontrada para este filtro."}</td></tr>}
