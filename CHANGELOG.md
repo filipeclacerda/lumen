@@ -5,6 +5,35 @@ Todas as mudanças relevantes deste projeto são documentadas neste arquivo.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o
 projeto adota o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.4.0] - 2026-07-08
+
+Foco em refinar a entrada de valores monetários e a navegação em telas densas,
+além de trazer filtros avançados para as transações.
+
+### Adicionado
+
+- **Filtros avançados nas transações**: período (data inicial/final), status e
+  tipo de movimento, além de faixa de valor absoluto (mínimo/máximo).
+- **Zoom em nível de app**, com atalhos para aumentar, diminuir e restaurar o
+  zoom, mantendo o layout do dashboard e dos relatórios ajustado às novas
+  escalas.
+
+### Alterado
+
+- Campos de valor monetário em Orçamento, Categorias/Regras, Onboarding,
+  Recorrências, Relatórios e Configurações passam a usar o componente
+  `MoneyInput`, com formatação e validação consistentes em todo o app.
+
+### Corrigido
+
+- Corrigida a grafia de "Lúmen" para "Lumen" em textos e strings do app.
+- Corrigido o `base path` do Vite para relativo, evitando problemas de
+  carregamento de assets na build instalada.
+
+### Projeto
+
+- Versão atualizada para `0.4.0`.
+
 ## [0.3.7] - 2026-07-08
 
 Patch para corrigir a inicialização da build instalada no Windows.
@@ -195,3 +224,4 @@ erros, com cadastro rápido de cartão sem sair do fluxo.
 [0.3.5]: https://github.com/filipeclacerda/lumen/compare/v0.3.4...v0.3.5
 [0.3.6]: https://github.com/filipeclacerda/lumen/compare/v0.3.5...v0.3.6
 [0.3.7]: https://github.com/filipeclacerda/lumen/compare/v0.3.6...v0.3.7
+[0.4.0]: https://github.com/filipeclacerda/lumen/compare/v0.3.7...v0.4.0
