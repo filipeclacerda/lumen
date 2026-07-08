@@ -3,5 +3,5 @@
   "identifier": "main-window",
   "description": "Permissões mínimas da janela principal",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-open", "dialog:allow-save", "process:allow-restart", "updater:default"]
+  "permissions": ["core:default", "core:window:allow-show", "core:window:allow-set-focus", "dialog:allow-open", "dialog:allow-save", "process:allow-restart", "updater:default"]
 }
