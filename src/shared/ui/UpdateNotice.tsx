@@ -15,23 +15,26 @@ export function UpdateNotice({ enabled }: { enabled: boolean }) {
   const [installState, setInstallState] = useState<InstallState>("idle");
   const [progress, setProgress] = useState(0);
 
-  const checkForUpdate = useCallback(async () => {
+  const checkForUpdate = useCallback(async (openModalOnFound: boolean) => {
     try {
       const update = await checkLumenUpdate();
       if (!update || isUpdateDismissed(update.latestVersion)) return;
       setAvailableUpdate(update);
+      if (openModalOnFound) setDetailsOpen(true);
     } catch {
       // Automatic checks stay quiet so startup never feels noisy.
     }
   }, []);
 
   useEffect(() => {
-    if (enabled) void checkForUpdate();
-  }, [checkForUpdate, enabled]);
+    if (enabled) void checkForUpdate(true);
+    // Runs once right after startup so the update modal can greet the user immediately.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled]);
 
   useEffect(() => {
     if (!enabled) return;
-    const onRefresh = () => void checkForUpdate();
+    const onRefresh = () => void checkForUpdate(false);
     window.addEventListener(forceUpdateCheckEvent, onRefresh);
     return () => window.removeEventListener(forceUpdateCheckEvent, onRefresh);
   }, [checkForUpdate, enabled]);

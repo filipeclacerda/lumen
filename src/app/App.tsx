@@ -15,6 +15,7 @@ import { RecurringTransactions } from "../features/recurring/RecurringTransactio
 import { BudgetPage } from "../features/budget/BudgetPage";
 import { api } from "../shared/api";
 import { UpdateNotice } from "../shared/ui/UpdateNotice";
+import { APP_VERSION } from "../shared/version";
 import { CommandPalette } from "../shared/ui/CommandPalette";
 
 const nav = [
@@ -73,6 +74,7 @@ export function App() {
           {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}<span>{theme === "dark" ? "Tema claro" : "Tema escuro"}</span>
         </button>
         <div className="privacy">🔒 Seus dados ficam neste computador</div>
+        <div className="app-version">Lumen v{APP_VERSION}</div>
       </div>
     </aside>
     <main><UpdateNotice enabled={bootstrap.onboardingCompleted} /><CommandPalette /><Routes>
