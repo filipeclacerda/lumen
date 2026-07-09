@@ -5,6 +5,28 @@ Todas as mudanças relevantes deste projeto são documentadas neste arquivo.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o
 projeto adota o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.4.1] - 2026-07-08
+
+Patch com ajustes de interface: navbar fixa ao tamanho da janela em qualquer
+nível de zoom e verificação de atualização mais visível.
+
+### Adicionado
+
+- **Aviso de atualização na abertura**: ao iniciar o app, se houver uma nova
+  versão disponível, um modal é exibido automaticamente informando a versão
+  atual e a versão disponível para instalação.
+- **Versão do app na barra lateral**: número da versão instalada exibido no
+  rodapé da sidebar.
+
+### Corrigido
+
+- Corrigida a altura da barra lateral (navbar), que ficava cortada ou distante
+  do fim da janela ao aumentar ou diminuir o zoom do app.
+
+### Projeto
+
+- Versão atualizada para `0.4.1`.
+
 ## [0.4.0] - 2026-07-08
 
 Foco em refinar a entrada de valores monetários e a navegação em telas densas,
