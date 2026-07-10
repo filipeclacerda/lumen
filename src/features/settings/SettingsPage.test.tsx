@@ -23,6 +23,7 @@ vi.mock("../../shared/api", () => ({
 }));
 vi.mock("../../shared/ui/toast", () => ({ useToast: () => mocks.toast }));
 vi.mock("../../shared/updater", () => ({
+  isTauriRuntime: () => true,
   canCheckForUpdates: () => false,
   checkLumenUpdate: vi.fn(),
   clearDismissedUpdate: vi.fn(),

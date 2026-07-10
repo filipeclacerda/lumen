@@ -1,5 +1,5 @@
 use chrono::NaiveDate;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 use std::{collections::HashSet, path::PathBuf};
 use tauri::State;
@@ -34,7 +34,7 @@ pub struct CreditCardImportPreview {
     items: Vec<CreditCardImportItem>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreditCardInvoice {
     id: String,
@@ -48,6 +48,20 @@ pub struct CreditCardInvoice {
     payment_transaction_id: Option<String>,
     payment_description: Option<String>,
     payment_date: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreditCardInvoicePageFilter {
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreditCardInvoicePage {
+    items: Vec<CreditCardInvoice>,
+    total_count: i64,
 }
 
 #[derive(Serialize)]
@@ -453,6 +467,47 @@ pub async fn list_credit_card_invoices(
             payment_date: r.get("payment_date"),
         })
         .collect())
+}
+
+#[tauri::command]
+pub async fn list_credit_card_invoices_page(
+    filter: CreditCardInvoicePageFilter,
+    state: State<'_, AppState>,
+) -> Result<CreditCardInvoicePage, AppError> {
+    let total_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM credit_card_invoices WHERE deleted_at IS NULL")
+            .fetch_one(&state.db)
+            .await?;
+    let limit = filter.limit.unwrap_or(10).clamp(1, 1000);
+    let offset = filter.offset.unwrap_or(0).max(0);
+    let rows = sqlx::query(
+        "SELECT i.id,i.account_id,a.name account_name,i.due_date,i.purchases_cents,i.credits_cents,
+         i.total_cents,i.status,i.payment_transaction_id,t.description payment_description,t.date payment_date
+         FROM credit_card_invoices i JOIN accounts a ON a.id=i.account_id
+         LEFT JOIN transactions t ON t.id=i.payment_transaction_id
+         WHERE i.deleted_at IS NULL ORDER BY i.due_date DESC,i.id DESC LIMIT ? OFFSET ?",
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&state.db)
+    .await?;
+    let items = rows
+        .into_iter()
+        .map(|r| CreditCardInvoice {
+            id: r.get("id"),
+            account_id: r.get("account_id"),
+            account_name: r.get("account_name"),
+            due_date: r.get("due_date"),
+            purchases_in_cents: r.get("purchases_cents"),
+            credits_in_cents: r.get("credits_cents"),
+            total_in_cents: r.get("total_cents"),
+            status: r.get("status"),
+            payment_transaction_id: r.get("payment_transaction_id"),
+            payment_description: r.get("payment_description"),
+            payment_date: r.get("payment_date"),
+        })
+        .collect();
+    Ok(CreditCardInvoicePage { items, total_count })
 }
 
 #[tauri::command]

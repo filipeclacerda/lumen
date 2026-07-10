@@ -20,6 +20,8 @@ import { currentMonth as curMonth, shiftMonth } from "../../shared/period";
 import { CategoryIcon, CategorySelect } from "../../shared/ui/CategorySelect";
 import { MoneyInput } from "../../shared/ui/MoneyInput";
 import { ErrorState, LoadingState } from "../../shared/ui/AsyncState";
+import { Pagination, type PaginationSize } from "../../shared/ui/Pagination";
+import { Select } from "../../shared/ui/Select";
 
 const emptyRule: RuleInput = {
   name: "",
@@ -49,6 +51,8 @@ export function CategoriesRules() {
   } = useQuery({ queryKey: ["rules"], queryFn: api.rules });
   const { data: accounts = [] } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
   const [tab, setTab] = useState<"rules" | "categories" | "merchants">("rules");
+  const [rulesPage, setRulesPage] = useState(0);
+  const [rulesPageSize, setRulesPageSize] = useState<PaginationSize>(10);
   const [rule, setRule] = useState<RuleInput>(emptyRule);
   const [ruleInputVersion, setRuleInputVersion] = useState(0);
   const [impact, setImpact] = useState<RuleImpact>();
@@ -63,6 +67,11 @@ export function CategoriesRules() {
     sortOrder: number;
   }>({ name: "", kind: "expense", color: "#497ca5", sortOrder: 0 });
   const categoryMap = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
+  const visibleRules = rules.slice(rulesPage * rulesPageSize, (rulesPage + 1) * rulesPageSize);
+
+  useEffect(() => {
+    setRulesPage((page) => Math.min(page, Math.max(0, Math.ceil(rules.length / rulesPageSize) - 1)));
+  }, [rules.length, rulesPageSize]);
 
   // Herdar kind/color do pai quando parentId muda
   useEffect(() => {
@@ -256,26 +265,28 @@ export function CategoriesRules() {
             <div className="form-row">
               <label>
                 Correspondência
-                <select
+                <Select
                   value={rule.operator}
-                  onChange={(e) => setRule({ ...rule, operator: e.target.value as RuleOperator })}
-                >
-                  <option value="contains">Descrição contém</option>
-                  <option value="starts_with">Descrição começa com</option>
-                  <option value="regex">Expressão regular</option>
-                </select>
+                  onChange={(value) => setRule({ ...rule, operator: value as RuleOperator })}
+                  options={[
+                    { value: "contains", label: "Descrição contém" },
+                    { value: "starts_with", label: "Descrição começa com" },
+                    { value: "regex", label: "Expressão regular" },
+                  ]}
+                />
               </label>
               <label>
                 Movimento
-                <select
+                <Select
                   value={rule.movementType}
-                  onChange={(e) => setRule({ ...rule, movementType: e.target.value as MovementType })}
-                >
-                  <option value="any">Qualquer</option>
-                  <option value="expense">Despesa</option>
-                  <option value="income">Receita</option>
-                  <option value="transfer">Transferência</option>
-                </select>
+                  onChange={(value) => setRule({ ...rule, movementType: value as MovementType })}
+                  options={[
+                    { value: "any", label: "Qualquer" },
+                    { value: "expense", label: "Despesa" },
+                    { value: "income", label: "Receita" },
+                    { value: "transfer", label: "Transferência" },
+                  ]}
+                />
               </label>
             </div>
             <label>
@@ -318,17 +329,14 @@ export function CategoriesRules() {
               })()}
             <label>
               Conta
-              <select
+              <Select
                 value={rule.accountId ?? ""}
-                onChange={(e) => setRule({ ...rule, accountId: e.target.value || undefined })}
-              >
-                <option value="">Todas as contas</option>
-                {accounts.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
+                onChange={(value) => setRule({ ...rule, accountId: value || undefined })}
+                options={[
+                  { value: "", label: "Todas as contas" },
+                  ...accounts.map((account) => ({ value: account.id, label: account.name })),
+                ]}
+              />
             </label>
             <div className="form-row">
               <label>
@@ -386,48 +394,72 @@ export function CategoriesRules() {
               <span>A primeira correspondência vence</span>
             </div>
             <div className="rule-list">
-              {rules.map((r, index) => (
-                <div className={`rule-item rule-priority-item ${!r.enabled ? "disabled" : ""}`} key={r.id}>
-                  <span
-                    className="category-swatch"
-                    style={{ background: categoryMap.get(r.categoryId)?.color ?? "#789" }}
-                  />
-                  <div onClick={() => editRule(r)} role="button" tabIndex={0}>
-                    <b>{r.name}</b>
-                    <small>
-                      {operatorLabel(r.operator)} “{r.pattern}” · {r.categoryName}
-                    </small>
+              {visibleRules.map((r, pageIndex) => {
+                const index = rulesPage * rulesPageSize + pageIndex;
+                return (
+                  <div className={`rule-item rule-priority-item ${!r.enabled ? "disabled" : ""}`} key={r.id}>
+                    <span
+                      className="category-swatch"
+                      style={{ background: categoryMap.get(r.categoryId)?.color ?? "#789" }}
+                    />
+                    <div
+                      onClick={() => editRule(r)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          editRule(r);
+                        }
+                      }}
+                      role="button"
+                      tabIndex={0}
+                    >
+                      <b>{r.name}</b>
+                      <small>
+                        {operatorLabel(r.operator)} “{r.pattern}” · {r.categoryName}
+                      </small>
+                    </div>
+                    <span className="uses">{r.useCount} usos</span>
+                    <button
+                      className="icon-button rule-order-button"
+                      title="Subir"
+                      aria-label={`Subir ${r.name}`}
+                      disabled={index === 0}
+                      onClick={() => moveRule(index, -1)}
+                    >
+                      <ArrowUp size={14} />
+                    </button>
+                    <button
+                      className="icon-button rule-order-button"
+                      title="Descer"
+                      aria-label={`Descer ${r.name}`}
+                      disabled={index === rules.length - 1}
+                      onClick={() => moveRule(index, 1)}
+                    >
+                      <ArrowDown size={14} />
+                    </button>
+                    <button
+                      className="icon-button rule-archive-button"
+                      title="Arquivar"
+                      aria-label={`Arquivar ${r.name}`}
+                      onClick={() => archiveRule(r.id)}
+                    >
+                      <Archive size={14} />
+                    </button>
                   </div>
-                  <span className="uses">{r.useCount} usos</span>
-                  <button
-                    className="icon-button rule-order-button"
-                    title="Subir"
-                    aria-label={`Subir ${r.name}`}
-                    disabled={index === 0}
-                    onClick={() => moveRule(index, -1)}
-                  >
-                    <ArrowUp size={14} />
-                  </button>
-                  <button
-                    className="icon-button rule-order-button"
-                    title="Descer"
-                    aria-label={`Descer ${r.name}`}
-                    disabled={index === rules.length - 1}
-                    onClick={() => moveRule(index, 1)}
-                  >
-                    <ArrowDown size={14} />
-                  </button>
-                  <button
-                    className="icon-button rule-archive-button"
-                    title="Arquivar"
-                    aria-label={`Arquivar ${r.name}`}
-                    onClick={() => archiveRule(r.id)}
-                  >
-                    <Archive size={14} />
-                  </button>
-                </div>
-              ))}
+                );
+              })}
             </div>
+            <Pagination
+              page={rulesPage}
+              pageSize={rulesPageSize}
+              totalCount={rules.length}
+              onPageChange={setRulesPage}
+              onPageSizeChange={(size) => {
+                setRulesPageSize(size);
+                setRulesPage(0);
+              }}
+              itemLabel="regras"
+            />
           </article>
         </div>
       )}
@@ -455,31 +487,29 @@ export function CategoriesRules() {
             </label>
             <label>
               Tipo
-              <select
+              <Select
                 value={categoryDraft.kind}
-                onChange={(e) => setCategoryDraft({ ...categoryDraft, kind: e.target.value as CategoryKind })}
-              >
-                <option value="expense">Despesa</option>
-                <option value="income">Receita</option>
-                <option value="transfer">Transferência</option>
-                <option value="investment">Investimento</option>
-              </select>
+                onChange={(value) => setCategoryDraft({ ...categoryDraft, kind: value as CategoryKind })}
+                options={[
+                  { value: "expense", label: "Despesa" },
+                  { value: "income", label: "Receita" },
+                  { value: "transfer", label: "Transferência" },
+                  { value: "investment", label: "Investimento" },
+                ]}
+              />
             </label>
             <label>
               Categoria superior
-              <select
+              <Select
                 value={categoryDraft.parentId ?? ""}
-                onChange={(e) => setCategoryDraft({ ...categoryDraft, parentId: e.target.value || undefined })}
-              >
-                <option value="">Nenhuma</option>
-                {categories
-                  .filter((c) => c.id !== categoryDraft.id)
-                  .map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-              </select>
+                onChange={(value) => setCategoryDraft({ ...categoryDraft, parentId: value || undefined })}
+                options={[
+                  { value: "", label: "Nenhuma" },
+                  ...categories
+                    .filter((category) => category.id !== categoryDraft.id)
+                    .map((category) => ({ value: category.id, label: category.name })),
+                ]}
+              />
             </label>
             <label>
               Ordem
@@ -599,19 +629,21 @@ function MerchantsTab() {
   const client = useQueryClient();
   const startMonth = shiftMonth(curMonth(), -11);
   const filter = { startMonth, endMonth: curMonth(), source: "all" as const, accountId: undefined };
-  const { data: report } = useQuery({
-    queryKey: ["financial-report", filter],
-    queryFn: () => api.financialReport(filter),
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<PaginationSize>(10);
+  const { data } = useQuery({
+    queryKey: ["merchants", filter, page, pageSize],
+    queryFn: () => api.listMerchantsPage({ ...filter, limit: pageSize, offset: page * pageSize }),
   });
   const [editingKey, setEditingKey] = useState<string>();
   const [draftName, setDraftName] = useState("");
-  const merchants = report?.merchants ?? [];
+  const merchants = data?.items ?? [];
 
   async function save(key: string) {
     if (!draftName.trim()) return;
     await api.saveMerchantAlias(key, draftName.trim());
     setEditingKey(undefined);
-    await client.invalidateQueries({ queryKey: ["financial-report"] });
+    await client.invalidateQueries({ queryKey: ["merchants"] });
   }
 
   return (
@@ -663,6 +695,17 @@ function MerchantsTab() {
             </div>
           ))}
         </div>
+        <Pagination
+          page={page}
+          pageSize={pageSize}
+          totalCount={data?.totalCount ?? 0}
+          onPageChange={setPage}
+          onPageSizeChange={(size) => {
+            setPageSize(size);
+            setPage(0);
+          }}
+          itemLabel="estabelecimentos"
+        />
       </article>
     </div>
   );
@@ -725,7 +768,7 @@ function CategoryTreeNode({
         <span className="tree-bar" style={{ background: barColor, left: -10 - (depth - 1) * 16 }} aria-hidden />
       )}
       <div className="category-row tree-row">
-        <span className="category-drag-handle" aria-label="Arraste para reordenar" title="Arraste para reordenar">
+        <span className="category-drag-handle" aria-hidden title="Arraste para reordenar">
           ⋮⋮
         </span>
         <span className="category-swatch" style={{ background: category.color ?? "#789" }} />
@@ -762,7 +805,12 @@ function CategoryTreeNode({
           >
             <ArrowDown size={14} />
           </button>
-          <button className="icon-button category-action-button" title="Editar" onClick={onEdit} aria-label={`Editar ${category.name}`}>
+          <button
+            className="icon-button category-action-button"
+            title="Editar"
+            onClick={onEdit}
+            aria-label={`Editar ${category.name}`}
+          >
             Editar
           </button>
           <button

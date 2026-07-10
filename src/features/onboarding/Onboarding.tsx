@@ -3,6 +3,8 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../shared/api";
 import { MoneyInput } from "../../shared/ui/MoneyInput";
+import { Modal } from "../../shared/ui/Modal";
+import { Select } from "../../shared/ui/Select";
 import type { AccountType, AppBootstrap, Category, CategoryKind, FinancialGoal } from "../../shared/types";
 import { ErrorState, LoadingState } from "../../shared/ui/AsyncState";
 
@@ -43,6 +45,18 @@ export function Onboarding({
   } = useQuery<Category[]>({ queryKey: ["categories"], queryFn: api.categories });
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newCategoryKind, setNewCategoryKind] = useState<CategoryKind>("expense");
+  const [categoryToArchive, setCategoryToArchive] = useState<Category>();
+
+  async function archiveCategory() {
+    if (!categoryToArchive) return;
+    try {
+      await api.archiveCategory(categoryToArchive.id);
+      await queryClient.invalidateQueries({ queryKey: ["categories"] });
+      setCategoryToArchive(undefined);
+    } catch (e) {
+      setError(typeof e === "object" && e && "message" in e ? String((e as { message: unknown }).message) : String(e));
+    }
+  }
 
   function nextProfile() {
     if (name.trim().length < 2) {
@@ -187,17 +201,11 @@ export function Onboarding({
             </div>
             <label>
               Objetivo principal{" "}
-              <select
+              <Select
                 value={goal ?? ""}
-                onChange={(e) => setGoal((e.target.value || undefined) as FinancialGoal | undefined)}
-              >
-                <option value="">Escolha depois</option>
-                {goals.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
+                onChange={(value) => setGoal((value || undefined) as FinancialGoal | undefined)}
+                options={[{ value: "", label: "Escolha depois" }, ...goals]}
+              />
             </label>
             {error && <p className="form-error">{error}</p>}
             <div className="onboarding-actions">
@@ -233,14 +241,15 @@ export function Onboarding({
             </label>
             <label>
               Tipo de conta{" "}
-              <select
+              <Select
                 value={accountKind}
-                onChange={(e) => setAccountKind(e.target.value as Exclude<AccountType, "credit_card">)}
-              >
-                <option value="checking">Conta corrente</option>
-                <option value="savings">Poupança</option>
-                <option value="cash">Dinheiro</option>
-              </select>
+                onChange={(value) => setAccountKind(value as Exclude<AccountType, "credit_card">)}
+                options={[
+                  { value: "checking", label: "Conta corrente" },
+                  { value: "savings", label: "Poupança" },
+                  { value: "cash", label: "Dinheiro" },
+                ]}
+              />
             </label>
             {!bootstrap.hasTransactions && (
               <label>
@@ -291,16 +300,14 @@ export function Onboarding({
                           style={{ display: "flex", alignItems: "center", gap: "4px" }}
                         >
                           {c.name}
-                          <X
-                            size={13}
-                            style={{ cursor: "pointer", opacity: 0.7 }}
-                            onClick={async () => {
-                              if (confirm(`Remover categoria ${c.name}?`)) {
-                                await api.archiveCategory(c.id);
-                                queryClient.invalidateQueries({ queryKey: ["categories"] });
-                              }
-                            }}
-                          />
+                          <button
+                            type="button"
+                            className="icon-button"
+                            aria-label={`Remover categoria ${c.name}`}
+                            onClick={() => setCategoryToArchive(c)}
+                          >
+                            <X size={13} />
+                          </button>
                         </span>
                       ))}
                     </div>
@@ -326,16 +333,17 @@ export function Onboarding({
                   }}
                 />
               </label>
-              <select
+              <Select
                 value={newCategoryKind}
-                onChange={(e) => setNewCategoryKind(e.target.value as CategoryKind)}
-                aria-label="Tipo da nova categoria"
-              >
-                <option value="expense">Despesa</option>
-                <option value="income">Receita</option>
-                <option value="investment">Investimento</option>
-                <option value="transfer">Transferência</option>
-              </select>
+                onChange={(value) => setNewCategoryKind(value as CategoryKind)}
+                ariaLabel="Tipo da nova categoria"
+                options={[
+                  { value: "expense", label: "Despesa" },
+                  { value: "income", label: "Receita" },
+                  { value: "investment", label: "Investimento" },
+                  { value: "transfer", label: "Transferência" },
+                ]}
+              />
               <button
                 className="secondary"
                 onClick={async () => {
@@ -360,6 +368,24 @@ export function Onboarding({
           </div>
         )}
       </div>
+      {categoryToArchive && (
+        <Modal title="Remover categoria?" onClose={() => setCategoryToArchive(undefined)}>
+          <div className="modal-form">
+            <p className="muted">
+              A categoria “{categoryToArchive.name}” deixará de aparecer nas novas classificações. Esta ação pode ser
+              desfeita nas configurações de categorias.
+            </p>
+            <div className="editor-actions">
+              <button className="secondary" onClick={() => setCategoryToArchive(undefined)}>
+                Cancelar
+              </button>
+              <button className="danger" onClick={archiveCategory}>
+                Remover categoria
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

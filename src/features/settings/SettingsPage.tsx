@@ -19,10 +19,12 @@ import {
   canCheckForUpdates,
   checkLumenUpdate,
   clearDismissedUpdate,
+  isTauriRuntime,
   requestUpdateNoticeRefresh,
 } from "../../shared/updater";
 import { Modal } from "../../shared/ui/Modal";
 import { MoneyInput } from "../../shared/ui/MoneyInput";
+import { Select } from "../../shared/ui/Select";
 import { useToast } from "../../shared/ui/toast";
 import type { FinancialGoal } from "../../shared/types";
 import { ErrorState, LoadingState } from "../../shared/ui/AsyncState";
@@ -61,6 +63,7 @@ export function SettingsPage() {
   const [restoreConfirmText, setRestoreConfirmText] = useState("");
   const [restoring, setRestoring] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const desktopRuntime = isTauriRuntime();
   const updatesEnabled = canCheckForUpdates();
   useEffect(() => {
     if (profile) {
@@ -240,17 +243,14 @@ export function SettingsPage() {
           </div>
           <label>
             Objetivo principal
-            <select
+            <Select
               value={goal ?? ""}
-              onChange={(e) => setGoal((e.target.value || undefined) as FinancialGoal | undefined)}
-            >
-              <option value="">Não definido</option>
-              {Object.entries(goalLabels).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
+              onChange={(value) => setGoal((value || undefined) as FinancialGoal | undefined)}
+              options={[
+                { value: "", label: "Não definido" },
+                ...Object.entries(goalLabels).map(([value, label]) => ({ value, label })),
+              ]}
+            />
           </label>
           <button onClick={saveProfile} disabled={saving}>
             <Save size={16} /> {saving ? "Salvando…" : "Salvar alterações"}
@@ -264,30 +264,44 @@ export function SettingsPage() {
           </div>
         </article>
       </div>
-      <article className="panel" style={{ marginTop: 18 }}>
-        <div className="panel-title">
-          <h2>
-            <Database size={17} /> Dados e backup
-          </h2>
-        </div>
-        <p className="muted">
-          Exporte suas transações ou guarde uma cópia completa dos seus dados. Recomendado antes de grandes mudanças.
-        </p>
-        <div className="data-actions">
-          <button className="secondary" onClick={exportCsv}>
-            <Download size={15} /> Exportar transações (CSV)
-          </button>
-          <button className="secondary" onClick={backup} disabled={restoring || resetting}>
-            <Database size={15} /> Fazer backup completo
-          </button>
-          <button className="secondary" onClick={restore} disabled={restoring || resetting}>
-            <RotateCcw size={15} /> Restaurar backup
-          </button>
-        </div>
-        <p className="muted" style={{ fontSize: 12, marginTop: 12 }}>
-          A restauração substitui todos os dados atuais e é aplicada ao reiniciar o aplicativo.
-        </p>
-      </article>
+      {desktopRuntime ? (
+        <article className="panel" style={{ marginTop: 18 }}>
+          <div className="panel-title">
+            <h2>
+              <Database size={17} /> Dados e backup
+            </h2>
+          </div>
+          <p className="muted">
+            Exporte suas transações ou guarde uma cópia completa dos seus dados. Recomendado antes de grandes mudanças.
+          </p>
+          <div className="data-actions">
+            <button className="secondary" onClick={exportCsv}>
+              <Download size={15} /> Exportar transações (CSV)
+            </button>
+            <button className="secondary" onClick={backup} disabled={restoring || resetting}>
+              <Database size={15} /> Fazer backup completo
+            </button>
+            <button className="secondary" onClick={restore} disabled={restoring || resetting}>
+              <RotateCcw size={15} /> Restaurar backup
+            </button>
+          </div>
+          <p className="muted" style={{ fontSize: 12, marginTop: 12 }}>
+            A restauração substitui todos os dados atuais e é aplicada ao reiniciar o aplicativo.
+          </p>
+        </article>
+      ) : (
+        <article className="panel" style={{ marginTop: 18 }}>
+          <div className="panel-title">
+            <h2>
+              <Database size={17} /> Dados e backup
+            </h2>
+          </div>
+          <p className="muted">
+            Exportação, backup, restauração e reset usam os recursos locais do aplicativo desktop. Abra o Lumen
+            instalado para gerenciar arquivos e dados deste dispositivo.
+          </p>
+        </article>
+      )}
       {updatesEnabled && (
         <article className="panel" style={{ marginTop: 18 }}>
           <div className="panel-title">
@@ -306,21 +320,23 @@ export function SettingsPage() {
           </div>
         </article>
       )}
-      <article className="panel danger-zone" style={{ marginTop: 18 }}>
-        <div className="panel-title">
-          <h2>
-            <AlertTriangle size={17} /> Zona de risco
-          </h2>
-        </div>
-        <p className="muted">
-          Apaga permanentemente contas, transações, categorias, regras, metas, recorrências e faturas de cartão — o
-          Lumen reinicia sozinho e volta ao estado de instalação nova. Faça um backup antes, se precisar dos dados
-          depois.
-        </p>
-        <button className="danger" onClick={() => setResetOpen(true)} disabled={restoring || resetting}>
-          <Trash2 size={15} /> Resetar dados do aplicativo
-        </button>
-      </article>
+      {desktopRuntime && (
+        <article className="panel danger-zone" style={{ marginTop: 18 }}>
+          <div className="panel-title">
+            <h2>
+              <AlertTriangle size={17} /> Zona de risco
+            </h2>
+          </div>
+          <p className="muted">
+            Apaga permanentemente contas, transações, categorias, regras, metas, recorrências e faturas de cartão — o
+            Lumen reinicia sozinho e volta ao estado de instalação nova. Faça um backup antes, se precisar dos dados
+            depois.
+          </p>
+          <button className="danger" onClick={() => setResetOpen(true)} disabled={restoring || resetting}>
+            <Trash2 size={15} /> Resetar dados do aplicativo
+          </button>
+        </article>
+      )}
       {restoreOpen && (
         <Modal title="Restaurar backup e substituir dados?" onClose={closeRestore}>
           <div className="modal-form">

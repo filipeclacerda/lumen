@@ -11,6 +11,7 @@ import type {
   CommitImportResult,
   CreditCardImportPreview,
   CreditCardInvoice,
+  CreditCardInvoicePage,
   CreditCardInvoiceItem,
   CsvMappingDraft,
   CsvMappingProfile,
@@ -21,6 +22,8 @@ import type {
   ImportFileInspection,
   ImportPreview,
   MerchantAlias,
+  MerchantPage,
+  MerchantPageFilter,
   NetWorthPoint,
   OnboardingInput,
   OnboardingResult,
@@ -212,6 +215,29 @@ const demoRules: CategorizationRule[] = [
   },
 ];
 
+function paginateDemo<T>(items: T[], limit = 25, offset = 0) {
+  const safeLimit = Math.max(1, limit);
+  const safeOffset = Math.max(0, offset);
+  return { items: items.slice(safeOffset, safeOffset + safeLimit), totalCount: items.length };
+}
+
+const demoMerchants: MerchantPage["items"] = Object.values(
+  demoTransactions.reduce<Record<string, MerchantPage["items"][number]>>((groups, transaction) => {
+    if (transaction.amountInCents >= 0) return groups;
+    const key = transaction.description.toUpperCase();
+    const current = groups[key] ?? {
+      merchant: transaction.description,
+      merchantKey: key,
+      amountInCents: 0,
+      transactionCount: 0,
+    };
+    current.amountInCents += Math.abs(transaction.amountInCents);
+    current.transactionCount += 1;
+    groups[key] = current;
+    return groups;
+  }, {}),
+).sort((a, b) => b.amountInCents - a.amountInCents || a.merchant.localeCompare(b.merchant));
+
 const isTauri = () => "__TAURI_INTERNALS__" in window;
 const demoProfile = (): UserProfile | undefined => {
   const stored = localStorage.getItem("financa-demo-profile");
@@ -283,7 +309,7 @@ export const api = {
         (!filter.minAbsAmountInCents || Math.abs(t.amountInCents) >= filter.minAbsAmountInCents) &&
         (!filter.maxAbsAmountInCents || Math.abs(t.amountInCents) <= filter.maxAbsAmountInCents),
     );
-    return { items, totalCount: items.length };
+    return paginateDemo(items, filter.limit, filter.offset);
   },
   summary: async (month?: string): Promise<DashboardSummary> =>
     isTauri()
@@ -303,6 +329,10 @@ export const api = {
   saveCategory: (input: Partial<Category>): Promise<string> => invoke("save_category", { input }),
   archiveCategory: (id: string): Promise<void> => invoke("archive_category", { id }),
   rules: async (): Promise<CategorizationRule[]> => (isTauri() ? invoke("list_rules") : demoRules),
+  listMerchantsPage: async (filter: MerchantPageFilter): Promise<MerchantPage> => {
+    if (isTauri()) return invoke("list_merchants_page", { filter });
+    return paginateDemo(demoMerchants, filter.limit, filter.offset);
+  },
   saveRule: (input: RuleInput): Promise<string> => invoke("save_rule", { input }),
   archiveRule: (id: string): Promise<void> => invoke("archive_rule", { id }),
   reorderRules: (ids: string[]): Promise<void> => invoke("reorder_rules", { ids }),
@@ -387,6 +417,10 @@ export const api = {
     }),
   commitCreditCardImport: (sessionId: string): Promise<string> => invoke("commit_credit_card_import", { sessionId }),
   creditCardInvoices: async (): Promise<CreditCardInvoice[]> => (isTauri() ? invoke("list_credit_card_invoices") : []),
+  creditCardInvoicesPage: async (filter: { limit?: number; offset?: number }): Promise<CreditCardInvoicePage> => {
+    if (isTauri()) return invoke("list_credit_card_invoices_page", { filter });
+    return paginateDemo([], filter.limit, filter.offset);
+  },
   creditCardInvoiceItems: (invoiceId: string): Promise<CreditCardInvoiceItem[]> =>
     invoke("get_credit_card_invoice_items", { invoiceId }),
   invoicePaymentMatches: (invoiceId: string): Promise<PaymentMatchCandidate[]> =>

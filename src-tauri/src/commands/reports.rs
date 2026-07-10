@@ -81,6 +81,24 @@ pub struct MerchantReport {
     transaction_count: i64,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MerchantPageFilter {
+    start_month: String,
+    end_month: String,
+    source: String,
+    account_id: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MerchantPage {
+    items: Vec<MerchantReport>,
+    total_count: i64,
+}
+
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct DailyReportPoint {
@@ -527,6 +545,104 @@ pub async fn generate_financial_report(
     state: State<'_, AppState>,
 ) -> Result<FinancialReport, AppError> {
     generate_financial_report_impl(filter, &state.db).await
+}
+
+#[tauri::command]
+pub async fn list_merchants_page(
+    filter: MerchantPageFilter,
+    state: State<'_, AppState>,
+) -> Result<MerchantPage, AppError> {
+    if !["all", "bank", "credit_card"].contains(&filter.source.as_str()) {
+        return Err(AppError::Validation("Origem de relatório inválida".into()));
+    }
+    month_range(&filter.start_month, &filter.end_month)?;
+    if let Some(account_id) = &filter.account_id {
+        let exists: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE id=? AND deleted_at IS NULL")
+                .bind(account_id)
+                .fetch_one(&state.db)
+                .await?;
+        if exists == 0 {
+            return Err(AppError::Validation("Conta não encontrada".into()));
+        }
+    }
+
+    let rows = sqlx::query(
+        "SELECT t.date, strftime('%Y-%m',t.date) month, t.merchant_key,
+         COALESCE(ma.display_name, t.merchant_key, t.description) merchant_label, t.amount_cents,
+         a.kind account_kind, t.category_id, c.name category_name, c.color category_color, c.kind category_kind
+         FROM transactions t JOIN accounts a ON a.id=t.account_id
+         LEFT JOIN categories c ON c.id=t.category_id
+         LEFT JOIN merchant_aliases ma ON ma.merchant_key=t.merchant_key
+         WHERE t.deleted_at IS NULL AND a.deleted_at IS NULL
+         AND strftime('%Y-%m',t.date)>=? AND strftime('%Y-%m',t.date)<=?
+         AND (?='all' OR (?='bank' AND a.kind!='credit_card') OR (?='credit_card' AND a.kind='credit_card'))
+         AND (? IS NULL OR t.account_id=?)",
+    )
+    .bind(&filter.start_month)
+    .bind(&filter.end_month)
+    .bind(&filter.source)
+    .bind(&filter.source)
+    .bind(&filter.source)
+    .bind(&filter.account_id)
+    .bind(&filter.account_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let mut merchant_map: HashMap<String, (String, Option<String>, i64, i64)> = HashMap::new();
+    for row in rows {
+        let report_row = ReportRow {
+            date: row.get("date"),
+            month: row.get("month"),
+            merchant_key: row.get("merchant_key"),
+            merchant_label: row.get("merchant_label"),
+            amount: row.get("amount_cents"),
+            account_kind: row.get("account_kind"),
+            category_id: row.get("category_id"),
+            category_name: row.get("category_name"),
+            category_color: row.get("category_color"),
+            category_kind: row.get("category_kind"),
+        };
+        let expense = expense_value(&report_row);
+        if expense <= 0 {
+            continue;
+        }
+        let key = report_row
+            .merchant_key
+            .clone()
+            .unwrap_or_else(|| report_row.merchant_label.clone());
+        let merchant = merchant_map.entry(key).or_insert((
+            report_row.merchant_label.clone(),
+            report_row.merchant_key.clone(),
+            0,
+            0,
+        ));
+        merchant.2 += expense;
+        merchant.3 += 1;
+    }
+
+    let mut merchants: Vec<MerchantReport> = merchant_map
+        .into_values()
+        .map(
+            |(merchant, merchant_key, amount_in_cents, transaction_count)| MerchantReport {
+                merchant,
+                merchant_key,
+                amount_in_cents,
+                transaction_count,
+            },
+        )
+        .collect();
+    merchants.sort_by(|left, right| {
+        right
+            .amount_in_cents
+            .cmp(&left.amount_in_cents)
+            .then_with(|| left.merchant.cmp(&right.merchant))
+    });
+    let total_count = merchants.len() as i64;
+    let limit = filter.limit.unwrap_or(10).clamp(1, 1000) as usize;
+    let offset = filter.offset.unwrap_or(0).max(0) as usize;
+    let items = merchants.into_iter().skip(offset).take(limit).collect();
+    Ok(MerchantPage { items, total_count })
 }
 
 async fn generate_financial_report_impl(

@@ -89,6 +89,52 @@ O build desktop é `npm run tauri -- build`.
 - Backup/restore possui testes automatizados de WAL, migrations, schema, rollback e estados interrompidos no Windows, mas releases ainda devem incluir um teste manual no aplicativo Tauri empacotado.
 - `node_modules/`, `dist/`, `src-tauri/target/` e `*.tsbuildinfo` são artefatos; não os adicione ao Git nem deixe alterações geradas no diff.
 
+## Design system e interface
+
+O Lumen usa uma linguagem visual sóbria, clara e acolhedora, adequada a um produto financeiro privado: superfícies neutras, verde como cor de marca, hierarquia tipográfica direta e densidade moderada. A interface deve transmitir segurança sem parecer bancária ou excessivamente técnica. Preserve a consistência entre temas claro e escuro e prefira composição simples, disclosure progressivo e poucos controles por contexto.
+
+### Fontes de verdade
+
+- `src/styles/tokens.css`: cores semânticas, tipografia, espaçamento, raios, sombras e movimento. Use sempre variáveis `--*`; não introduza cores, sombras, raios ou durações literais quando já existir um token adequado.
+- `src/styles/base.css`, `primitives.css` e `layout.css`: comportamento global, componentes CSS e responsividade. `features.css` deve conter apenas exceções realmente específicas de uma funcionalidade.
+- `src/shared/ui/`: primitives React reutilizáveis. Antes de criar markup local, verifique `PageHeader`, `Modal`/`OverlayDialog`, `Tabs`, `Select`, `MoneyInput`, `MonthNavigator`, `Pagination`, `AsyncState`, gráficos e toast.
+- Dashboard, Transações, Relatórios e Configurações são referências de composição. Não copie classes específicas de uma feature para outra; extraia um padrão compartilhado quando ele se repetir.
+
+### Tokens e linguagem visual
+
+- Superfícies seguem `--surface-bg` → `--surface` → `--surface-2`/`--surface-3`; bordas usam `--border`, `--border-soft` ou `--border-strong`. Elevação deve ser rara e usar `--shadow-xs` a `--shadow-lg` conforme a camada.
+- Texto principal usa `--text`; apoio e metadados usam `--text-muted` ou `--text-soft`. Não enfraqueça contraste de informação essencial, especialmente valores, labels e erros.
+- Verde (`--brand`, `--brand-strong`, `--brand-soft`) identifica marca, seleção e ação principal. Estados usam exclusivamente os conjuntos `--status-success-*`, `--status-warning-*`, `--status-danger-*` e `--status-info-*`; não use apenas cor para comunicar significado.
+- Gráficos usam `--data-1` a `--data-8`. Receitas, despesas, investimentos e alertas devem manter a semântica já aplicada pelos helpers `status-*` e `tx-icon-*`.
+- Espaçamento parte da escala de 4 px (`--space-1` a `--space-8`), raios de `--radius-sm` a `--radius-xl` e tipografia de `--text-xs` a `--text-xl`. Valores monetários devem usar numerais tabulares e formatação de `shared/format.ts`.
+- Animações são curtas, funcionais e usam os tokens `--motion-*`; respeite `prefers-reduced-motion`. Evite movimento ornamental em dados financeiros ou operações destrutivas.
+
+### Composição de telas
+
+- Toda página começa com `PageHeader`: eyebrow opcional para contexto/período, título curto, descrição em `.muted` e no máximo uma ação primária visível. Ações secundárias ficam agrupadas e devem quebrar corretamente em telas estreitas.
+- Use `.panel`/`article` para blocos independentes, `.cards` para métricas comparáveis e `.panel-title` para título mais contexto ou ação. Evite aninhar cartões sem necessidade e não use sombra para substituir hierarquia de conteúdo.
+- Organize a informação na ordem: contexto, resumo, ação/alerta relevante e detalhes. Prefira revelar filtros e opções avançadas sob demanda em vez de manter barras densas permanentemente abertas.
+- Estados assíncronos são obrigatórios: `LoadingState`, `EmptyState` e `ErrorState` devem ocupar a mesma região do conteúdo que substituem; erros recuperáveis oferecem nova tentativa e mutações confirmadas usam toast.
+- Use `Tabs` para poucas visões irmãs, `MonthNavigator` para períodos mensais, `Pagination` para coleções extensas e `Select`/`CategorySelect` no lugar de implementações locais. Modais são reservados a tarefas focadas ou confirmação; fluxos longos pertencem à página.
+- Ações destrutivas usam `--danger`, linguagem explícita e confirmação proporcional ao risco. Nunca torne a ação destrutiva a ação visual primária por conveniência de layout.
+
+### Controles, responsividade e acessibilidade
+
+- A escala de controles é: ação principal com 44 px de altura, secundária com 40 px e compacta/textual/ícone com 36 px. Ícones vêm de `lucide-react`, normalmente entre 16 e 20 px, sempre acompanhados de label visível ou `aria-label` inequívoco.
+- Campos têm label persistente, texto de ajuda ou erro próximo e foco com `--focus`/`--ring`. Não use placeholder como único rótulo. Dinheiro deve usar `MoneyInput`; não manipule valores monetários como ponto flutuante no componente.
+- Preserve HTML semântico, ordem de foco e navegação por teclado. Tabs, dialogs e selects compartilhados já implementam comportamento acessível; estenda essas primitives em vez de recriá-las. Alvos interativos principais devem ter pelo menos 44 px.
+- Abaixo de 850 px, a navegação vira drawer; abaixo de 650 px, headers, ações e grids empilham. Novas telas devem funcionar sem overflow horizontal; tabelas extensas ficam em `.table-scroll` e precisam manter contexto legível.
+- Teste temas claro e escuro, zoom, foco visível, conteúdo vazio, mensagens longas e valores monetários grandes. Não dependa de hover para revelar ação essencial e não comunique estados somente por cor ou ícone.
+
+### Checklist para mudanças de UI
+
+- [ ] Reutiliza tokens e componentes compartilhados antes de criar variantes locais.
+- [ ] Mantém hierarquia, espaçamento e escala de controles coerentes com telas existentes.
+- [ ] Cobre loading, vazio, erro, sucesso e estado desabilitado quando aplicável.
+- [ ] Funciona nos temas claro/escuro e nos breakpoints de 850 px e 650 px.
+- [ ] É operável por teclado, tem foco visível e labels acessíveis.
+- [ ] Foi validada no modo Tauri e no fallback web quando a tela o suporta.
+
 ## Como alterar com segurança
 
 - Faça mudanças pequenas e focadas; não refatore áreas financeiras sem testes de regressão.

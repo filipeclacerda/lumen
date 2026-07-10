@@ -13,12 +13,14 @@ import {
   Undo2,
   Unlink,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../../shared/api";
 import { money, shortDate } from "../../shared/format";
 import { Modal } from "../../shared/ui/Modal";
 import { useToast } from "../../shared/ui/toast";
 import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/AsyncState";
+import { Pagination, type PaginationSize } from "../../shared/ui/Pagination";
+import { Select } from "../../shared/ui/Select";
 import type { Account, AccountType, CreditCardInvoice, PaymentMatchCandidate } from "../../shared/types";
 
 export function AccountsCards() {
@@ -36,6 +38,8 @@ export function AccountsCards() {
   }>();
   const [undoId, setUndoId] = useState<string>();
   const [notice, setNotice] = useState("");
+  const [invoicePage, setInvoicePage] = useState(0);
+  const [invoicePageSize, setInvoicePageSize] = useState<PaginationSize>(10);
   const {
     data: accounts = [],
     isLoading: accountsLoading,
@@ -43,11 +47,19 @@ export function AccountsCards() {
     refetch: refetchAccounts,
   } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
   const {
-    data: invoices = [],
+    data: invoicePageData,
     isLoading: invoicesLoading,
     isError: invoicesError,
     refetch: refetchInvoices,
-  } = useQuery({ queryKey: ["credit-card-invoices"], queryFn: api.creditCardInvoices });
+  } = useQuery({
+    queryKey: ["credit-card-invoices", invoicePage, invoicePageSize],
+    queryFn: () => api.creditCardInvoicesPage({ limit: invoicePageSize, offset: invoicePage * invoicePageSize }),
+  });
+  const invoices = invoicePageData?.items ?? [];
+  useEffect(() => {
+    if (!invoicePageData) return;
+    setInvoicePage((page) => Math.min(page, Math.max(0, Math.ceil(invoicePageData.totalCount / invoicePageSize) - 1)));
+  }, [invoicePageData, invoicePageSize]);
   const { data: items = [] } = useQuery({
     queryKey: ["credit-card-invoice-items", expanded],
     queryFn: () => api.creditCardInvoiceItems(expanded!),
@@ -209,7 +221,7 @@ export function AccountsCards() {
               {invoices.length} fatura{invoices.length === 1 ? "" : "s"}
             </span>
           </div>
-          {invoices.length === 0 ? (
+          {(invoicePageData?.totalCount ?? 0) === 0 ? (
             <div className="empty-state">
               <CreditCard size={34} />
               <h3>Nenhuma fatura importada</h3>
@@ -235,6 +247,8 @@ export function AccountsCards() {
                     </button>
                     <button
                       className="invoice-identity"
+                      aria-label={`${expanded === invoice.id ? "Recolher" : "Expandir"} fatura ${invoice.accountName}`}
+                      aria-expanded={expanded === invoice.id}
                       onClick={() => setExpanded(expanded === invoice.id ? undefined : invoice.id)}
                     >
                       <b>{invoice.accountName}</b>
@@ -268,6 +282,7 @@ export function AccountsCards() {
                         <button
                           className="secondary icon-button"
                           title="Desvincular pagamento"
+                          aria-label={`Desvincular pagamento da fatura ${invoice.accountName}`}
                           onClick={() => unlink(invoice.id)}
                         >
                           <Unlink size={16} />
@@ -277,6 +292,7 @@ export function AccountsCards() {
                           <button
                             className="secondary icon-button"
                             title={invoice.status === "paid" ? "Reabrir fatura" : "Marcar fatura como paga"}
+                            aria-label={`${invoice.status === "paid" ? "Reabrir" : "Marcar como paga"} a fatura ${invoice.accountName}`}
                             onClick={() => toggleStatus(invoice)}
                           >
                             {invoice.status === "paid" ? <Undo2 size={16} /> : <CheckCircle2 size={16} />}
@@ -284,29 +300,38 @@ export function AccountsCards() {
                           <button
                             className="secondary icon-button"
                             title="Vincular pagamento"
+                            aria-label={`Vincular pagamento à fatura ${invoice.accountName}`}
                             onClick={() => findPayment(invoice)}
                           >
                             <Link2 size={16} />
                           </button>
                         </>
                       )}
-                      <button className="danger icon-button" title="Excluir fatura" onClick={() => remove(invoice.id)}>
+                      <button
+                        className="danger icon-button"
+                        title="Excluir fatura"
+                        aria-label={`Excluir fatura ${invoice.accountName}`}
+                        onClick={() => remove(invoice.id)}
+                      >
                         <Trash2 size={16} />
                       </button>
                     </div>
                   </div>
                   {expanded === invoice.id && (
-                    <div className="invoice-items">
+                    <div className="invoice-items table-scroll">
                       <table>
+                        <caption>Itens da fatura {invoice.accountName}</caption>
                         <thead>
                           <tr>
-                            <th>Data</th>
-                            <th>Descrição</th>
-                            <th>Portador</th>
-                            <th>Parcela</th>
-                            <th>Categoria</th>
-                            <th>Valor</th>
-                            <th></th>
+                            <th scope="col">Data</th>
+                            <th scope="col">Descrição</th>
+                            <th scope="col">Portador</th>
+                            <th scope="col">Parcela</th>
+                            <th scope="col">Categoria</th>
+                            <th scope="col">Valor</th>
+                            <th scope="col">
+                              <span className="sr-only">Ações</span>
+                            </th>
                           </tr>
                         </thead>
                         <tbody>
@@ -341,6 +366,7 @@ export function AccountsCards() {
                                   <button
                                     className="danger icon-button"
                                     title="Excluir lançamento"
+                                    aria-label={`Excluir lançamento ${item.description}`}
                                     onClick={() => setDeletingTransaction(item.transactionId)}
                                   >
                                     <Trash2 size={16} />
@@ -357,6 +383,21 @@ export function AccountsCards() {
               ))}
             </div>
           )}
+          <Pagination
+            page={invoicePage}
+            pageSize={invoicePageSize}
+            totalCount={invoicePageData?.totalCount ?? 0}
+            onPageChange={(page) => {
+              setExpanded(undefined);
+              setInvoicePage(page);
+            }}
+            onPageSizeChange={(size) => {
+              setExpanded(undefined);
+              setInvoicePageSize(size);
+              setInvoicePage(0);
+            }}
+            itemLabel="faturas"
+          />
         </article>
       )}
       {matching && (
@@ -493,13 +534,11 @@ function AccountModal({
         {mode === "new" && (
           <label>
             Tipo
-            <select value={kind} onChange={(e) => setKind(e.target.value as AccountType)}>
-              {kinds.map((k) => (
-                <option key={k.value} value={k.value}>
-                  {k.label}
-                </option>
-              ))}
-            </select>
+            <Select
+              value={kind}
+              onChange={(value) => setKind(value as AccountType)}
+              options={kinds.map((item) => ({ value: item.value, label: item.label }))}
+            />
           </label>
         )}
         {error && <p className="form-error">{error}</p>}

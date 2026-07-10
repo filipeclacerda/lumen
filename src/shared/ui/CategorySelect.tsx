@@ -24,6 +24,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { Category, CategoryKind, MovementType } from "../types";
+import { Select } from "./Select";
 
 type Props = {
   value?: string;
@@ -143,36 +144,26 @@ export function CategorySelect({
 
   const selected = useMemo(() => categories.find((c) => c.id === value), [categories, value]);
 
-  // Native select is the safe default: it provides complete keyboard and AT behavior.
+  // Keep the compact category API, but use the shared custom select everywhere.
   if (native !== false) {
     return (
-      <select
+      <Select
         className={"category-select" + (className ? " " + className : "")}
         value={value ?? ""}
-        onChange={(e) => onChange(e.target.value || undefined)}
+        onChange={(nextValue) => onChange(nextValue || undefined)}
         disabled={disabled}
         id={id}
         aria-label={ariaLabel}
-      >
-        {allowEmpty && <option value="">{emptyLabel}</option>}
-        {groups.length === 1
-          ? groups[0].items.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.parentId ? "— " : ""}
-                {c.name}
-              </option>
-            ))
-          : groups.map((g) => (
-              <optgroup key={g.kind} label={KIND_LABEL[g.kind]}>
-                {g.items.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.parentId ? "— " : ""}
-                    {c.name}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-      </select>
+        options={[
+          ...(allowEmpty ? [{ value: "", label: emptyLabel }] : []),
+          ...groups.flatMap((group) =>
+            group.items.map((category) => ({
+              value: category.id,
+              label: `${category.parentId ? "— " : ""}${category.name}`,
+            })),
+          ),
+        ]}
+      />
     );
   }
 

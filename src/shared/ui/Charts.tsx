@@ -41,7 +41,16 @@ export const chartTooltipLabelStyle = {
 
 export const chartMoneyFormatter = (value: unknown) => money(Number(value ?? 0));
 
-export const chartPalette = ["#247258", "#e5a142", "#728bba", "#a778ba", "#d66d68", "#4c94a8", "#9c7661", "#568a91"];
+export const chartPalette = [
+  "var(--data-1)",
+  "var(--data-2)",
+  "var(--data-3)",
+  "var(--data-4)",
+  "var(--data-5)",
+  "var(--data-6)",
+  "var(--data-7)",
+  "var(--data-8)",
+];
 
 const sourceKindToLabel: Record<"bank" | "credit_card", string> = {
   bank: "Conta bancária",
@@ -50,7 +59,7 @@ const sourceKindToLabel: Record<"bank" | "credit_card", string> = {
 
 const sourceKindToColor: Record<"bank" | "credit_card", string> = {
   bank: "var(--brand)",
-  credit_card: "#d8786e",
+  credit_card: "var(--data-5)",
 };
 
 function sourceBarColor(source: "bank" | "credit_card") {
@@ -157,6 +166,11 @@ export function CategoryBarsChart({
 
   if (!rows.length) return <EmptyChart />;
 
+  const toggleCategory = (categoryKey?: string) => {
+    if (!categoryKey) return;
+    onSelect(categoryKey === selectedCategoryKey ? undefined : categoryKey);
+  };
+
   return (
     <div className="chart-wrap category-bars-chart">
       <ResponsiveContainer width="100%" height={Math.max(rows.length * 38, 220)}>
@@ -184,23 +198,26 @@ export function CategoryBarsChart({
             contentStyle={chartTooltipStyle}
             cursor={{ fill: hoverFill }}
           />
-          <Bar
-            dataKey="amount"
-            name={valueLabel}
-            radius={[0, 8, 8, 0]}
-            cursor="pointer"
-            onClick={(entry) => {
-              const payload = (entry as { payload?: { categoryKey?: string } })?.payload;
-              const categoryKey = payload?.categoryKey;
-              if (!categoryKey) return;
-              onSelect(categoryKey === selectedCategoryKey ? undefined : categoryKey);
-            }}
-          >
+          <Bar dataKey="amount" name={valueLabel} radius={[0, 8, 8, 0]} cursor="pointer">
             {rows.map((row) => (
               <Cell
                 key={row.categoryKey}
                 fill={row.color}
                 fillOpacity={selectedCategoryKey && selectedCategoryKey !== row.categoryKey ? 0.4 : 1}
+                role="button"
+                tabIndex={0}
+                aria-label={`${row.category}: ${valueLabel.toLowerCase()} de ${money(row.amount)}. ${
+                  row.categoryKey === selectedCategoryKey
+                    ? "Selecionada. Pressione Enter ou Espaço para limpar o filtro."
+                    : "Pressione Enter ou Espaço para filtrar por esta categoria."
+                }`}
+                aria-pressed={row.categoryKey === selectedCategoryKey}
+                onClick={() => toggleCategory(row.categoryKey)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  toggleCategory(row.categoryKey);
+                }}
               />
             ))}
             <LabelList

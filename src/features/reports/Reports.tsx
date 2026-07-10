@@ -42,6 +42,7 @@ import {
 } from "../../shared/ui/Charts";
 import { useToast } from "../../shared/ui/toast";
 import { MoneyInput } from "../../shared/ui/MoneyInput";
+import { Select } from "../../shared/ui/Select";
 
 const currentMonth = curMonth();
 type ReportTab = "overview" | "categories" | "goals" | "credit";
@@ -208,22 +209,26 @@ export function Reports() {
           </label>
           <label>
             Origem
-            <select value={source} onChange={(e) => setSource(e.target.value as ReportSource)}>
-              <option value="all">Todas</option>
-              <option value="bank">Conta bancária</option>
-              <option value="credit_card">Cartão de crédito</option>
-            </select>
+            <Select
+              value={source}
+              onChange={(value) => setSource(value as ReportSource)}
+              options={[
+                { value: "all", label: "Todas" },
+                { value: "bank", label: "Conta bancária" },
+                { value: "credit_card", label: "Cartão de crédito" },
+              ]}
+            />
           </label>
           <label>
             Conta
-            <select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-              <option value="">Todas as contas</option>
-              {filteredAccounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
+            <Select
+              value={accountId}
+              onChange={setAccountId}
+              options={[
+                { value: "", label: "Todas as contas" },
+                ...filteredAccounts.map((a) => ({ value: a.id, label: a.name })),
+              ]}
+            />
           </label>
         </div>
       </article>
@@ -931,10 +936,14 @@ function TargetEditor({
         <p className="muted">Defina um objetivo recorrente e acompanhe a projeção ao longo do mês.</p>
         <label>
           Tipo
-          <select value={kind} onChange={(e) => setKind(e.target.value as typeof kind)}>
-            <option value="category">Limite por categoria</option>
-            <option value="savings">Economia mensal</option>
-          </select>
+          <Select
+            value={kind}
+            onChange={(value) => setKind(value as typeof kind)}
+            options={[
+              { value: "category", label: "Limite por categoria" },
+              { value: "savings", label: "Economia mensal" },
+            ]}
+          />
         </label>
         {kind === "category" && (
           <CategorySelect

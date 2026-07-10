@@ -32,11 +32,25 @@ export function App() {
   };
   const [collapsed, setCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [isMobileNavigation, setIsMobileNavigation] = useState(() => window.matchMedia("(max-width: 850px)").matches);
   const drawerTrigger = useRef<HTMLButtonElement>(null);
   const drawer = useRef<HTMLElement>(null);
   const drawerPreviousFocus = useRef<HTMLElement | null>(null);
   useEffect(() => {
-    if (!drawerOpen) return;
+    const media = window.matchMedia("(max-width: 850px)");
+    const updateNavigationMode = () => {
+      setIsMobileNavigation(media.matches);
+      if (!media.matches) setDrawerOpen(false);
+    };
+    updateNavigationMode();
+    media.addEventListener("change", updateNavigationMode);
+    return () => media.removeEventListener("change", updateNavigationMode);
+  }, []);
+  useEffect(() => {
+    const isModalDrawer = isMobileNavigation && drawerOpen;
+    const drawerElement = drawer.current;
+    if (drawerElement) drawerElement.inert = isMobileNavigation && !drawerOpen;
+    if (!isModalDrawer) return;
     drawerPreviousFocus.current = document.activeElement as HTMLElement | null;
     const main = document.querySelector<HTMLElement>("main");
     const trigger = drawerTrigger.current;
@@ -77,7 +91,7 @@ export function App() {
       document.body.style.overflow = previousOverflow;
       if (drawerPreviousFocus.current?.isConnected) drawerPreviousFocus.current.focus();
     };
-  }, [drawerOpen]);
+  }, [drawerOpen, isMobileNavigation]);
   const {
     data: bootstrap,
     isLoading,
@@ -141,11 +155,9 @@ export function App() {
         <div className="brand">
           <button
             className="hamburger"
-            onClick={() => {
-              setCollapsed(!collapsed);
-              setDrawerOpen(true);
-            }}
-            aria-label="Abrir menu"
+            onClick={() => setCollapsed((current) => !current)}
+            aria-label={collapsed ? "Expandir menu" : "Recolher menu"}
+            aria-expanded={!collapsed}
           >
             <Menu size={20} />
           </button>

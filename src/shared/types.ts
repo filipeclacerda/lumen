@@ -56,7 +56,8 @@ export type TransactionFilter = {
   minAbsAmountInCents?: number;
   maxAbsAmountInCents?: number;
 };
-export type TransactionPage = { items: Transaction[]; totalCount: number };
+export type Page<T> = { items: T[]; totalCount: number };
+export type TransactionPage = Page<Transaction>;
 export type TransactionInput = {
   id?: string;
   accountId: string;
@@ -230,6 +231,7 @@ export type CreditCardInvoice = {
   paymentDescription?: string;
   paymentDate?: string;
 };
+export type CreditCardInvoicePage = Page<CreditCardInvoice>;
 export type CreditCardInvoiceItem = {
   transactionId: string;
   date: string;
@@ -320,6 +322,8 @@ export type MerchantReport = {
   amountInCents: number;
   transactionCount: number;
 };
+export type MerchantPageFilter = ReportFilter & { limit?: number; offset?: number };
+export type MerchantPage = Page<MerchantReport>;
 export type MerchantAlias = { id: string; merchantKey: string; displayName: string };
 export type DailyReportPoint = { date: string; amountInCents: number; cumulativeInCents: number };
 export type GoalProgress = {

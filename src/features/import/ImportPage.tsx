@@ -22,6 +22,7 @@ import { api } from "../../shared/api";
 import { Modal } from "../../shared/ui/Modal";
 import { CategorySelect } from "../../shared/ui/CategorySelect";
 import { ErrorState, LoadingState } from "../../shared/ui/AsyncState";
+import { Select } from "../../shared/ui/Select";
 import {
   money,
   centsToInput,
@@ -107,14 +108,33 @@ export function ImportPage() {
   const [showTroubleMenu, setShowTroubleMenu] = useState(false);
   const [openUpwards, setOpenUpwards] = useState(false);
   const troubleMenuRef = useRef<HTMLDivElement>(null);
+  const troubleMenuTriggerRef = useRef<HTMLButtonElement>(null);
+
+  function closeTroubleMenu(returnFocus = false) {
+    setShowTroubleMenu(false);
+    if (returnFocus) requestAnimationFrame(() => troubleMenuTriggerRef.current?.focus());
+  }
 
   useEffect(() => {
     if (showTroubleMenu && troubleMenuRef.current) {
       const rect = troubleMenuRef.current.getBoundingClientRect();
       setOpenUpwards(rect.bottom > window.innerHeight - 20);
+      troubleMenuRef.current.querySelector<HTMLElement>("[data-initial-focus]")?.focus();
     } else {
       setOpenUpwards(false);
     }
+  }, [showTroubleMenu]);
+
+  useEffect(() => {
+    if (!showTroubleMenu) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeTroubleMenu(true);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
   }, [showTroubleMenu]);
 
   const {
@@ -137,7 +157,7 @@ export function ImportPage() {
   const firstCardId = cards[0]?.id ?? "";
   const canStartImport = !bankPreview && !cardPreview && !pendingCardPath && !mappingState;
 
-  // Keep the selected card valid: a <select> with a value that matches no
+  // Keep the selected card valid: a custom select with a value that matches no
   // option shows the first option visually but leaves cardAccountId empty.
   // Default to the first card so the pre-filled selection counts as chosen.
   useEffect(() => {
@@ -582,12 +602,23 @@ export function ImportPage() {
             {isReadingFile ? "Lendo arquivo..." : "Escolher arquivo"}
           </button>
           <div className="import-trouble-menu">
-            <button className="text-button" onClick={() => setShowTroubleMenu(!showTroubleMenu)}>
+            <button
+              ref={troubleMenuTriggerRef}
+              type="button"
+              className="text-button"
+              aria-haspopup="dialog"
+              aria-expanded={showTroubleMenu}
+              aria-controls="import-trouble-menu"
+              onClick={() => setShowTroubleMenu((open) => !open)}
+            >
               Enfrentando problemas?
             </button>
             {showTroubleMenu && (
               <div
                 ref={troubleMenuRef}
+                id="import-trouble-menu"
+                role="dialog"
+                aria-label="Ajuda para importar arquivos"
                 style={{
                   position: "absolute",
                   top: openUpwards ? "auto" : "calc(100% + 8px)",
@@ -608,8 +639,10 @@ export function ImportPage() {
               >
                 <button
                   className="icon-button"
+                  type="button"
+                  aria-label="Fechar ajuda para importar"
                   style={{ position: "absolute", top: "4px", right: "4px", background: "transparent", margin: 0 }}
-                  onClick={() => setShowTroubleMenu(false)}
+                  onClick={() => closeTroubleMenu(true)}
                 >
                   <X size={14} />
                 </button>
@@ -628,6 +661,8 @@ export function ImportPage() {
                 <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
                   <button
                     className="secondary"
+                    type="button"
+                    data-initial-focus
                     style={{
                       justifyContent: "flex-start",
                       width: "100%",
@@ -636,7 +671,7 @@ export function ImportPage() {
                       margin: 0,
                     }}
                     onClick={() => {
-                      setShowTroubleMenu(false);
+                      closeTroubleMenu();
                       exportTemplate("bank");
                     }}
                   >
@@ -644,6 +679,7 @@ export function ImportPage() {
                   </button>
                   <button
                     className="secondary"
+                    type="button"
                     style={{
                       justifyContent: "flex-start",
                       width: "100%",
@@ -652,7 +688,7 @@ export function ImportPage() {
                       margin: 0,
                     }}
                     onClick={() => {
-                      setShowTroubleMenu(false);
+                      closeTroubleMenu();
                       exportTemplate("credit_card");
                     }}
                   >
@@ -737,57 +773,59 @@ export function ImportPage() {
               <div className="form-row">
                 <label>
                   Tipo do CSV
-                  <select
+                  <Select
                     value={mappingState.draft.sourceKind}
-                    onChange={(event) => {
-                      const sourceKind = event.target.value as ImportSourceKind;
+                    onChange={(value) => {
+                      const sourceKind = value as ImportSourceKind;
                       setDraft(buildInitialDraft(mappingState.inspection, sourceKind, mappingState.draft));
                       setMappingState((current) =>
                         current ? { ...current, matchedProfile: undefined, saveProfile: true } : current,
                       );
                     }}
-                  >
-                    <option value="bank">Conta bancária</option>
-                    <option value="credit_card">Cartão de crédito</option>
-                  </select>
+                    options={[
+                      { value: "bank", label: "Conta bancária" },
+                      { value: "credit_card", label: "Cartão de crédito" },
+                    ]}
+                  />
                 </label>
                 <label>
                   Delimitador
-                  <select
+                  <Select
                     value={mappingState.draft.delimiter}
-                    onChange={(event) => setDraft({ ...mappingState.draft, delimiter: event.target.value })}
-                  >
-                    <option value=";">Ponto e vírgula (;)</option>
-                    <option value=",">Vírgula (,)</option>
-                  </select>
+                    onChange={(value) => setDraft({ ...mappingState.draft, delimiter: value })}
+                    options={[
+                      { value: ";", label: "Ponto e vírgula (;)" },
+                      { value: ",", label: "Vírgula (,)" },
+                    ]}
+                  />
                 </label>
               </div>
               <div className="form-row">
                 <label>
                   Formato de data
-                  <select
+                  <Select
                     value={mappingState.draft.dateFormat ?? ""}
-                    onChange={(event) =>
-                      setDraft({ ...mappingState.draft, dateFormat: event.target.value || undefined })
-                    }
-                  >
-                    <option value="">Automático</option>
-                    <option value="dd/MM/yyyy">dd/MM/yyyy</option>
-                    <option value="yyyy-MM-dd">yyyy-MM-dd</option>
-                    <option value="dd/MM/yy">dd/MM/yy</option>
-                  </select>
+                    onChange={(value) => setDraft({ ...mappingState.draft, dateFormat: value || undefined })}
+                    options={[
+                      { value: "", label: "Automático" },
+                      { value: "dd/MM/yyyy", label: "dd/MM/yyyy" },
+                      { value: "yyyy-MM-dd", label: "yyyy-MM-dd" },
+                      { value: "dd/MM/yy", label: "dd/MM/yy" },
+                    ]}
+                  />
                 </label>
                 <label>
                   Separador decimal
-                  <select
+                  <Select
                     value={mappingState.draft.decimalSeparator ?? "comma"}
-                    onChange={(event) =>
-                      setDraft({ ...mappingState.draft, decimalSeparator: event.target.value as "comma" | "dot" })
+                    onChange={(value) =>
+                      setDraft({ ...mappingState.draft, decimalSeparator: value as "comma" | "dot" })
                     }
-                  >
-                    <option value="comma">Vírgula decimal</option>
-                    <option value="dot">Ponto decimal</option>
-                  </select>
+                    options={[
+                      { value: "comma", label: "Vírgula decimal" },
+                      { value: "dot", label: "Ponto decimal" },
+                    ]}
+                  />
                 </label>
               </div>
               {mappingState.draft.sourceKind === "credit_card" && (
@@ -851,23 +889,21 @@ export function ImportPage() {
                       <b>{column.header}</b>
                       <small>{sampleValue(mappingState.inspection, column.index)}</small>
                     </span>
-                    <select
+                    <Select
                       value={column.role}
-                      onChange={(event) =>
+                      onChange={(value) =>
                         setDraft({
                           ...mappingState.draft,
                           columns: mappingState.draft.columns.map((item, itemIndex) =>
-                            itemIndex === index ? { ...item, role: event.target.value as CsvColumnRole } : item,
+                            itemIndex === index ? { ...item, role: value as CsvColumnRole } : item,
                           ),
                         })
                       }
-                    >
-                      {roleOptions(mappingState.draft.sourceKind).map((role) => (
-                        <option key={role.value} value={role.value}>
-                          {role.label}
-                        </option>
-                      ))}
-                    </select>
+                      options={roleOptions(mappingState.draft.sourceKind).map((role) => ({
+                        value: role.value,
+                        label: role.label,
+                      }))}
+                    />
                   </div>
                 ))}
               </div>
@@ -928,62 +964,64 @@ export function ImportPage() {
             <h2>Prévia de {bankPreview.fileName}</h2>
             <span>{bankPreview.candidates.length} registros</span>
           </div>
-          <table>
-            <thead>
-              <tr>
-                <th>Incluir</th>
-                <th>Data</th>
-                <th>Descrição</th>
-                <th>Categoria sugerida</th>
-                <th>Valor editável</th>
-                <th>Duplicidade</th>
-              </tr>
-            </thead>
-            <tbody>
-              {bankPreview.candidates.slice(0, 100).map((candidate) => (
-                <tr key={candidate.sourceRow} className={!candidate.included ? "excluded-row" : ""}>
-                  <td>
-                    <input
-                      type="checkbox"
-                      checked={candidate.included}
-                      disabled={candidate.duplicateStatus === "exact"}
-                      onChange={(event) =>
-                        updateBankCandidate(candidate.sourceRow, candidate.amountInCents, event.target.checked)
-                      }
-                    />
-                  </td>
-                  <td>{candidate.date}</td>
-                  <td>
-                    {candidate.description}
-                    {candidate.suggestionSource === "rule" && candidate.suggestedRuleName && (
-                      <small className="source-label">por {candidate.suggestedRuleName}</small>
-                    )}
-                    {candidate.suggestionSource === "history" && (
-                      <small className="source-label history-label">pelo seu histórico</small>
-                    )}
-                  </td>
-                  <td>
-                    <CategorySelect
-                      value={candidate.suggestedCategoryId}
-                      categories={categories}
-                      native
-                      onChange={(value) => changeBankCategory(candidate.sourceRow, value)}
-                    />
-                  </td>
-                  <td>
-                    <MoneyEditor
-                      value={candidate.amountInCents}
-                      disabled={!candidate.included}
-                      onCommit={(value) => updateBankCandidate(candidate.sourceRow, value, candidate.included)}
-                    />
-                  </td>
-                  <td>
-                    <span className="badge">{candidate.duplicateStatus}</span>
-                  </td>
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Incluir</th>
+                  <th>Data</th>
+                  <th>Descrição</th>
+                  <th>Categoria sugerida</th>
+                  <th>Valor editável</th>
+                  <th>Duplicidade</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {bankPreview.candidates.slice(0, 100).map((candidate) => (
+                  <tr key={candidate.sourceRow} className={!candidate.included ? "excluded-row" : ""}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={candidate.included}
+                        disabled={candidate.duplicateStatus === "exact"}
+                        onChange={(event) =>
+                          updateBankCandidate(candidate.sourceRow, candidate.amountInCents, event.target.checked)
+                        }
+                      />
+                    </td>
+                    <td>{candidate.date}</td>
+                    <td>
+                      {candidate.description}
+                      {candidate.suggestionSource === "rule" && candidate.suggestedRuleName && (
+                        <small className="source-label">por {candidate.suggestedRuleName}</small>
+                      )}
+                      {candidate.suggestionSource === "history" && (
+                        <small className="source-label history-label">pelo seu histórico</small>
+                      )}
+                    </td>
+                    <td>
+                      <CategorySelect
+                        value={candidate.suggestedCategoryId}
+                        categories={categories}
+                        native
+                        onChange={(value) => changeBankCategory(candidate.sourceRow, value)}
+                      />
+                    </td>
+                    <td>
+                      <MoneyEditor
+                        value={candidate.amountInCents}
+                        disabled={!candidate.included}
+                        onCommit={(value) => updateBankCandidate(candidate.sourceRow, value, candidate.included)}
+                      />
+                    </td>
+                    <td>
+                      <span className="badge">{candidate.duplicateStatus}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           <div className="editor-actions">
             <button className="secondary" onClick={resetFlow}>
               Cancelar
@@ -1161,8 +1199,7 @@ export function ImportPage() {
 
       {learning && (
         <Modal title="Usar esta correção no futuro?" onClose={() => setLearning(undefined)}>
-          <article className="modal">
-            <h2>Usar esta correção no futuro?</h2>
+          <div className="modal-form">
             <p className="muted">
               Você pode criar uma regra local, deixar que o histórico aprenda sozinho ou manter a alteração somente
               nesta importação.
@@ -1180,7 +1217,7 @@ export function ImportPage() {
               </button>
               <button onClick={createRule}>Criar regra</button>
             </div>
-          </article>
+          </div>
         </Modal>
       )}
 
@@ -1378,17 +1415,17 @@ function CardPicker({
         {required && <span className="req"> *</span>}
       </span>
       <div className="card-picker-row">
-        <select value={value} onChange={(event) => onChange(event.target.value)} disabled={empty} aria-label={label}>
-          {empty ? (
-            <option value="">Nenhum cartão cadastrado</option>
-          ) : (
-            cards.map((card) => (
-              <option key={card.id} value={card.id}>
-                {card.name}
-              </option>
-            ))
-          )}
-        </select>
+        <Select
+          value={value}
+          onChange={onChange}
+          disabled={empty}
+          ariaLabel={label}
+          options={
+            empty
+              ? [{ value: "", label: "Nenhum cartão cadastrado" }]
+              : cards.map((card) => ({ value: card.id, label: card.name }))
+          }
+        />
         <button
           type="button"
           className="icon-button card-picker-add"

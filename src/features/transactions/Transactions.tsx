@@ -28,11 +28,12 @@ import { money, shortDate, suggestRulePattern } from "../../shared/format";
 import { currentMonth } from "../../shared/period";
 import { CategorySelect } from "../../shared/ui/CategorySelect";
 import { MoneyInput } from "../../shared/ui/MoneyInput";
+import { Pagination, type PaginationSize } from "../../shared/ui/Pagination";
+import { Select } from "../../shared/ui/Select";
 import { useToast } from "../../shared/ui/toast";
 import type { Account, ReportSource, Transaction, TransactionFilter } from "../../shared/types";
 import { TransactionForm } from "./TransactionForm";
 
-const PAGE_SIZE = 100;
 const FILTER_KEYS = [
   "category",
   "uncategorized",
@@ -118,6 +119,7 @@ export function Transactions() {
   const [exporting, setExporting] = useState(false);
   const toast = useToast();
   const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<PaginationSize>(25);
   const [showNew, setShowNew] = useState(false);
   const [editing, setEditing] = useState<Transaction>();
   const [learning, setLearning] = useState<{ transaction: Transaction; categoryId: string; pattern: string }>();
@@ -199,8 +201,8 @@ export function Transactions() {
     movementType: movementFilter || undefined,
     minAbsAmountInCents: minAmountFilter,
     maxAbsAmountInCents: maxAmountFilter,
-    limit: PAGE_SIZE,
-    offset: page * PAGE_SIZE,
+    limit: pageSize,
+    offset: page * pageSize,
   };
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["transactions", filter],
@@ -472,10 +474,12 @@ export function Transactions() {
     setUndo(undefined);
     await refresh();
   }
-  const rangeStart = totalCount === 0 ? 0 : page * PAGE_SIZE + 1;
-  const rangeEnd = Math.min(totalCount, page * PAGE_SIZE + rows.length);
-  const hasMore = page * PAGE_SIZE + rows.length < totalCount;
-  const hasPrevious = page > 0;
+  const rangeStart = totalCount === 0 ? 0 : page * pageSize + 1;
+  const rangeEnd = Math.min(totalCount, page * pageSize + rows.length);
+  useEffect(() => {
+    if (!data) return;
+    setPage((currentPage) => Math.min(currentPage, Math.max(0, Math.ceil(totalCount / pageSize) - 1)));
+  }, [data, totalCount, pageSize]);
 
   return (
     <section>
@@ -516,7 +520,16 @@ export function Transactions() {
           )}
         </div>
       )}
-      <article className="panel">
+      <article className="panel transactions-panel">
+        <div className="transactions-panel__heading">
+          <div>
+            <span className="section-kicker">EXTRATO</span>
+            <h2>Seus lançamentos</h2>
+          </div>
+          <span className="transactions-panel__count">
+            {totalCount} {totalCount === 1 ? "resultado" : "resultados"}
+          </span>
+        </div>
         <div className="transactions-toolbar">
           <div className="toolbar">
             <Search size={18} />
@@ -603,58 +616,58 @@ export function Transactions() {
             </label>
             <label>
               Origem
-              <select
+              <Select
                 value={sourceFilter || "all"}
-                onChange={(e) =>
+                onChange={(value) =>
                   updateParams((next) => {
-                    const value = e.target.value as ReportSource;
-                    setOrDelete(next, "source", value === "all" ? undefined : value);
+                    const source = value as ReportSource;
+                    setOrDelete(next, "source", source === "all" ? undefined : source);
                     next.delete("accountId");
                   })
                 }
-              >
-                <option value="all">Todas</option>
-                <option value="bank">Conta bancária</option>
-                <option value="credit_card">Cartão de crédito</option>
-              </select>
+                options={[
+                  { value: "all", label: "Todas" },
+                  { value: "bank", label: "Conta bancária" },
+                  { value: "credit_card", label: "Cartão de crédito" },
+                ]}
+              />
             </label>
             <label>
               Conta
-              <select
+              <Select
                 value={accountFilter}
-                onChange={(e) => updateParams((next) => setOrDelete(next, "accountId", e.target.value))}
-              >
-                <option value="">Todas as contas</option>
-                {sourceAccounts.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
+                onChange={(value) => updateParams((next) => setOrDelete(next, "accountId", value))}
+                options={[
+                  { value: "", label: "Todas as contas" },
+                  ...sourceAccounts.map((account) => ({ value: account.id, label: account.name })),
+                ]}
+              />
             </label>
             <label>
               Status
-              <select
+              <Select
                 value={statusFilter}
-                onChange={(e) => updateParams((next) => setOrDelete(next, "status", e.target.value))}
-              >
-                <option value="">Todos</option>
-                <option value="cleared">Confirmadas</option>
-                <option value="pending">Pendentes</option>
-              </select>
+                onChange={(value) => updateParams((next) => setOrDelete(next, "status", value))}
+                options={[
+                  { value: "", label: "Todos" },
+                  { value: "cleared", label: "Confirmadas" },
+                  { value: "pending", label: "Pendentes" },
+                ]}
+              />
             </label>
             <label>
               Tipo
-              <select
+              <Select
                 value={movementFilter}
-                onChange={(e) => updateParams((next) => setOrDelete(next, "movementType", e.target.value))}
-              >
-                <option value="">Todos</option>
-                <option value="expense">Despesas</option>
-                <option value="income">Receitas</option>
-                <option value="transfer">Transferências</option>
-                <option value="investment">Investimentos</option>
-              </select>
+                onChange={(value) => updateParams((next) => setOrDelete(next, "movementType", value))}
+                options={[
+                  { value: "", label: "Todos" },
+                  { value: "expense", label: "Despesas" },
+                  { value: "income", label: "Receitas" },
+                  { value: "transfer", label: "Transferências" },
+                  { value: "investment", label: "Investimentos" },
+                ]}
+              />
             </label>
             <div className="filter-category-field">
               <span>Categoria</span>
@@ -782,19 +795,19 @@ export function Transactions() {
                   </td>
                   <td className="transaction-date">{shortDate(t.date)}</td>
                   <td>
-                    <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                    <div className="transaction-description">
                       {(() => {
                         const c = categories.find((cat) => cat.id === t.categoryId);
                         const isInv = c?.kind === "investment";
                         const isInc = t.amountInCents > 0;
                         const tone = isInv ? "investment" : isInc ? "income" : "expense";
                         return (
-                          <div className={`tx-icon tx-icon-${tone}`}>
+                          <div className={`tx-icon tx-icon-${tone}`} aria-hidden="true">
                             {isInc || isInv ? <ArrowUpRight size={20} /> : <ArrowDownRight size={20} />}
                           </div>
                         );
                       })()}
-                      <b>{t.description}</b>
+                      <b className="transaction-description__text">{t.description}</b>
                       {t.isTransferLeg && (
                         <span
                           className="badge"
@@ -869,28 +882,17 @@ export function Transactions() {
             </tbody>
           </table>
         </div>
-        {totalCount > 0 && (
-          <div
-            className="pagination"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "flex-end",
-              gap: "10px",
-              padding: "14px 4px 4px",
-            }}
-          >
-            <span className="muted" style={{ fontSize: 13 }}>
-              {rangeStart}–{rangeEnd} de {totalCount}
-            </span>
-            <button className="secondary" disabled={!hasPrevious} onClick={() => setPage((p) => Math.max(0, p - 1))}>
-              Anterior
-            </button>
-            <button className="secondary" disabled={!hasMore} onClick={() => setPage((p) => p + 1)}>
-              Carregar mais
-            </button>
-          </div>
-        )}
+        <Pagination
+          page={page}
+          pageSize={pageSize}
+          totalCount={totalCount}
+          onPageChange={setPage}
+          onPageSizeChange={(size) => {
+            setPageSize(size);
+            setPage(0);
+          }}
+          itemLabel="lançamentos"
+        />
       </article>
       {learning && (
         <Modal title="Usar esta correção no futuro?" onClose={() => setLearning(undefined)}>

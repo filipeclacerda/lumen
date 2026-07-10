@@ -5,12 +5,22 @@ Todas as mudanças relevantes deste projeto são documentadas neste arquivo.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o
 projeto adota o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
-## [Não lançado]
+## [0.4.2] - 2026-07-10
 
 Pacote de integridade focado em proteger dados financeiros durante backup,
 restauração, importação e edição de transações vinculadas.
 
 ### Adicionado
+
+- **Sistema de design documentado**: contribuidores agora encontram no
+  `AGENTS.md` e em `docs/design-system.md` os tokens, componentes, escalas de
+  controles, critérios de responsividade e acessibilidade usados pelo Lumen.
+- **Paginação reutilizável** para lançamentos, faturas, regras e
+  estabelecimentos, com páginas numeradas, seleção de tamanho e navegação por
+  teclado.
+- **Select reutilizável** com lista acessível, navegação por teclado e suporte
+  a opções desabilitadas, aplicado aos formulários que antes dependiam do
+  controle nativo.
 
 - **Restauração com confirmação explícita**: o usuário precisa digitar
   `RESTAURAR` antes de substituir os dados atuais; após a validação, o Lumen
@@ -27,6 +37,14 @@ restauração, importação e edição de transações vinculadas.
   interface.
 
 ### Alterado
+
+- **Telas densas passam a seguir uma hierarquia visual comum**: transações,
+  filtros, ações de tabela, paginação e seletores adotam tokens, superfícies e
+  tamanhos de controle consistentes.
+- **Relatórios, faturas e estabelecimentos** passam a consultar coleções
+  paginadas, reduzindo o volume renderizado por tela.
+- **Gráficos compartilhados** usam a paleta semântica do tema e permitem
+  selecionar categorias por mouse ou teclado.
 
 - **Backup passa a usar snapshot SQLite com `VACUUM INTO`**, incluindo
   transações confirmadas que ainda estejam no WAL, em vez de copiar diretamente
@@ -45,6 +63,20 @@ restauração, importação e edição de transações vinculadas.
   data, valor e categoria bloqueados, permitindo apenas corrigir a descrição.
 
 ### Corrigido
+
+- Corrigido o comportamento da sidebar: recolher a navegação no desktop não
+  ativa mais o drawer modal destinado a telas móveis.
+- Corrigidos controles inacessíveis em regras, categorias, faturas, onboarding
+  e importação; ações de ícone recebem nome acessível e os fluxos relevantes
+  podem ser operados por teclado.
+- Corrigido o formulário de recorrências, que podia permanecer disponível antes
+  de carregar contas e categorias ou após uma falha nessas dependências.
+- Corrigido o fallback web de Configurações: operações exclusivas do desktop
+  deixam de aparecer como ações disponíveis no navegador.
+- Corrigidas tabelas extensas de prévia e fatura para usarem rolagem responsiva
+  e semântica de tabela mais clara.
+- Corrigido o popover de ajuda da importação, com estado ARIA, Escape, foco
+  inicial e retorno ao controle de origem.
 
 - Corrigido o restore que falhava ao substituir `financa.db` existente no
   Windows e podia deixar o aplicativo preso em novas tentativas de abertura.
@@ -85,6 +117,9 @@ restauração, importação e edição de transações vinculadas.
   sem expor SQL, caminhos locais ou dados financeiros.
 
 ### Testes e qualidade
+
+- Frontend ampliado para **21 testes**, incluindo paginação e fallback de
+  configurações. `npm run check` foi validado para esta versão.
 
 - Backend ampliado de 71 para **95 testes Rust**.
 - Frontend ampliado de 8 para **12 testes**, incluindo quatro cenários do fluxo

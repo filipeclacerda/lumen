@@ -9,7 +9,8 @@ import { useToast } from "../../shared/ui/toast";
 import { CategorySelect } from "../../shared/ui/CategorySelect";
 import { MoneyInput } from "../../shared/ui/MoneyInput";
 import type { RecurringTransaction, RecurringTransactionInput } from "../../shared/types";
-import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/AsyncState";
+import { ErrorState, LoadingState } from "../../shared/ui/AsyncState";
+import { Select } from "../../shared/ui/Select";
 
 const emptyDraft: RecurringTransactionInput = {
   accountId: "",
@@ -51,6 +52,13 @@ export function RecurringTransactions() {
   const [amountInputVersion, setAmountInputVersion] = useState(0);
   const [error, setError] = useState("");
   const editing = Boolean(draft.id);
+  const contentReady =
+    !recurringLoading &&
+    !accountsLoading &&
+    !categoriesLoading &&
+    !recurringError &&
+    !accountsError &&
+    !categoriesError;
 
   async function refresh() {
     await Promise.all([
@@ -145,7 +153,7 @@ export function RecurringTransactions() {
           <h1>Recorrências</h1>
           <p className="muted">Aluguel, salário, assinaturas — cadastre uma vez e o Lumen lança todo mês.</p>
         </div>
-        <button className="secondary" onClick={syncNow}>
+        <button className="secondary" onClick={syncNow} disabled={!contentReady}>
           <Play size={16} /> Gerar pendentes agora
         </button>
       </PageHeader>
@@ -158,166 +166,154 @@ export function RecurringTransactions() {
           onRetry={() => void Promise.all([refetchRecurring(), refetchAccounts(), refetchCategories()])}
         />
       )}
-      {!recurringLoading && !recurringError && recurring.length === 0 && (
-        <EmptyState
-          title="Nenhuma recorrência cadastrada"
-          description="Crie uma recorrência para automatizar seus lançamentos."
-        />
-      )}
-      <div className="rules-layout">
-        <article className="panel rule-editor recurring-editor">
-          <div className="panel-title">
-            <h2>{editing ? "Editar recorrência" : "Nova recorrência"}</h2>
-            {editing && (
-              <button className="text-button" onClick={resetDraft}>
-                Cancelar
-              </button>
-            )}
-          </div>
-          <div className="segmented" role="group" aria-label="Tipo de recorrência">
-            <button type="button" className={type === "expense" ? "active" : ""} onClick={() => setType("expense")}>
-              Despesa
-            </button>
-            <button type="button" className={type === "income" ? "active" : ""} onClick={() => setType("income")}>
-              Receita
-            </button>
-          </div>
-          <label>
-            Descrição
-            <input
-              value={draft.description}
-              onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-              placeholder="Ex.: Aluguel, Netflix, Salário"
-            />
-          </label>
-          <div className="form-row">
-            <label>
-              Valor mensal
-              <MoneyInput
-                key={`${draft.id ?? "new-recurring"}-${amountInputVersion}`}
-                defaultCents={amountInCents ?? 0}
-                onChange={setAmountInCents}
-              />
-            </label>
-            <label>
-              Dia do mês
-              <select
-                value={draft.dayOfMonth}
-                onChange={(e) => setDraft({ ...draft, dayOfMonth: Number(e.target.value) })}
-              >
-                {dayOptions.map((day) => (
-                  <option key={day} value={day}>
-                    {day}
-                  </option>
-                ))}
-                <option value={31}>Último dia do mês</option>
-              </select>
-            </label>
-          </div>
-          <div className="form-row">
-            <label>
-              Conta
-              <select
-                value={draft.accountId || accounts[0]?.id || ""}
-                onChange={(e) => setDraft({ ...draft, accountId: e.target.value })}
-              >
-                {accounts.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Categoria
-              <CategorySelect
-                value={draft.categoryId}
-                onChange={(id) => setDraft({ ...draft, categoryId: id })}
-                categories={categories}
-                movementType={type}
-                allowEmpty
-                emptyLabel="Sem categoria"
-              />
-            </label>
-          </div>
-          <div className="form-row">
-            <label>
-              Começa em
-              <input
-                type="month"
-                value={draft.startMonth}
-                onChange={(e) => setDraft({ ...draft, startMonth: e.target.value })}
-              />
-            </label>
-            <label>
-              Termina em (opcional)
-              <input
-                type="month"
-                value={draft.endMonth ?? ""}
-                onChange={(e) => setDraft({ ...draft, endMonth: e.target.value || undefined })}
-              />
-            </label>
-          </div>
-          {error && <p className="form-error">{error}</p>}
-          <div className="editor-actions">
-            <button onClick={save}>
-              <Save size={16} /> {editing ? "Salvar" : "Criar recorrência"}
-            </button>
-          </div>
-        </article>
-        <article className="panel">
-          <div className="panel-title">
-            <h2>Recorrências cadastradas</h2>
-            <span>{recurring.length}</span>
-          </div>
-          {recurring.length === 0 && (
-            <div className="report-empty">
-              <Repeat />
-              <div>
-                <b>Nenhuma recorrência cadastrada</b>
-                <p>Cadastre despesas e receitas fixas para não esquecer de lançá-las todo mês.</p>
-              </div>
-            </div>
-          )}
-          <div className="recurring-list">
-            {recurring.map((item) => (
-              <div key={item.id} className={`recurring-row ${item.active ? "" : "inactive"}`}>
-                <div>
-                  <b>{item.description}</b>
-                  <small>
-                    {item.accountName}
-                    {item.categoryName ? ` · ${item.categoryName}` : ""} · todo {dayLabel(item.dayOfMonth)}
-                  </small>
-                </div>
-                <strong className={`recurring-amount ${item.amountInCents > 0 ? "positive" : "negative"}`}>
-                  {money(item.amountInCents)}
-                </strong>
-                <button className="secondary" onClick={() => toggleActive(item)}>
-                  {item.active ? "Pausar" : "Reativar"}
+      {contentReady && (
+        <div className="rules-layout">
+          <article className="panel rule-editor recurring-editor">
+            <div className="panel-title">
+              <h2>{editing ? "Editar recorrência" : "Nova recorrência"}</h2>
+              {editing && (
+                <button className="text-button" onClick={resetDraft}>
+                  Cancelar
                 </button>
-                <div className="row-actions">
-                  <button
-                    className="icon-button"
-                    title="Editar"
-                    aria-label={`Editar ${item.description}`}
-                    onClick={() => edit(item)}
-                  >
-                    <Pencil size={14} />
-                  </button>
-                  <button
-                    className="danger icon-button"
-                    title="Excluir"
-                    aria-label={`Excluir ${item.description}`}
-                    onClick={() => archive(item.id)}
-                  >
-                    <Archive size={14} />
-                  </button>
+              )}
+            </div>
+            <div className="segmented" role="group" aria-label="Tipo de recorrência">
+              <button type="button" className={type === "expense" ? "active" : ""} onClick={() => setType("expense")}>
+                Despesa
+              </button>
+              <button type="button" className={type === "income" ? "active" : ""} onClick={() => setType("income")}>
+                Receita
+              </button>
+            </div>
+            <label>
+              Descrição
+              <input
+                value={draft.description}
+                onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+                placeholder="Ex.: Aluguel, Netflix, Salário"
+              />
+            </label>
+            <div className="form-row">
+              <label>
+                Valor mensal
+                <MoneyInput
+                  key={`${draft.id ?? "new-recurring"}-${amountInputVersion}`}
+                  defaultCents={amountInCents ?? 0}
+                  onChange={setAmountInCents}
+                />
+              </label>
+              <label>
+                Dia do mês
+                <Select
+                  value={draft.dayOfMonth}
+                  onChange={(value) => setDraft({ ...draft, dayOfMonth: Number(value) })}
+                  options={[
+                    ...dayOptions.map((day) => ({ value: String(day), label: String(day) })),
+                    { value: "31", label: "Último dia do mês" },
+                  ]}
+                />
+              </label>
+            </div>
+            <div className="form-row">
+              <label>
+                Conta
+                <Select
+                  value={draft.accountId || accounts[0]?.id || ""}
+                  onChange={(value) => setDraft({ ...draft, accountId: value })}
+                  options={accounts.map((account) => ({ value: account.id, label: account.name }))}
+                />
+              </label>
+              <label>
+                Categoria
+                <CategorySelect
+                  value={draft.categoryId}
+                  onChange={(id) => setDraft({ ...draft, categoryId: id })}
+                  categories={categories}
+                  movementType={type}
+                  allowEmpty
+                  emptyLabel="Sem categoria"
+                />
+              </label>
+            </div>
+            <div className="form-row">
+              <label>
+                Começa em
+                <input
+                  type="month"
+                  value={draft.startMonth}
+                  onChange={(e) => setDraft({ ...draft, startMonth: e.target.value })}
+                />
+              </label>
+              <label>
+                Termina em (opcional)
+                <input
+                  type="month"
+                  value={draft.endMonth ?? ""}
+                  onChange={(e) => setDraft({ ...draft, endMonth: e.target.value || undefined })}
+                />
+              </label>
+            </div>
+            {error && <p className="form-error">{error}</p>}
+            <div className="editor-actions">
+              <button onClick={save}>
+                <Save size={16} /> {editing ? "Salvar" : "Criar recorrência"}
+              </button>
+            </div>
+          </article>
+          <article className="panel">
+            <div className="panel-title">
+              <h2>Recorrências cadastradas</h2>
+              <span>{recurring.length}</span>
+            </div>
+            {recurring.length === 0 && (
+              <div className="report-empty">
+                <Repeat />
+                <div>
+                  <b>Nenhuma recorrência cadastrada</b>
+                  <p>Cadastre despesas e receitas fixas para não esquecer de lançá-las todo mês.</p>
                 </div>
               </div>
-            ))}
-          </div>
-        </article>
-      </div>
+            )}
+            <div className="recurring-list">
+              {recurring.map((item) => (
+                <div key={item.id} className={`recurring-row ${item.active ? "" : "inactive"}`}>
+                  <div>
+                    <b>{item.description}</b>
+                    <small>
+                      {item.accountName}
+                      {item.categoryName ? ` · ${item.categoryName}` : ""} · todo {dayLabel(item.dayOfMonth)}
+                    </small>
+                  </div>
+                  <strong className={`recurring-amount ${item.amountInCents > 0 ? "positive" : "negative"}`}>
+                    {money(item.amountInCents)}
+                  </strong>
+                  <button className="secondary" onClick={() => toggleActive(item)}>
+                    {item.active ? "Pausar" : "Reativar"}
+                  </button>
+                  <div className="row-actions">
+                    <button
+                      className="icon-button"
+                      title="Editar"
+                      aria-label={`Editar ${item.description}`}
+                      onClick={() => edit(item)}
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button
+                      className="danger icon-button"
+                      title="Excluir"
+                      aria-label={`Excluir ${item.description}`}
+                      onClick={() => archive(item.id)}
+                    >
+                      <Archive size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </article>
+        </div>
+      )}
     </section>
   );
 }

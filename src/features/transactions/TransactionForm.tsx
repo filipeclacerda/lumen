@@ -8,6 +8,7 @@ import { CategorySelect } from "../../shared/ui/CategorySelect";
 import { useToast } from "../../shared/ui/toast";
 import { todayIso } from "../../shared/format";
 import type { Transaction } from "../../shared/types";
+import { Select } from "../../shared/ui/Select";
 
 type Props = { onClose: () => void; existing?: Transaction };
 type EntryType = "expense" | "income" | "transfer";
@@ -137,25 +138,23 @@ export function TransactionForm({ onClose, existing }: Props) {
             <div className="form-row transfer-row">
               <label>
                 De
-                <select value={resolvedAccountId} onChange={(e) => setAccountId(e.target.value)}>
-                  {accounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name}
-                    </option>
-                  ))}
-                </select>
+                <Select
+                  value={resolvedAccountId}
+                  onChange={setAccountId}
+                  options={accounts.map((account) => ({ value: account.id, label: account.name }))}
+                />
               </label>
               <ArrowRight size={16} className="transfer-arrow" aria-hidden />
               <label>
                 Para
-                <select value={resolvedToAccountId} onChange={(e) => setToAccountId(e.target.value)}>
-                  {destinationAccounts.length === 0 && <option value="">Cadastre outra conta</option>}
-                  {destinationAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name}
-                    </option>
-                  ))}
-                </select>
+                <Select
+                  value={resolvedToAccountId}
+                  onChange={setToAccountId}
+                  options={[
+                    ...(destinationAccounts.length === 0 ? [{ value: "", label: "Cadastre outra conta" }] : []),
+                    ...destinationAccounts.map((account) => ({ value: account.id, label: account.name })),
+                  ]}
+                />
               </label>
             </div>
             <div className="form-row">
@@ -185,17 +184,12 @@ export function TransactionForm({ onClose, existing }: Props) {
               </label>
               <label>
                 Conta
-                <select
+                <Select
                   value={resolvedAccountId}
-                  onChange={(e) => setAccountId(e.target.value)}
+                  onChange={setAccountId}
                   disabled={isTransferLeg}
-                >
-                  {accounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name}
-                    </option>
-                  ))}
-                </select>
+                  options={accounts.map((account) => ({ value: account.id, label: account.name }))}
+                />
               </label>
             </div>
             <label>
