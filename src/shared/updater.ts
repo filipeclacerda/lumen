@@ -39,6 +39,6 @@ export async function checkLumenUpdate(): Promise<LumenUpdate | null> {
     currentVersion: update.currentVersion,
     latestVersion: update.version,
     date: update.date,
-    notes: update.body
+    notes: update.body,
   };
 }

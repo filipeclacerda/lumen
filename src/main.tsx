@@ -12,7 +12,15 @@ initTheme();
 initZoom();
 const queryClient = new QueryClient();
 ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode><QueryClientProvider client={queryClient}><ToastProvider><BrowserRouter><App/></BrowserRouter></ToastProvider></QueryClientProvider></React.StrictMode>
+  <React.StrictMode>
+    <QueryClientProvider client={queryClient}>
+      <ToastProvider>
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      </ToastProvider>
+    </QueryClientProvider>
+  </React.StrictMode>,
 );
 
 // The window starts hidden (`visible: false` in tauri.conf.json) to avoid a white
@@ -21,7 +29,10 @@ if ("__TAURI_INTERNALS__" in window) {
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       const win = getCurrentWindow();
-      void win.show().then(() => win.setFocus()).catch(() => {});
+      void win
+        .show()
+        .then(() => win.setFocus())
+        .catch(() => {});
     });
   });
 }

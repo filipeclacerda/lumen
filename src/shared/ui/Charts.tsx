@@ -18,12 +18,7 @@ import {
 } from "recharts";
 import { money, shortDate } from "../format";
 import { monthLabel } from "../period";
-import type {
-  CategoryReport,
-  DailyReportPoint,
-  FinancialReport,
-  MonthlyReportPoint,
-} from "../types";
+import type { CategoryReport, DailyReportPoint, FinancialReport, MonthlyReportPoint } from "../types";
 
 export const compactMoney = (value: number) =>
   new Intl.NumberFormat("pt-BR", { notation: "compact", maximumFractionDigits: 1 }).format(value / 100);
@@ -46,16 +41,7 @@ export const chartTooltipLabelStyle = {
 
 export const chartMoneyFormatter = (value: unknown) => money(Number(value ?? 0));
 
-export const chartPalette = [
-  "#247258",
-  "#e5a142",
-  "#728bba",
-  "#a778ba",
-  "#d66d68",
-  "#4c94a8",
-  "#9c7661",
-  "#568a91",
-];
+export const chartPalette = ["#247258", "#e5a142", "#728bba", "#a778ba", "#d66d68", "#4c94a8", "#9c7661", "#568a91"];
 
 const sourceKindToLabel: Record<"bank" | "credit_card", string> = {
   bank: "Conta bancária",
@@ -89,7 +75,7 @@ export function EmptyChart({ message = "Sem dados suficientes para este gráfico
 export function SpendingBarsChart({ data }: { data: MonthlyReportPoint[] }) {
   const chartData = useMemo(
     () =>
-      data.map(point => ({
+      data.map((point) => ({
         month: monthLabel(point.month),
         Receita: point.incomeInCents,
         Gasto: point.expensesInCents,
@@ -105,7 +91,12 @@ export function SpendingBarsChart({ data }: { data: MonthlyReportPoint[] }) {
       <ResponsiveContainer width="100%" height={230}>
         <ComposedChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
           <CartesianGrid stroke="var(--border)" vertical={false} />
-          <XAxis dataKey="month" tick={{ fill: "var(--text-muted)", fontSize: 11 }} axisLine={{ stroke: "var(--border-strong)" }} tickLine={false} />
+          <XAxis
+            dataKey="month"
+            tick={{ fill: "var(--text-muted)", fontSize: 11 }}
+            axisLine={{ stroke: "var(--border-strong)" }}
+            tickLine={false}
+          />
           <YAxis
             tickFormatter={moneyAxisFormatter}
             tick={{ fill: "var(--text-muted)", fontSize: 11 }}
@@ -114,7 +105,7 @@ export function SpendingBarsChart({ data }: { data: MonthlyReportPoint[] }) {
             width={56}
           />
           <Tooltip
-            formatter={value => chartMoneyFormatter(value)}
+            formatter={(value) => chartMoneyFormatter(value)}
             contentStyle={chartTooltipStyle}
             labelStyle={chartTooltipLabelStyle}
             itemStyle={chartTooltipItemStyle}
@@ -149,7 +140,7 @@ export function CategoryBarsChart({
   const rows = useMemo(
     () =>
       categories
-        .filter(category => category.amountInCents > 0)
+        .filter((category) => category.amountInCents > 0)
         .slice(0, limit)
         .map((category, index) => {
           const categoryKey = getCategoryKey(category);
@@ -169,13 +160,15 @@ export function CategoryBarsChart({
   return (
     <div className="chart-wrap category-bars-chart">
       <ResponsiveContainer width="100%" height={Math.max(rows.length * 38, 220)}>
-        <BarChart
-          layout="vertical"
-          data={rows}
-          margin={{ top: 4, right: 16, bottom: 6, left: 12 }}
-        >
+        <BarChart layout="vertical" data={rows} margin={{ top: 4, right: 16, bottom: 6, left: 12 }}>
           <CartesianGrid stroke="var(--border)" horizontal={false} />
-          <XAxis type="number" tickFormatter={moneyAxisFormatter} tick={{ fill: "var(--text-muted)", fontSize: 11 }} axisLine={false} tickLine={false} />
+          <XAxis
+            type="number"
+            tickFormatter={moneyAxisFormatter}
+            tick={{ fill: "var(--text-muted)", fontSize: 11 }}
+            axisLine={false}
+            tickLine={false}
+          />
           <YAxis
             dataKey="category"
             type="category"
@@ -185,7 +178,7 @@ export function CategoryBarsChart({
             tickLine={false}
           />
           <Tooltip
-            formatter={value => chartMoneyFormatter(value)}
+            formatter={(value) => chartMoneyFormatter(value)}
             labelStyle={chartTooltipLabelStyle}
             itemStyle={chartTooltipItemStyle}
             contentStyle={chartTooltipStyle}
@@ -196,14 +189,14 @@ export function CategoryBarsChart({
             name={valueLabel}
             radius={[0, 8, 8, 0]}
             cursor="pointer"
-            onClick={entry => {
+            onClick={(entry) => {
               const payload = (entry as { payload?: { categoryKey?: string } })?.payload;
               const categoryKey = payload?.categoryKey;
               if (!categoryKey) return;
               onSelect(categoryKey === selectedCategoryKey ? undefined : categoryKey);
             }}
           >
-            {rows.map((row, index) => (
+            {rows.map((row) => (
               <Cell
                 key={row.categoryKey}
                 fill={row.color}
@@ -213,9 +206,9 @@ export function CategoryBarsChart({
             <LabelList
               dataKey="amount"
               position="right"
-              formatter={value => moneyAxisFormatter(value as number)}
+              formatter={(value) => moneyAxisFormatter(value as number)}
               fill="var(--text-muted)"
-            fontSize={10}
+              fontSize={10}
             />
           </Bar>
         </BarChart>
@@ -229,7 +222,7 @@ export function SourceComparisonChart({ sources }: { sources: FinancialReport["s
     () =>
       [...sources]
         .sort((a, b) => b.amountInCents - a.amountInCents)
-        .map(source => ({
+        .map((source) => ({
           kind: source.source,
           label: sourceKindToLabel[source.source],
           amount: source.amountInCents,
@@ -246,7 +239,12 @@ export function SourceComparisonChart({ sources }: { sources: FinancialReport["s
       <ResponsiveContainer width="100%" height={190}>
         <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 18, bottom: 0, left: 8 }}>
           <CartesianGrid stroke="var(--border)" horizontal={false} />
-          <XAxis type="number" tickFormatter={moneyAxisFormatter} tick={{ fill: "var(--text-muted)", fontSize: 11 }} axisLine={{ stroke: "var(--border-strong)" }} />
+          <XAxis
+            type="number"
+            tickFormatter={moneyAxisFormatter}
+            tick={{ fill: "var(--text-muted)", fontSize: 11 }}
+            axisLine={{ stroke: "var(--border-strong)" }}
+          />
           <YAxis
             type="category"
             dataKey="label"
@@ -256,22 +254,17 @@ export function SourceComparisonChart({ sources }: { sources: FinancialReport["s
             tickLine={false}
           />
           <Tooltip
-            formatter={value => chartMoneyFormatter(value)}
-            labelFormatter={label => String(label)}
+            formatter={(value) => chartMoneyFormatter(value)}
+            labelFormatter={(label) => String(label)}
             contentStyle={chartTooltipStyle}
             labelStyle={chartTooltipLabelStyle}
             itemStyle={chartTooltipItemStyle}
           />
           <Bar dataKey="amount" fill="var(--brand)" radius={[0, 8, 8, 0]}>
-            {chartData.map(item => (
+            {chartData.map((item) => (
               <Cell key={item.kind} fill={item.color} />
             ))}
-            <LabelList
-              dataKey="share"
-              position="right"
-              fill="var(--text-muted)"
-              fontSize={11}
-            />
+            <LabelList dataKey="share" position="right" fill="var(--text-muted)" fontSize={11} />
           </Bar>
         </BarChart>
       </ResponsiveContainer>
@@ -286,7 +279,7 @@ type CumulativeExpensesChartPoint = DailyReportPoint & {
 export function CumulativeExpensesChart({ data }: { data: DailyReportPoint[] }) {
   const rows = useMemo<CumulativeExpensesChartPoint[]>(
     () =>
-      data.map(point => ({
+      data.map((point) => ({
         ...point,
         monthDay: shortDate(point.date),
       })),
@@ -297,13 +290,10 @@ export function CumulativeExpensesChart({ data }: { data: DailyReportPoint[] }) 
   if (!rows.length) return <EmptyChart />;
 
   const latest = rows[rows.length - 1];
-  const max = Math.max(...rows.map(item => item.cumulativeInCents), 1);
+  const max = Math.max(...rows.map((item) => item.cumulativeInCents), 1);
   const total = latest?.cumulativeInCents ?? 0;
   const average = rows.length ? Math.round(total / rows.length) : 0;
-  const highest = rows.reduce(
-    (best, item) => (item.amountInCents > best.amountInCents ? item : best),
-    rows[0],
-  );
+  const highest = rows.reduce((best, item) => (item.amountInCents > best.amountInCents ? item : best), rows[0]);
 
   const active = focused ?? latest;
 
@@ -314,8 +304,9 @@ export function CumulativeExpensesChart({ data }: { data: DailyReportPoint[] }) 
           <AreaChart
             data={rows}
             margin={{ top: 8, right: 8, bottom: 2, left: 8 }}
-            onMouseMove={state => {
-              const payload = (state as { activePayload?: { payload?: CumulativeExpensesChartPoint }[] })?.activePayload?.[0]?.payload;
+            onMouseMove={(state) => {
+              const payload = (state as { activePayload?: { payload?: CumulativeExpensesChartPoint }[] })
+                ?.activePayload?.[0]?.payload;
               if (payload) setFocused(payload);
             }}
             onMouseLeave={() => setFocused(undefined)}
@@ -327,7 +318,12 @@ export function CumulativeExpensesChart({ data }: { data: DailyReportPoint[] }) 
               </linearGradient>
             </defs>
             <CartesianGrid stroke="var(--border)" vertical={false} />
-            <XAxis dataKey="monthDay" tick={{ fill: "var(--text-muted)", fontSize: 11 }} axisLine={{ stroke: "var(--border-strong)" }} tickLine={false} />
+            <XAxis
+              dataKey="monthDay"
+              tick={{ fill: "var(--text-muted)", fontSize: 11 }}
+              axisLine={{ stroke: "var(--border-strong)" }}
+              tickLine={false}
+            />
             <YAxis
               tickFormatter={moneyAxisFormatter}
               tick={{ fill: "var(--text-muted)", fontSize: 11 }}
@@ -336,14 +332,21 @@ export function CumulativeExpensesChart({ data }: { data: DailyReportPoint[] }) 
               width={56}
               domain={[0, Math.max(max * 1.08, 1)]}
             />
-          <Tooltip
-            formatter={value => chartMoneyFormatter(value)}
-            labelFormatter={label => String(label)}
-            contentStyle={chartTooltipStyle}
-            labelStyle={chartTooltipLabelStyle}
-            itemStyle={chartTooltipItemStyle}
-          />
-            <Area dataKey="cumulativeInCents" name="Gasto acumulado" type="monotone" stroke="var(--brand)" strokeWidth={2} fill="url(#cumulativeFill)" />
+            <Tooltip
+              formatter={(value) => chartMoneyFormatter(value)}
+              labelFormatter={(label) => String(label)}
+              contentStyle={chartTooltipStyle}
+              labelStyle={chartTooltipLabelStyle}
+              itemStyle={chartTooltipItemStyle}
+            />
+            <Area
+              dataKey="cumulativeInCents"
+              name="Gasto acumulado"
+              type="monotone"
+              stroke="var(--brand)"
+              strokeWidth={2}
+              fill="url(#cumulativeFill)"
+            />
             <Line dataKey="amountInCents" name="Gasto do dia" stroke="var(--text-soft)" strokeWidth={1.5} dot={false} />
           </AreaChart>
         </ResponsiveContainer>
@@ -378,7 +381,7 @@ export function CumulativeExpensesChart({ data }: { data: DailyReportPoint[] }) 
 export function SourceDonutChart({ sources }: { sources: FinancialReport["sources"] }) {
   const data = useMemo(
     () =>
-      sources.map(source => ({
+      sources.map((source) => ({
         label: sourceKindToLabel[source.source],
         value: source.amountInCents,
       })),
@@ -405,7 +408,7 @@ export function SourceDonutChart({ sources }: { sources: FinancialReport["source
             ))}
           </Pie>
           <Tooltip
-            formatter={value => chartMoneyFormatter(value)}
+            formatter={(value) => chartMoneyFormatter(value)}
             contentStyle={chartTooltipStyle}
             labelStyle={chartTooltipLabelStyle}
             itemStyle={chartTooltipItemStyle}

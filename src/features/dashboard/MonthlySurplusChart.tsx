@@ -1,5 +1,21 @@
-import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { chartMoneyFormatter, chartTooltipItemStyle, chartTooltipLabelStyle, chartTooltipStyle, moneyAxisFormatter } from "../../shared/ui/Charts";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import {
+  chartMoneyFormatter,
+  chartTooltipItemStyle,
+  chartTooltipLabelStyle,
+  chartTooltipStyle,
+  moneyAxisFormatter,
+} from "../../shared/ui/Charts";
 import { monthLabel } from "../../shared/period";
 import type { MonthlyReportPoint } from "../../shared/types";
 
@@ -36,7 +52,7 @@ function SurplusTooltip({ active, label, payload }: SurplusTooltipProps) {
 
 /** Sobra final do mês depois de gastos e investimentos, para leitura rápida no dashboard. */
 export function MonthlySurplusChart({ monthly }: Props) {
-  const data: MonthlySurplusChartPoint[] = monthly.map(point => ({
+  const data: MonthlySurplusChartPoint[] = monthly.map((point) => ({
     label: monthLabel(point.month),
     Receitas: point.incomeInCents,
     Despesas: point.expensesInCents,
@@ -49,8 +65,19 @@ export function MonthlySurplusChart({ monthly }: Props) {
       <ResponsiveContainer width="100%" height={220}>
         <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
           <CartesianGrid stroke="var(--border)" vertical={false} />
-          <XAxis dataKey="label" tick={{ fill: "var(--text-muted)", fontSize: 12 }} axisLine={{ stroke: "var(--border-strong)" }} tickLine={false} />
-          <YAxis tickFormatter={moneyAxisFormatter} tick={{ fill: "var(--text-muted)", fontSize: 12 }} axisLine={false} tickLine={false} width={52} />
+          <XAxis
+            dataKey="label"
+            tick={{ fill: "var(--text-muted)", fontSize: 12 }}
+            axisLine={{ stroke: "var(--border-strong)" }}
+            tickLine={false}
+          />
+          <YAxis
+            tickFormatter={moneyAxisFormatter}
+            tick={{ fill: "var(--text-muted)", fontSize: 12 }}
+            axisLine={false}
+            tickLine={false}
+            width={52}
+          />
           <ReferenceLine y={0} stroke="var(--border-strong)" />
           <Tooltip
             content={<SurplusTooltip />}
@@ -60,7 +87,7 @@ export function MonthlySurplusChart({ monthly }: Props) {
             cursor={{ fill: "var(--surface-2)" }}
           />
           <Bar dataKey="Sobra" radius={[4, 4, 0, 0]} maxBarSize={32}>
-            {data.map(point => (
+            {data.map((point) => (
               <Cell key={point.label} fill={point.Sobra >= 0 ? "var(--brand)" : "var(--danger)"} />
             ))}
           </Bar>

@@ -1,7 +1,20 @@
 import { useEffect, useState } from "react";
 import { NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BarChart3, CreditCard, FileUp, LayoutDashboard, Menu, Moon, Repeat, Settings, Sun, Tags, Wallet, WalletCards } from "lucide-react";
+import {
+  BarChart3,
+  CreditCard,
+  FileUp,
+  LayoutDashboard,
+  Menu,
+  Moon,
+  Repeat,
+  Settings,
+  Sun,
+  Tags,
+  Wallet,
+  WalletCards,
+} from "lucide-react";
 import { getTheme, setTheme, type Theme } from "../shared/theme";
 import { Dashboard } from "../features/dashboard/Dashboard";
 import { Transactions } from "../features/transactions/Transactions";
@@ -27,24 +40,28 @@ const nav = [
   ["/accounts", "Contas e cartões", WalletCards],
   ["/categories", "Categorias e regras", Tags],
   ["/reports", "Relatórios", BarChart3],
-  ["/settings", "Configurações", Settings]
+  ["/settings", "Configurações", Settings],
 ] as const;
 
 export function App() {
   const client = useQueryClient();
   const navigate = useNavigate();
   const [theme, setThemeState] = useState<Theme>(getTheme());
-  const toggleTheme = () => { const next: Theme = theme === "dark" ? "light" : "dark"; setTheme(next); setThemeState(next) };
+  const toggleTheme = () => {
+    const next: Theme = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    setThemeState(next);
+  };
   const [collapsed, setCollapsed] = useState(false);
   const { data: bootstrap, isLoading } = useQuery({ queryKey: ["bootstrap"], queryFn: api.bootstrap });
   useEffect(() => {
     if (!bootstrap?.onboardingCompleted) return;
-    api.syncRecurringTransactions().then(async count => {
+    api.syncRecurringTransactions().then(async (count) => {
       if (count > 0) {
         await Promise.all([
           client.invalidateQueries({ queryKey: ["transactions"] }),
           client.invalidateQueries({ queryKey: ["summary"] }),
-          client.invalidateQueries({ queryKey: ["financial-report"] })
+          client.invalidateQueries({ queryKey: ["financial-report"] }),
         ]);
       }
     });
@@ -52,43 +69,79 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bootstrap?.onboardingCompleted]);
   if (isLoading || !bootstrap) return <div className="app-loading">Preparando seu espaço financeiro…</div>;
-  if (!bootstrap.onboardingCompleted) return <Onboarding bootstrap={bootstrap} onFinished={async destination => {
-    await Promise.all([
-      client.invalidateQueries({ queryKey: ["bootstrap"] }),
-      client.invalidateQueries({ queryKey: ["profile"] }),
-      client.invalidateQueries({ queryKey: ["accounts"] })
-    ]);
-    navigate(destination);
-  }} />;
-  return <div className={`shell ${collapsed ? "collapsed" : ""}`}>
-    <aside>
-      <div className="brand">
-        <button className="hamburger" onClick={() => setCollapsed(!collapsed)} aria-label="Menu">
-          <Menu size={20} />
-        </button>
-        <div>Lumen<br /><small>iluminando suas finanças</small></div>
-      </div>
-      <nav>{nav.map(([to, label, Icon]) => <NavLink key={to} to={to} end={to === "/"}><Icon size={18} /><span>{label}</span></NavLink>)}</nav>
-      <div className="sidebar-footer">
-        <button className="theme-toggle" onClick={toggleTheme} aria-label={theme === "dark" ? "Ativar tema claro" : "Ativar tema escuro"} title={theme === "dark" ? "Tema claro" : "Tema escuro"}>
-          {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}<span>{theme === "dark" ? "Tema claro" : "Tema escuro"}</span>
-        </button>
-        <div className="privacy">🔒 Seus dados ficam neste computador</div>
-        <div className="app-version">Lumen v{APP_VERSION}</div>
-      </div>
-    </aside>
-    <main><UpdateNotice enabled={bootstrap.onboardingCompleted} /><CommandPalette /><Routes>
-      <Route path="/" element={<Dashboard />} />
-      <Route path="/transactions" element={<Transactions />} />
-      <Route path="/recurring" element={<RecurringTransactions />} />
-      <Route path="/budget" element={<BudgetPage />} />
-      <Route path="/import" element={<ImportPage />} />
-      <Route path="/accounts" element={<AccountsCards />} />
-      <Route path="/categories" element={<CategoriesRules />} />
-      <Route path="/reports" element={<Reports />} />
-      <Route path="/settings" element={<SettingsPage />} />
-      <Route path="*" element={<Empty />} />
-    </Routes></main>
-  </div>;
+  if (!bootstrap.onboardingCompleted)
+    return (
+      <Onboarding
+        bootstrap={bootstrap}
+        onFinished={async (destination) => {
+          await Promise.all([
+            client.invalidateQueries({ queryKey: ["bootstrap"] }),
+            client.invalidateQueries({ queryKey: ["profile"] }),
+            client.invalidateQueries({ queryKey: ["accounts"] }),
+          ]);
+          navigate(destination);
+        }}
+      />
+    );
+  return (
+    <div className={`shell ${collapsed ? "collapsed" : ""}`}>
+      <aside>
+        <div className="brand">
+          <button className="hamburger" onClick={() => setCollapsed(!collapsed)} aria-label="Menu">
+            <Menu size={20} />
+          </button>
+          <div>
+            Lumen
+            <br />
+            <small>iluminando suas finanças</small>
+          </div>
+        </div>
+        <nav>
+          {nav.map(([to, label, Icon]) => (
+            <NavLink key={to} to={to} end={to === "/"}>
+              <Icon size={18} />
+              <span>{label}</span>
+            </NavLink>
+          ))}
+        </nav>
+        <div className="sidebar-footer">
+          <button
+            className="theme-toggle"
+            onClick={toggleTheme}
+            aria-label={theme === "dark" ? "Ativar tema claro" : "Ativar tema escuro"}
+            title={theme === "dark" ? "Tema claro" : "Tema escuro"}
+          >
+            {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+            <span>{theme === "dark" ? "Tema claro" : "Tema escuro"}</span>
+          </button>
+          <div className="privacy">🔒 Seus dados ficam neste computador</div>
+          <div className="app-version">Lumen v{APP_VERSION}</div>
+        </div>
+      </aside>
+      <main>
+        <UpdateNotice enabled={bootstrap.onboardingCompleted} />
+        <CommandPalette />
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/transactions" element={<Transactions />} />
+          <Route path="/recurring" element={<RecurringTransactions />} />
+          <Route path="/budget" element={<BudgetPage />} />
+          <Route path="/import" element={<ImportPage />} />
+          <Route path="/accounts" element={<AccountsCards />} />
+          <Route path="/categories" element={<CategoriesRules />} />
+          <Route path="/reports" element={<Reports />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="*" element={<Empty />} />
+        </Routes>
+      </main>
+    </div>
+  );
 }
-function Empty() { return <section><h1>Em construção</h1><p className="muted">A fundação desta área já está preparada para a próxima fase.</p></section> }
+function Empty() {
+  return (
+    <section>
+      <h1>Em construção</h1>
+      <p className="muted">A fundação desta área já está preparada para a próxima fase.</p>
+    </section>
+  );
+}

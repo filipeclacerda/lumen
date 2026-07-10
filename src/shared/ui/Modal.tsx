@@ -17,16 +17,25 @@ export function Modal({ title, onClose, children, wide }: ModalProps) {
   }, []);
   // Close on Escape; re-bind only when the handler identity changes.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
   return (
-    <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+    <div
+      className="modal-backdrop"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
       <div className={`modal${wide ? " wide-modal" : ""}`} role="dialog" aria-modal="true" aria-label={title} ref={ref}>
         <div className="modal-head">
           <h2>{title}</h2>
-          <button className="icon-button" aria-label="Fechar" onClick={onClose}><X size={16} /></button>
+          <button className="icon-button" aria-label="Fechar" onClick={onClose}>
+            <X size={16} />
+          </button>
         </div>
         {children}
       </div>

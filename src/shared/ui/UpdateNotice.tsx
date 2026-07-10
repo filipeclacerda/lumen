@@ -2,7 +2,13 @@ import { useCallback, useEffect, useState } from "react";
 import { Download, RefreshCw, X } from "lucide-react";
 import { relaunch } from "@tauri-apps/plugin-process";
 import type { DownloadEvent } from "@tauri-apps/plugin-updater";
-import { checkLumenUpdate, dismissUpdate, forceUpdateCheckEvent, isUpdateDismissed, type LumenUpdate } from "../updater";
+import {
+  checkLumenUpdate,
+  dismissUpdate,
+  forceUpdateCheckEvent,
+  isUpdateDismissed,
+  type LumenUpdate,
+} from "../updater";
 import { Modal } from "./Modal";
 import { useToast } from "./toast";
 
@@ -69,7 +75,7 @@ export function UpdateNotice({ enabled }: { enabled: boolean }) {
       });
       setInstallState("ready");
       toast("Atualização instalada. Reiniciando o Lumen…");
-      await new Promise(resolve => setTimeout(resolve, 900));
+      await new Promise((resolve) => setTimeout(resolve, 900));
       await relaunch();
     } catch (e) {
       setInstallState("idle");
@@ -80,32 +86,58 @@ export function UpdateNotice({ enabled }: { enabled: boolean }) {
 
   const busy = installState === "downloading" || installState === "installing" || installState === "ready";
 
-  return <>
-    <div className="update-banner" role="status">
-      <div>
-        <strong>Nova versão disponível</strong>
-        <span>Lumen {updateInfo.latestVersion} já pode ser instalado.</span>
-      </div>
-      <div className="update-banner-actions">
-        <button className="secondary" onClick={() => setDetailsOpen(true)}><Download size={15} /> Ver atualização</button>
-        <button className="icon-button" aria-label="Ignorar esta versão" title="Ignorar esta versão" onClick={closeForThisVersion}><X size={15} /></button>
-      </div>
-    </div>
-    {detailsOpen && <Modal title="Atualização disponível" onClose={() => !busy && setDetailsOpen(false)}>
-      <div className="modal-form">
-        <p className="muted">Você está usando a versão {updateInfo.currentVersion}. A versão {updateInfo.latestVersion} está pronta para instalação.</p>
-        {updateInfo.notes && <div className="update-notes">{updateInfo.notes}</div>}
-        {busy && <div className="update-progress" aria-label={`Progresso da atualização ${progress}%`}>
-          <i style={{ width: `${progress}%` }} />
-        </div>}
-        <div className="editor-actions">
-          <button className="secondary" onClick={closeForThisVersion} disabled={busy}>Agora não</button>
-          <button onClick={installUpdate} disabled={busy}>
-            {busy ? <RefreshCw size={15} /> : <Download size={15} />}
-            {installState === "downloading" ? `Baixando ${progress}%` : installState === "installing" ? "Instalando…" : installState === "ready" ? "Reiniciando…" : "Instalar agora"}
+  return (
+    <>
+      <div className="update-banner" role="status">
+        <div>
+          <strong>Nova versão disponível</strong>
+          <span>Lumen {updateInfo.latestVersion} já pode ser instalado.</span>
+        </div>
+        <div className="update-banner-actions">
+          <button className="secondary" onClick={() => setDetailsOpen(true)}>
+            <Download size={15} /> Ver atualização
+          </button>
+          <button
+            className="icon-button"
+            aria-label="Ignorar esta versão"
+            title="Ignorar esta versão"
+            onClick={closeForThisVersion}
+          >
+            <X size={15} />
           </button>
         </div>
       </div>
-    </Modal>}
-  </>;
+      {detailsOpen && (
+        <Modal title="Atualização disponível" onClose={() => !busy && setDetailsOpen(false)}>
+          <div className="modal-form">
+            <p className="muted">
+              Você está usando a versão {updateInfo.currentVersion}. A versão {updateInfo.latestVersion} está pronta
+              para instalação.
+            </p>
+            {updateInfo.notes && <div className="update-notes">{updateInfo.notes}</div>}
+            {busy && (
+              <div className="update-progress" aria-label={`Progresso da atualização ${progress}%`}>
+                <i style={{ width: `${progress}%` }} />
+              </div>
+            )}
+            <div className="editor-actions">
+              <button className="secondary" onClick={closeForThisVersion} disabled={busy}>
+                Agora não
+              </button>
+              <button onClick={installUpdate} disabled={busy}>
+                {busy ? <RefreshCw size={15} /> : <Download size={15} />}
+                {installState === "downloading"
+                  ? `Baixando ${progress}%`
+                  : installState === "installing"
+                    ? "Instalando…"
+                    : installState === "ready"
+                      ? "Reiniciando…"
+                      : "Instalar agora"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
 }

@@ -199,7 +199,7 @@ fn build_pdf(title: &str, lines: &[String]) -> Vec<u8> {
         ));
         objects.push(format!(
             "<< /Length {} >>\nstream\n{}endstream",
-            content.as_bytes().len(),
+            content.len(),
             content
         ));
     }

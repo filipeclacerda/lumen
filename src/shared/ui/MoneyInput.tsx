@@ -23,7 +23,7 @@ export function MoneyInput({ defaultCents = 0, onChange, autoFocus, id, disabled
         value={text}
         placeholder="0,00"
         disabled={disabled}
-        onChange={e => {
+        onChange={(e) => {
           const masked = maskCurrency(e.target.value);
           setText(masked);
           onChange(masked === "" ? null : parseMoneyToCents(masked));

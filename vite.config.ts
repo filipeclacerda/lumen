@@ -18,13 +18,13 @@ export default defineConfig({
         "**/.git/**",
         "**/target/**",
         "**/dist/**",
-        "**/*.tsbuildinfo"
+        "**/*.tsbuildinfo",
       ],
-      usePolling: true
-    }
+      usePolling: true,
+    },
   },
   envPrefix: ["VITE_", "TAURI_"],
   test: {
-    exclude: ["**/node_modules/**", "**/dist/**", "**/.claude/worktrees/**"]
-  }
+    exclude: ["**/node_modules/**", "**/dist/**", "**/.claude/worktrees/**"],
+  },
 });

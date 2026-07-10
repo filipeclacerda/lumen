@@ -41,11 +41,7 @@ export const centsToInput = (cents: number) => {
 };
 
 /** Lowercases and strips diacritics, for accent-insensitive text comparisons. */
-export const normalizeText = (value: string): string =>
-  value
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "");
+export const normalizeText = (value: string): string => value.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
 /** Suggests a rule-matching pattern from a transaction description by stripping
  * dates, installment markers ("PARC 02/06") and long digit runs (card/document

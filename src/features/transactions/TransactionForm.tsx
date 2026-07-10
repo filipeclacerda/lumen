@@ -22,7 +22,7 @@ export function TransactionForm({ onClose, existing }: Props) {
   const [accountId, setAccountId] = useState(existing?.accountId ?? "");
   const [toAccountId, setToAccountId] = useState("");
   const [type, setType] = useState<EntryType>(
-    existing?.isTransferLeg ? "transfer" : existing && existing.amountInCents > 0 ? "income" : "expense"
+    existing?.isTransferLeg ? "transfer" : existing && existing.amountInCents > 0 ? "income" : "expense",
   );
   const [cents, setCents] = useState<number | null>(existing ? Math.abs(existing.amountInCents) : null);
   const [date, setDate] = useState(existing?.date ?? todayIso());
@@ -32,8 +32,9 @@ export function TransactionForm({ onClose, existing }: Props) {
   const [saving, setSaving] = useState(false);
 
   const resolvedAccountId = accountId || accounts[0]?.id || "";
-  const destinationAccounts = accounts.filter(a => a.id !== resolvedAccountId);
-  const resolvedToAccountId = toAccountId && toAccountId !== resolvedAccountId ? toAccountId : destinationAccounts[0]?.id || "";
+  const destinationAccounts = accounts.filter((a) => a.id !== resolvedAccountId);
+  const resolvedToAccountId =
+    toAccountId && toAccountId !== resolvedAccountId ? toAccountId : destinationAccounts[0]?.id || "";
 
   async function invalidate() {
     await Promise.all([
@@ -46,29 +47,50 @@ export function TransactionForm({ onClose, existing }: Props) {
 
   async function submit() {
     setError("");
-    if (!resolvedAccountId) { setError("Selecione uma conta."); return; }
-    if (cents === null || cents <= 0) { setError("Informe um valor maior que zero."); return; }
+    if (!resolvedAccountId) {
+      setError("Selecione uma conta.");
+      return;
+    }
+    if (cents === null || cents <= 0) {
+      setError("Informe um valor maior que zero.");
+      return;
+    }
     setSaving(true);
     try {
       if (type === "transfer" && !editing) {
-        if (!resolvedToAccountId) { setError("Selecione a conta de destino."); setSaving(false); return; }
+        if (!resolvedToAccountId) {
+          setError("Selecione a conta de destino.");
+          setSaving(false);
+          return;
+        }
         await api.createTransfer({
-          fromAccountId: resolvedAccountId, toAccountId: resolvedToAccountId, date,
-          amountInCents: cents, description: description.trim() || undefined,
+          fromAccountId: resolvedAccountId,
+          toAccountId: resolvedToAccountId,
+          date,
+          amountInCents: cents,
+          description: description.trim() || undefined,
         });
         await invalidate();
         toast("Transferência registrada");
         onClose();
         return;
       }
-      if (description.trim().length < 1) { setError("Descreva a transação."); setSaving(false); return; }
+      if (description.trim().length < 1) {
+        setError("Descreva a transação.");
+        setSaving(false);
+        return;
+      }
       const amountInCents = isTransferLeg && existing ? existing.amountInCents : type === "income" ? cents : -cents;
       const input = {
-        id: existing?.id, accountId: isTransferLeg && existing ? existing.accountId : resolvedAccountId,
+        id: existing?.id,
+        accountId: isTransferLeg && existing ? existing.accountId : resolvedAccountId,
         date: isTransferLeg && existing ? existing.date : date,
-        description: description.trim(), amountInCents, categoryId: categoryId || undefined,
+        description: description.trim(),
+        amountInCents,
+        categoryId: categoryId || undefined,
       };
-      if (editing) await api.updateTransaction(input); else await api.createTransaction(input);
+      if (editing) await api.updateTransaction(input);
+      else await api.createTransaction(input);
       await invalidate();
       toast(editing ? "Transação atualizada" : "Transação adicionada");
       onClose();
@@ -83,29 +105,75 @@ export function TransactionForm({ onClose, existing }: Props) {
     <Modal title={editing ? "Editar transação" : "Nova transação"} onClose={onClose}>
       <div className="modal-form">
         <div className="segmented" role="group" aria-label="Tipo de transação">
-          <button type="button" className={type === "expense" ? "active" : ""} onClick={() => setType("expense")}>Despesa</button>
-          <button type="button" className={type === "income" ? "active" : ""} onClick={() => setType("income")}>Receita</button>
-          <button type="button" className={type === "transfer" ? "active" : ""} onClick={() => setType("transfer")} disabled={editing}>Transferência</button>
+          <button type="button" className={type === "expense" ? "active" : ""} onClick={() => setType("expense")}>
+            Despesa
+          </button>
+          <button type="button" className={type === "income" ? "active" : ""} onClick={() => setType("income")}>
+            Receita
+          </button>
+          <button
+            type="button"
+            className={type === "transfer" ? "active" : ""}
+            onClick={() => setType("transfer")}
+            disabled={editing}
+          >
+            Transferência
+          </button>
         </div>
-        {isTransferLeg && <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-          Esta transação faz parte de uma transferência; valor, data e contas ficam travados para manter as duas pernas sincronizadas.
-        </p>}
-        <label>Valor<MoneyInput defaultCents={existing ? Math.abs(existing.amountInCents) : 0} onChange={setCents} autoFocus disabled={isTransferLeg} /></label>
+        {isTransferLeg && (
+          <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+            Esta transação faz parte de uma transferência; valor, data e contas ficam travados para manter as duas
+            pernas sincronizadas.
+          </p>
+        )}
+        <label>
+          Valor
+          <MoneyInput
+            defaultCents={existing ? Math.abs(existing.amountInCents) : 0}
+            onChange={setCents}
+            autoFocus
+            disabled={isTransferLeg}
+          />
+        </label>
         {type === "transfer" && !editing ? (
           <>
             <div className="form-row transfer-row">
-              <label>De<select value={resolvedAccountId} onChange={e => setAccountId(e.target.value)}>
-                {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select></label>
+              <label>
+                De
+                <select value={resolvedAccountId} onChange={(e) => setAccountId(e.target.value)}>
+                  {accounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <ArrowRight size={16} className="transfer-arrow" aria-hidden />
-              <label>Para<select value={resolvedToAccountId} onChange={e => setToAccountId(e.target.value)}>
-                {destinationAccounts.length === 0 && <option value="">Cadastre outra conta</option>}
-                {destinationAccounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select></label>
+              <label>
+                Para
+                <select value={resolvedToAccountId} onChange={(e) => setToAccountId(e.target.value)}>
+                  {destinationAccounts.length === 0 && <option value="">Cadastre outra conta</option>}
+                  {destinationAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
             <div className="form-row">
-              <label>Data<input type="date" value={date} onChange={e => setDate(e.target.value)} /></label>
-              <label>Descrição (opcional)<input value={description} onChange={e => setDescription(e.target.value)} placeholder="Ex.: Reserva de emergência" /></label>
+              <label>
+                Data
+                <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+              </label>
+              <label>
+                Descrição (opcional)
+                <input
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Ex.: Reserva de emergência"
+                />
+              </label>
             </div>
             <p className="muted" style={{ fontSize: 13, margin: 0 }}>
               A transferência não conta como receita nem despesa — apenas move dinheiro entre suas contas.
@@ -114,15 +182,36 @@ export function TransactionForm({ onClose, existing }: Props) {
         ) : (
           <>
             <div className="form-row">
-              <label>Data<input type="date" value={date} onChange={e => setDate(e.target.value)} disabled={isTransferLeg} /></label>
-              <label>Conta<select value={resolvedAccountId} onChange={e => setAccountId(e.target.value)} disabled={isTransferLeg}>
-                {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select></label>
+              <label>
+                Data
+                <input type="date" value={date} onChange={(e) => setDate(e.target.value)} disabled={isTransferLeg} />
+              </label>
+              <label>
+                Conta
+                <select
+                  value={resolvedAccountId}
+                  onChange={(e) => setAccountId(e.target.value)}
+                  disabled={isTransferLeg}
+                >
+                  {accounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
-            <label>Descrição<input value={description} onChange={e => setDescription(e.target.value)} placeholder="Ex.: Mercado, salário, farmácia" /></label>
+            <label>
+              Descrição
+              <input
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Ex.: Mercado, salário, farmácia"
+              />
+            </label>
             <CategorySelect
               value={categoryId}
-              onChange={id => setCategoryId(id ?? "")}
+              onChange={(id) => setCategoryId(id ?? "")}
               categories={categories}
               movementType={type}
               allowEmpty
@@ -132,8 +221,13 @@ export function TransactionForm({ onClose, existing }: Props) {
         )}
         {error && <p className="form-error">{error}</p>}
         <div className="editor-actions">
-          <button className="secondary" onClick={onClose} disabled={saving}>Cancelar</button>
-          <button onClick={submit} disabled={saving || (type === "transfer" && !editing && destinationAccounts.length === 0)}>
+          <button className="secondary" onClick={onClose} disabled={saving}>
+            Cancelar
+          </button>
+          <button
+            onClick={submit}
+            disabled={saving || (type === "transfer" && !editing && destinationAccounts.length === 0)}
+          >
             {saving ? "Salvando…" : editing ? "Salvar" : type === "transfer" ? "Transferir" : "Adicionar"}
           </button>
         </div>

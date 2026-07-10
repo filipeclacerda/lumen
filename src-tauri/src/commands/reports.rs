@@ -7,6 +7,8 @@ use uuid::Uuid;
 
 use crate::{application::state::AppState, error::AppError};
 
+type KindCategoryMap = HashMap<Option<String>, (String, Option<String>, i64)>;
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReportFilter {
@@ -262,7 +264,7 @@ pub(crate) async fn dashboard_summary_data(
         }
     }
     let mut by_category: Vec<(String, i64)> = category_map.into_values().collect();
-    by_category.sort_by(|a, b| b.1.cmp(&a.1));
+    by_category.sort_by_key(|item| std::cmp::Reverse(item.1));
     by_category.truncate(6);
     Ok(DashboardSummaryData {
         income_in_cents: income,
@@ -701,8 +703,7 @@ async fn generate_financial_report_impl(
     // Build per-kind breakdown (income, expense, investment) by aggregating signed amounts
     // per category. For income/investment we use positive amounts; for expense we use the
     // expense_value (positive spend). This powers separate donuts in the UI.
-    let mut kind_map: HashMap<String, HashMap<Option<String>, (String, Option<String>, i64)>> =
-        HashMap::new();
+    let mut kind_map: HashMap<String, KindCategoryMap> = HashMap::new();
     for row in &period_rows {
         let kind = row.category_kind.clone().unwrap_or_else(|| {
             if row.amount > 0 {

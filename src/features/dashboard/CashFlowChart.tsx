@@ -1,5 +1,11 @@
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { chartMoneyFormatter, chartTooltipItemStyle, chartTooltipLabelStyle, chartTooltipStyle, moneyAxisFormatter } from "../../shared/ui/Charts";
+import {
+  chartMoneyFormatter,
+  chartTooltipItemStyle,
+  chartTooltipLabelStyle,
+  chartTooltipStyle,
+  moneyAxisFormatter,
+} from "../../shared/ui/Charts";
 import { monthLabel } from "../../shared/period";
 import type { MonthlyReportPoint } from "../../shared/types";
 
@@ -7,7 +13,7 @@ type Props = { monthly: MonthlyReportPoint[] };
 
 /** Receita × despesa por mês com linha de saldo, alimentado pelo relatório financeiro. */
 export function CashFlowChart({ monthly }: Props) {
-  const data = monthly.map(p => ({
+  const data = monthly.map((p) => ({
     label: monthLabel(p.month),
     Receitas: p.incomeInCents,
     Despesas: p.expensesInCents,
@@ -18,10 +24,21 @@ export function CashFlowChart({ monthly }: Props) {
       <ResponsiveContainer width="100%" height={260}>
         <ComposedChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 8 }} barGap={4}>
           <CartesianGrid stroke="var(--border)" vertical={false} />
-          <XAxis dataKey="label" tick={{ fill: "var(--text-muted)", fontSize: 12 }} axisLine={{ stroke: "var(--border-strong)" }} tickLine={false} />
-          <YAxis tickFormatter={moneyAxisFormatter} tick={{ fill: "var(--text-muted)", fontSize: 12 }} axisLine={false} tickLine={false} width={52} />
+          <XAxis
+            dataKey="label"
+            tick={{ fill: "var(--text-muted)", fontSize: 12 }}
+            axisLine={{ stroke: "var(--border-strong)" }}
+            tickLine={false}
+          />
+          <YAxis
+            tickFormatter={moneyAxisFormatter}
+            tick={{ fill: "var(--text-muted)", fontSize: 12 }}
+            axisLine={false}
+            tickLine={false}
+            width={52}
+          />
           <Tooltip
-            formatter={value => chartMoneyFormatter(value)}
+            formatter={(value) => chartMoneyFormatter(value)}
             contentStyle={chartTooltipStyle}
             labelStyle={chartTooltipLabelStyle}
             itemStyle={chartTooltipItemStyle}

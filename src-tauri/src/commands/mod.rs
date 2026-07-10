@@ -929,8 +929,8 @@ fn bind_transaction_filter<'q>(
         .bind(&filter.end_date)
         .bind(&filter.status)
         .bind(&filter.movement_type)
-        .bind(&filter.min_abs_amount_in_cents)
-        .bind(&filter.max_abs_amount_in_cents);
+        .bind(filter.min_abs_amount_in_cents)
+        .bind(filter.max_abs_amount_in_cents);
     query
 }
 
@@ -2802,9 +2802,10 @@ mod tests {
     #[tokio::test]
     async fn list_transactions_page_filters_status_movement_dates_and_amounts() {
         let directory = tempfile::tempdir().unwrap();
-        let db = crate::infrastructure::database::connect(&directory.path().join("advanced-filter.db"))
-            .await
-            .unwrap();
+        let db =
+            crate::infrastructure::database::connect(&directory.path().join("advanced-filter.db"))
+                .await
+                .unwrap();
         let onboarding = OnboardingInput {
             display_name: "Pessoa Teste".into(),
             monthly_income_in_cents: None,

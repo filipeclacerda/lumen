@@ -19,7 +19,7 @@ type Props = {
 
 /** Interactive donut of spending by category — click a slice to drill into its trend and transactions. */
 export function CategoryDonut({ categories, selectedCategoryKey, onSelect }: Props) {
-  const data = categories.filter(c => c.amountInCents > 0).slice(0, 8);
+  const data = categories.filter((c) => c.amountInCents > 0).slice(0, 8);
   if (!data.length) return <EmptyChart message="Sem categorias para montar o donut." />;
   const total = data.reduce((sum, c) => sum + c.amountInCents, 0);
 
@@ -35,7 +35,7 @@ export function CategoryDonut({ categories, selectedCategoryKey, onSelect }: Pro
             outerRadius={92}
             paddingAngle={2}
             cursor="pointer"
-            onClick={data => {
+            onClick={(data) => {
               const category = data.payload as CategoryReport | undefined;
               const categoryKey = category?.categoryId ?? UNCATEGORIZED_CATEGORY_KEY;
               onSelect(categoryKey === selectedCategoryKey ? undefined : categoryKey);
@@ -45,7 +45,11 @@ export function CategoryDonut({ categories, selectedCategoryKey, onSelect }: Pro
               <Cell
                 key={entry.categoryId ?? entry.category}
                 fill={entry.color ?? chartPalette[index % chartPalette.length]}
-                opacity={!selectedCategoryKey || selectedCategoryKey === (entry.categoryId ?? UNCATEGORIZED_CATEGORY_KEY) ? 1 : 0.35}
+                opacity={
+                  !selectedCategoryKey || selectedCategoryKey === (entry.categoryId ?? UNCATEGORIZED_CATEGORY_KEY)
+                    ? 1
+                    : 0.35
+                }
                 stroke="var(--surface)"
                 strokeWidth={2}
               />

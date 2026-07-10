@@ -16,15 +16,11 @@ export function shiftMonth(month: string, delta: number): string {
 /** Short label like "jun 26" for chart axes and compact UI. */
 export function monthLabel(month: string): string {
   const [year, value] = month.split("-").map(Number);
-  return new Date(year, value - 1, 1)
-    .toLocaleDateString("pt-BR", { month: "short", year: "2-digit" })
-    .replace(".", "");
+  return new Date(year, value - 1, 1).toLocaleDateString("pt-BR", { month: "short", year: "2-digit" }).replace(".", "");
 }
 
 /** Long label like "JUNHO DE 2026" for page headers. */
 export function monthTitle(month: string): string {
   const [year, value] = month.split("-").map(Number);
-  return new Date(year, value - 1, 1)
-    .toLocaleString("pt-BR", { month: "long", year: "numeric" })
-    .toUpperCase();
+  return new Date(year, value - 1, 1).toLocaleString("pt-BR", { month: "long", year: "numeric" }).toUpperCase();
 }

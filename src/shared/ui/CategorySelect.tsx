@@ -86,12 +86,12 @@ function kindForMovement(movementType: MovementType): CategoryKind[] | undefined
 
 function depth(categories: Category[], id?: string): number {
   let d = 0;
-  let current = id ? categories.find(c => c.id === id) : undefined;
+  let current = id ? categories.find((c) => c.id === id) : undefined;
   const visited = new Set<string>();
   while (current?.parentId && !visited.has(current.parentId)) {
     visited.add(current.parentId);
     d += 1;
-    current = categories.find(c => c.id === current!.parentId);
+    current = categories.find((c) => c.id === current!.parentId);
     if (d > 16) break;
   }
   return d;
@@ -104,16 +104,30 @@ export function CategoryIcon({ name, size = 14 }: { name?: string; size?: number
 }
 
 export function CategorySelect({
-  value, onChange, categories, kind, movementType, allowEmpty = true,
-  emptyLabel = "Sem categoria", disabled, id, native, className, ...rest
+  value,
+  onChange,
+  categories,
+  kind,
+  movementType,
+  allowEmpty = true,
+  emptyLabel = "Sem categoria",
+  disabled,
+  id,
+  native,
+  className,
+  ...rest
 }: Props) {
   const ariaLabel = rest["aria-label"] ?? "Categoria";
 
   const filtered = useMemo(() => {
-    const kinds = kind ? (Array.isArray(kind) ? kind : [kind]) : (movementType ? kindForMovement(movementType) : undefined);
-    const list = kinds
-      ? categories.filter(c => kinds.includes(c.kind))
-      : categories.slice();
+    const kinds = kind
+      ? Array.isArray(kind)
+        ? kind
+        : [kind]
+      : movementType
+        ? kindForMovement(movementType)
+        : undefined;
+    const list = kinds ? categories.filter((c) => kinds.includes(c.kind)) : categories.slice();
     return list.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
   }, [categories, kind, movementType]);
 
@@ -124,30 +138,36 @@ export function CategorySelect({
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(c);
     }
-    return ORDER.filter(k => map.has(k)).map(k => ({ kind: k, items: map.get(k)! }));
+    return ORDER.filter((k) => map.has(k)).map((k) => ({ kind: k, items: map.get(k)! }));
   }, [filtered]);
 
-  const selected = useMemo(() => categories.find(c => c.id === value), [categories, value]);
+  const selected = useMemo(() => categories.find((c) => c.id === value), [categories, value]);
 
   if (native) {
     return (
       <select
         className={"category-select" + (className ? " " + className : "")}
         value={value ?? ""}
-        onChange={e => onChange(e.target.value || undefined)}
+        onChange={(e) => onChange(e.target.value || undefined)}
         disabled={disabled}
         id={id}
         aria-label={ariaLabel}
       >
         {allowEmpty && <option value="">{emptyLabel}</option>}
         {groups.length === 1
-          ? groups[0].items.map(c => (
-              <option key={c.id} value={c.id}>{c.parentId ? "— " : ""}{c.name}</option>
+          ? groups[0].items.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.parentId ? "— " : ""}
+                {c.name}
+              </option>
             ))
-          : groups.map(g => (
+          : groups.map((g) => (
               <optgroup key={g.kind} label={KIND_LABEL[g.kind]}>
-                {g.items.map(c => (
-                  <option key={c.id} value={c.id}>{c.parentId ? "— " : ""}{c.name}</option>
+                {g.items.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.parentId ? "— " : ""}
+                    {c.name}
+                  </option>
                 ))}
               </optgroup>
             ))}
@@ -187,8 +207,17 @@ type DropdownProps = {
 };
 
 function CategoryDropdown({
-  value, onChange, groups, selected, categories, allowEmpty, emptyLabel,
-  disabled, id, ariaLabel, className,
+  value,
+  onChange,
+  groups,
+  selected,
+  categories,
+  allowEmpty,
+  emptyLabel,
+  disabled,
+  id,
+  ariaLabel,
+  className,
 }: DropdownProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -204,7 +233,10 @@ function CategoryDropdown({
       }
     }
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") { setOpen(false); setQuery(""); }
+      if (e.key === "Escape") {
+        setOpen(false);
+        setQuery("");
+      }
     }
     document.addEventListener("mousedown", onDoc);
     document.addEventListener("keydown", onKey);
@@ -229,10 +261,7 @@ function CategoryDropdown({
   }
 
   return (
-    <div
-      className={"category-dropdown" + (open ? " open" : "") + (className ? " " + className : "")}
-      ref={rootRef}
-    >
+    <div className={"category-dropdown" + (open ? " open" : "") + (className ? " " + className : "")} ref={rootRef}>
       <button
         type="button"
         className="category-dropdown-trigger"
@@ -241,19 +270,25 @@ function CategoryDropdown({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={ariaLabel}
-        onClick={() => setOpen(o => !o)}
+        onClick={() => setOpen((o) => !o)}
         title={selected ? `${selected.name}${selected.icon ? " · " + selected.icon : ""}` : emptyLabel}
       >
         {selected ? (
           <span className="category-dropdown-value">
             {selected.color && <span className="category-dropdown-swatch" style={{ background: selected.color }} />}
-            {selected.icon && <span className="category-dropdown-icon"><CategoryIcon name={selected.icon} /></span>}
+            {selected.icon && (
+              <span className="category-dropdown-icon">
+                <CategoryIcon name={selected.icon} />
+              </span>
+            )}
             <span className="category-dropdown-name">{selected.name}</span>
           </span>
         ) : (
           <span className="category-dropdown-placeholder">{emptyLabel}</span>
         )}
-        <span className="category-dropdown-caret" aria-hidden>▾</span>
+        <span className="category-dropdown-caret" aria-hidden>
+          ▾
+        </span>
       </button>
 
       {open && (
@@ -262,7 +297,7 @@ function CategoryDropdown({
             <input
               ref={inputRef}
               value={query}
-              onChange={e => setQuery(e.target.value)}
+              onChange={(e) => setQuery(e.target.value)}
               placeholder="Buscar categoria…"
               aria-label="Buscar categoria"
             />
@@ -280,13 +315,13 @@ function CategoryDropdown({
             {totalItems === 0 && allowEmpty === false && (
               <p className="category-dropdown-empty">Nenhuma categoria encontrada.</p>
             )}
-            {groups.map(g => {
+            {groups.map((g) => {
               const visible = g.items.filter(matches);
               if (visible.length === 0) return null;
               return (
                 <div key={g.kind} className="category-dropdown-group">
                   <div className="category-dropdown-group-label">{KIND_LABEL[g.kind]}</div>
-                  {visible.map(c => {
+                  {visible.map((c) => {
                     const d = depth(categories, c.parentId);
                     const isSelected = c.id === value;
                     return (
@@ -301,7 +336,11 @@ function CategoryDropdown({
                         aria-selected={isSelected}
                       >
                         {c.color && <span className="category-dropdown-swatch" style={{ background: c.color }} />}
-                        {c.icon && <span className="category-dropdown-icon"><CategoryIcon name={c.icon} /></span>}
+                        {c.icon && (
+                          <span className="category-dropdown-icon">
+                            <CategoryIcon name={c.icon} />
+                          </span>
+                        )}
                         <span className="category-dropdown-name">{c.name}</span>
                         {c.kind && <small className="category-dropdown-kind">{KIND_LABEL[c.kind]}</small>}
                       </button>
