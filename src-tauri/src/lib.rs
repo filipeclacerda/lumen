@@ -18,28 +18,29 @@ pub fn run() {
         .setup(|app| {
             let data_dir = app.path().app_data_dir().expect("diretório de dados");
             std::fs::create_dir_all(&data_dir)?;
-            let db_path = data_dir.join("financa.db");
-            // A reset staged by `reset_database` wins over any pending restore: wipe the
-            // database file entirely here, before any connection opens, so migrations
-            // recreate a pristine database (fresh seed data, no profile/accounts/transactions).
             let reset_marker = data_dir.join("financa.reset");
             if reset_marker.exists() {
-                let _ = std::fs::remove_file(&db_path);
-                let _ = std::fs::remove_file(data_dir.join("financa.db-wal"));
-                let _ = std::fs::remove_file(data_dir.join("financa.db-shm"));
-                let _ = std::fs::remove_file(data_dir.join("financa.restore"));
+                for name in [
+                    "financa.db",
+                    "financa.db-wal",
+                    "financa.db-shm",
+                    "financa.restore",
+                    "financa.restore.tmp",
+                    "financa.db.pre-restore",
+                ] {
+                    match std::fs::remove_file(data_dir.join(name)) {
+                        Ok(()) => {}
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => return Err(error.into()),
+                    }
+                }
+                // Remove the marker last: a failed cleanup must be retried next startup.
                 std::fs::remove_file(&reset_marker)?;
             }
-            // A restore staged by `restore_database` is swapped in here, before any
-            // connection opens, so the live database is never overwritten in place.
-            let staged = data_dir.join("financa.restore");
-            if staged.exists() {
-                let _ = std::fs::remove_file(data_dir.join("financa.db-wal"));
-                let _ = std::fs::remove_file(data_dir.join("financa.db-shm"));
-                std::fs::rename(&staged, &db_path)?;
-            }
-            let db = tauri::async_runtime::block_on(infrastructure::database::connect(&db_path))
-                .map_err(|e| Box::<dyn std::error::Error>::from(format!("{e:?}")))?;
+            let db = tauri::async_runtime::block_on(
+                infrastructure::database::connect_app_database(&data_dir),
+            )
+            .map_err(|e| Box::<dyn std::error::Error>::from(format!("{e:?}")))?;
             // Idempotent maintenance, but it can touch many imported rows after an upgrade.
             // Run it after the app is managed so opening the window is not gated by the backfill.
             let db_for_backfill = db.clone();
@@ -47,6 +48,8 @@ pub fn run() {
                 db,
                 sessions: Mutex::new(HashMap::new()),
                 credit_card_sessions: Mutex::new(HashMap::new()),
+                import_commit: Mutex::new(()),
+                maintenance: Mutex::new(()),
             });
             tauri::async_runtime::spawn(async move {
                 if let Err(error) =

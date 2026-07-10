@@ -39,7 +39,7 @@ fn csv_field(value: &str) -> String {
 /// Formats integer cents as a Brazilian decimal string (e.g. -1234 -> "-12,34").
 fn format_amount(cents: i64) -> String {
     let sign = if cents < 0 { "-" } else { "" };
-    let abs = cents.abs();
+    let abs = cents.unsigned_abs();
     format!("{}{},{:02}", sign, abs / 100, abs % 100)
 }
 

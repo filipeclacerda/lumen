@@ -11,7 +11,7 @@ use crate::{
             normalize_description, CsvColumnMapping, CsvColumnRole, CsvMappingDraft,
             DuplicateStatus, ImportCandidate, ImportSourceKind, NormalizedImportRow,
         },
-        money::parse_brl,
+        money::{parse_brl, parse_money, DecimalSeparator},
     },
     error::AppError,
 };
@@ -386,24 +386,14 @@ fn parse_money_with_separator(
     if decimal_separator.is_none() {
         return parse_brl(trimmed);
     }
-    let negative = trimmed.starts_with('-')
-        || trimmed.ends_with('-')
-        || (trimmed.starts_with('(') && trimmed.ends_with(')'));
-    let mut cleaned = trimmed
-        .replace("R$", "")
-        .replace("r$", "")
-        .replace(char::is_whitespace, "")
-        .trim_matches(|c: char| ['+', '-', '(', ')'].contains(&c))
-        .to_string();
-    cleaned = match decimal_separator.unwrap_or("comma") {
-        "dot" => cleaned.replace(',', ""),
-        _ => cleaned.replace('.', "").replace(',', "."),
+    let separator = match decimal_separator.unwrap_or("comma") {
+        "dot" => DecimalSeparator::Dot,
+        "comma" => DecimalSeparator::Comma,
+        _ => return Err(AppError::Validation("Separador decimal inválido".into())),
     };
-    let parsed = cleaned
-        .parse::<f64>()
-        .map_err(|_| AppError::Validation(format!("Valor inválido: {value}")))?;
-    let cents = (parsed * 100.0).round() as i64;
-    Ok(if negative { -cents } else { cents })
+    // Only a leading currency prefix is accepted; embedded prefixes must fail.
+    let cleaned = trimmed.replace(char::is_whitespace, "");
+    parse_money(&cleaned, separator)
 }
 
 fn parse_optional_money(
@@ -454,6 +444,7 @@ fn parse_csv_legacy(content: &str) -> Result<Vec<ImportCandidate>, AppError> {
                 amount_in_cents: parse_brl(record.get(amount_i).unwrap_or(""))?,
                 external_id: id_i
                     .and_then(|i| record.get(i))
+                    .map(str::trim)
                     .filter(|value| !value.is_empty())
                     .map(String::from),
                 suggested_category_id: None,
@@ -516,7 +507,9 @@ fn parse_mapped_bank_rows(
                     credit_i.and_then(|i| record.get(i)),
                     mapping.decimal_separator.as_deref(),
                 )?;
-                credit - debit
+                credit.checked_sub(debit).ok_or_else(|| {
+                    AppError::Validation("Valor inválido na linha importada".into())
+                })?
             };
             if amount_in_cents == 0 {
                 return Err(AppError::Validation(format!(
@@ -590,7 +583,9 @@ fn parse_mapped_credit_card_rows(
             record.get(signed_i).unwrap_or(""),
             mapping.decimal_separator.as_deref(),
         )?;
-        let gross_amount = signed_amount.abs();
+        let gross_amount = signed_amount
+            .checked_abs()
+            .ok_or_else(|| AppError::Validation("Valor inválido".into()))?;
         if gross_amount == 0 {
             return Err(AppError::Validation(format!(
                 "Valor inválido na linha {}",
@@ -713,7 +708,9 @@ fn parse_legacy_credit_card_csv(content: &str) -> Result<ParsedCreditCardInvoice
         } else {
             CreditCardLineKind::Purchase
         };
-        let gross_amount = raw_amount.abs();
+        let gross_amount = raw_amount
+            .checked_abs()
+            .ok_or_else(|| AppError::Validation("Valor inválido".into()))?;
         let amount_in_cents = match line_kind {
             CreditCardLineKind::Purchase => -gross_amount,
             CreditCardLineKind::Refund | CreditCardLineKind::Payment => gross_amount,
@@ -879,7 +876,11 @@ fn parse_sicoob_text(text: &str) -> Result<Vec<ImportCandidate>, AppError> {
             let mut amount = None;
             let mut direction = None;
             if let Some(m) = money.captures(&rest) {
-                amount = Some(parse_brl(&m[1])?.unsigned_abs() as i64);
+                amount = Some(
+                    parse_brl(&m[1])?
+                        .checked_abs()
+                        .ok_or_else(|| AppError::Validation("Valor inválido".into()))?,
+                );
                 direction = m.get(2).and_then(|x| x.as_str().chars().next());
                 rest = rest[..m.get(0).unwrap().start()].trim().to_string();
             }
@@ -898,7 +899,11 @@ fn parse_sicoob_text(text: &str) -> Result<Vec<ImportCandidate>, AppError> {
         if let Some(row) = current.as_mut() {
             if row.amount.is_none() {
                 if let Some(m) = money.captures(&line) {
-                    row.amount = Some(parse_brl(&m[1])?.unsigned_abs() as i64);
+                    row.amount = Some(
+                        parse_brl(&m[1])?
+                            .checked_abs()
+                            .ok_or_else(|| AppError::Validation("Valor inválido".into()))?,
+                    );
                     row.direction = m.get(2).and_then(|x| x.as_str().chars().next());
                     continue;
                 }
@@ -961,7 +966,10 @@ fn parse_ofx(content: &str) -> Result<Vec<ImportCandidate>, AppError> {
                     &tag(block, "TRNAMT")
                         .ok_or_else(|| AppError::Validation("OFX sem valor".into()))?,
                 )?,
-                external_id: tag(block, "FITID"),
+                external_id: tag(block, "FITID").and_then(|id| {
+                    let id = id.trim().to_string();
+                    (!id.is_empty()).then_some(id)
+                }),
                 suggested_category_id: None,
                 suggested_category_name: None,
                 suggested_rule_id: None,
@@ -1153,6 +1161,28 @@ RESUMO
         assert!(rows[0].description.contains("CLIENTE EXEMPLO"));
         assert!(!rows[0].description.contains("***"));
         assert_eq!(rows[1].amount_in_cents, -1145);
+    }
+
+    #[test]
+    fn parses_configured_csv_decimal_without_double_normalization() {
+        assert_eq!(
+            parse_money_with_separator("R$ 1.234,56", Some("comma")).unwrap(),
+            123456
+        );
+        assert_eq!(
+            parse_money_with_separator("R$ 1,234.56", Some("dot")).unwrap(),
+            123456
+        );
+        assert_eq!(
+            parse_money_with_separator("(10,50)", Some("comma")).unwrap(),
+            -1050
+        );
+        for value in ["1,", "1.", "1,234.567", "1,2.3"] {
+            assert!(
+                parse_money_with_separator(value, Some("comma")).is_err(),
+                "{value}"
+            );
+        }
     }
 
     #[test]

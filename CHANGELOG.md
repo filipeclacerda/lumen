@@ -5,6 +5,95 @@ Todas as mudanças relevantes deste projeto são documentadas neste arquivo.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o
 projeto adota o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [Não lançado]
+
+Pacote de integridade focado em proteger dados financeiros durante backup,
+restauração, importação e edição de transações vinculadas.
+
+### Adicionado
+
+- **Restauração com confirmação explícita**: o usuário precisa digitar
+  `RESTAURAR` antes de substituir os dados atuais; após a validação, o Lumen
+  reinicia automaticamente para aplicar o backup.
+- **Recuperação de restaurações interrompidas**: o startup reconhece estados
+  intermediários e mantém uma cópia de rollback até o novo banco abrir,
+  migrar e passar pelas verificações de integridade.
+- **Validação completa de backups**: `integrity_check`, chaves estrangeiras,
+  histórico e checksums de migrations, tabelas, colunas e índices críticos são
+  conferidos antes da ativação.
+- **Testes de regressão para integridade financeira**, cobrindo WAL, rollback no
+  Windows, migrations incompatíveis, parsing monetário, deduplicação,
+  importações atômicas, transferências, pagamentos de fatura e restauração pela
+  interface.
+
+### Alterado
+
+- **Backup passa a usar snapshot SQLite com `VACUUM INTO`**, incluindo
+  transações confirmadas que ainda estejam no WAL, em vez de copiar diretamente
+  o arquivo principal após um checkpoint.
+- **Publicação e troca de bancos no Windows** passam a usar operações nativas
+  com write-through (`ReplaceFileW`/`MoveFileExW`) e arquivo de rollback.
+- **Parsing monetário reimplementado com aritmética inteira verificada**, sem
+  `f64`; formatos BRL, OFX e CSV configurável continuam suportados, enquanto
+  expoentes, `NaN`, infinito, casas decimais inválidas e overflow são rejeitados.
+- **Deduplicação de importações bancárias e de cartão** agora respeita a
+  precedência de `external_id`, usa fingerprint quando o identificador está
+  ausente, considera a conta de destino e ignora lançamentos soft-deleted.
+- **Commits de importação bancária e de cartão** revalidam duplicatas dentro da
+  mesma transação SQL e só consomem a sessão depois do commit bem-sucedido.
+- O editor identifica genericamente lançamentos vinculados e mantém conta,
+  data, valor e categoria bloqueados, permitindo apenas corrigir a descrição.
+
+### Corrigido
+
+- Corrigido o restore que falhava ao substituir `financa.db` existente no
+  Windows e podia deixar o aplicativo preso em novas tentativas de abertura.
+- Corrigido o risco de descartar WAL/SHM ou o banco anterior antes de confirmar
+  que a restauração era válida e compatível.
+- Backups de versões anteriores do Lumen voltam a ser aceitos: a cópia é
+  pré-validada, recebe migrations pendentes e só então é validada contra o
+  schema atual.
+- Corrigido o risco de remover o backup anterior quando a sincronização do novo
+  arquivo ou o rollback falhava.
+- Corrigidas duplicatas dentro do mesmo arquivo e a condição de corrida entre
+  prévia, edição da sessão e confirmação da importação.
+- IDs externos passam a ser normalizados antes da comparação e persistência;
+  valores vazios são tratados como ausentes.
+- Corrigidas somas, módulos e subtrações monetárias que podiam estourar os
+  limites de `i64`; o valor mínimo não representável com segurança nos fluxos
+  derivados passa a ser rejeitado.
+- Comandos genéricos de valor, categoria, edição em massa, exclusão e restauração
+  não podem mais alterar apenas uma perna de transferência ou pagamento
+  vinculado.
+- Pagamentos ligados somente a uma fatura também são reconhecidos como
+  transações vinculadas e recebem as mesmas proteções.
+- Regras retroativas ignoram transações vinculadas inclusive no `UPDATE`,
+  eliminando uma condição de corrida que podia sobrescrever a categoria de uma
+  transferência ou pagamento.
+- Totais de fatura passam a detectar overflow em vez de produzir valores
+  incorretos ou causar panic.
+- O reset mantém o marcador quando a limpeza falha, permitindo tentar novamente
+  na próxima abertura em vez de informar sucesso sem apagar os dados.
+
+### Segurança
+
+- Arquivos selecionados para backup/restore não podem apontar para o banco vivo,
+  staging ou rollback gerenciados pelo Lumen.
+- Temporários de restore usam um caminho interno conhecido e recuperável; os
+  temporários de backup usam nomes exclusivos no diretório escolhido.
+- Erros de banco, arquivo e migration continuam retornando mensagens seguras,
+  sem expor SQL, caminhos locais ou dados financeiros.
+
+### Testes e qualidade
+
+- Backend ampliado de 71 para **95 testes Rust**.
+- Frontend ampliado de 8 para **12 testes**, incluindo quatro cenários do fluxo
+  de restauração.
+- `npm run check`, `cargo test`, `cargo fmt --check` e
+  `cargo clippy -- -D warnings` validados no Windows.
+- Adicionada dependência target-specific `windows-sys` apenas para as operações
+  atômicas de arquivo no Windows.
+
 ## [0.4.1] - 2026-07-08
 
 Patch com ajustes de interface: navbar fixa ao tamanho da janela em qualquer

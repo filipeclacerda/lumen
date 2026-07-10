@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 
 use super::import::ImportCandidate;
 
@@ -74,21 +75,55 @@ pub struct CreditCardInvoiceTotals {
     pub total_in_cents: i64,
 }
 
-pub fn totals(items: &[CreditCardImportItem]) -> CreditCardInvoiceTotals {
-    let purchases = items
-        .iter()
-        .filter(|item| item.included && item.line_kind == CreditCardLineKind::Purchase)
-        .map(|item| item.raw_amount_in_cents.abs())
-        .sum();
-    let credits = items
-        .iter()
-        .filter(|item| item.included && item.line_kind != CreditCardLineKind::Purchase)
-        .map(|item| item.raw_amount_in_cents.abs())
-        .sum();
-    CreditCardInvoiceTotals {
+pub fn totals(
+    items: &[CreditCardImportItem],
+) -> Result<CreditCardInvoiceTotals, crate::error::AppError> {
+    let mut purchases = 0i64;
+    let mut credits = 0i64;
+    for item in items.iter().filter(|item| item.included) {
+        let amount = item
+            .raw_amount_in_cents
+            .checked_abs()
+            .ok_or_else(|| crate::error::AppError::Validation("Total da fatura inválido".into()))?;
+        if item.line_kind == CreditCardLineKind::Purchase {
+            purchases = purchases.checked_add(amount).ok_or_else(|| {
+                crate::error::AppError::Validation("Total da fatura inválido".into())
+            })?;
+        } else {
+            credits = credits.checked_add(amount).ok_or_else(|| {
+                crate::error::AppError::Validation("Total da fatura inválido".into())
+            })?;
+        }
+    }
+    let total = purchases
+        .checked_sub(credits)
+        .ok_or_else(|| crate::error::AppError::Validation("Total da fatura inválido".into()))?;
+    Ok(CreditCardInvoiceTotals {
         purchases_in_cents: purchases,
         credits_in_cents: credits,
-        total_in_cents: purchases - credits,
+        total_in_cents: total,
+    })
+}
+
+pub fn mark_intra_file_duplicates(account_id: &str, items: &mut [CreditCardImportItem]) {
+    let mut external_ids = HashSet::new();
+    let mut fingerprints = HashSet::new();
+    for item in items {
+        let duplicate = if let Some(id) = item
+            .candidate
+            .external_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        {
+            !external_ids.insert(id.to_owned())
+        } else {
+            !fingerprints.insert(item_fingerprint(account_id, item))
+        };
+        if duplicate {
+            item.candidate.duplicate_status = crate::domain::import::DuplicateStatus::Exact;
+            item.included = false;
+        }
     }
 }
 
@@ -143,13 +178,42 @@ mod tests {
     }
 
     #[test]
+    fn intra_file_dedupe_prefers_external_id_and_fingerprint_fallback() {
+        let mut first = item(-100, 100, CreditCardLineKind::Purchase, true);
+        let mut second = first.clone();
+        first.candidate.external_id = Some(" id-1 ".into());
+        second.candidate.external_id = Some("id-1".into());
+        let mut external_items = vec![first.clone(), second.clone()];
+        mark_intra_file_duplicates("account", &mut external_items);
+        assert!(external_items[0].included);
+        assert!(!external_items[1].included);
+        let mut items = vec![first, second];
+        items[0].candidate.external_id = None;
+        items[1].candidate.external_id = None;
+        mark_intra_file_duplicates("account", &mut items);
+        assert!(items[0].included);
+        assert!(!items[1].included);
+    }
+
+    #[test]
+    fn totals_rejects_min_value_and_overflow() {
+        assert!(totals(&[item(0, i64::MIN, CreditCardLineKind::Purchase, true)]).is_err());
+        assert!(totals(&[
+            item(0, i64::MAX, CreditCardLineKind::Purchase, true),
+            item(0, i64::MAX, CreditCardLineKind::Purchase, true),
+        ])
+        .is_err());
+    }
+
+    #[test]
     fn totals_keep_card_sign_convention_explicit() {
         let totals = totals(&[
             item(-10_000, 10_000, CreditCardLineKind::Purchase, true),
             item(2_000, -2_000, CreditCardLineKind::Refund, true),
             item(5_000, -5_000, CreditCardLineKind::Payment, true),
             item(-999, 999, CreditCardLineKind::Purchase, false),
-        ]);
+        ])
+        .unwrap();
         assert_eq!(totals.purchases_in_cents, 10_000);
         assert_eq!(totals.credits_in_cents, 7_000);
         assert_eq!(totals.total_in_cents, 3_000);

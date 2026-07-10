@@ -9,3 +9,4 @@ src-tauri/target/
 *.key*
 *.tsbuildinfo
 .claude/worktrees/
+.pi-subagents/

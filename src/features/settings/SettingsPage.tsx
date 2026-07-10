@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
 import {
@@ -27,6 +26,7 @@ import { useToast } from "../../shared/ui/toast";
 import type { FinancialGoal } from "../../shared/types";
 
 const RESET_CONFIRM_WORD = "APAGAR";
+const RESTORE_CONFIRM_WORD = "RESTAURAR";
 
 const goalLabels: Record<FinancialGoal, string> = {
   organize: "Organizar minhas finanças",
@@ -49,6 +49,10 @@ export function SettingsPage() {
   const [resetOpen, setResetOpen] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState("");
   const [resetting, setResetting] = useState(false);
+  const [restorePath, setRestorePath] = useState<string>();
+  const [restoreOpen, setRestoreOpen] = useState(false);
+  const [restoreConfirmText, setRestoreConfirmText] = useState("");
+  const [restoring, setRestoring] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const updatesEnabled = canCheckForUpdates();
   useEffect(() => {
@@ -100,7 +104,7 @@ export function SettingsPage() {
         filters: [{ name: "Backup do Lumen", extensions: ["db"] }],
       });
       if (path) {
-        await invoke("backup_database", { path });
+        await api.backupDatabase(path);
         toast("Backup salvo com sucesso!");
       }
     } catch (e) {
@@ -111,11 +115,43 @@ export function SettingsPage() {
     try {
       const path = await open({ multiple: false, filters: [{ name: "Backup do Lumen", extensions: ["db"] }] });
       if (path) {
-        await invoke("restore_database", { path: path as string });
-        toast("Backup carregado. Reinicie o Lumen para concluir a restauração.");
+        setRestorePath(path as string);
+        setRestoreConfirmText("");
+        setRestoreOpen(true);
       }
     } catch (e) {
       toast((e as { message?: string })?.message ?? "Falha ao restaurar.", "error");
+    }
+  }
+  function closeRestore() {
+    if (restoring) return;
+    setRestoreOpen(false);
+    setRestorePath(undefined);
+    setRestoreConfirmText("");
+  }
+  async function confirmRestore() {
+    if (!restorePath || restoreConfirmText !== RESTORE_CONFIRM_WORD) return;
+    setRestoring(true);
+    try {
+      await api.restoreDatabase(restorePath);
+    } catch (e) {
+      toast(
+        (e as { message?: string })?.message ?? "O backup é inválido e seus dados atuais não foram alterados.",
+        "error",
+      );
+      setRestoring(false);
+      return;
+    }
+    toast("Backup validado e preparado. Será aplicado na próxima abertura do Lumen.");
+    setRestoreOpen(false);
+    setRestorePath(undefined);
+    setRestoreConfirmText("");
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    try {
+      await relaunch();
+    } catch {
+      toast("Restauração preparada e será aplicada na próxima abertura. Feche e abra o Lumen para concluir.", "error");
+      setRestoring(false);
     }
   }
   async function checkForUpdates() {
@@ -225,10 +261,10 @@ export function SettingsPage() {
           <button className="secondary" onClick={exportCsv}>
             <Download size={15} /> Exportar transações (CSV)
           </button>
-          <button className="secondary" onClick={backup}>
+          <button className="secondary" onClick={backup} disabled={restoring || resetting}>
             <Database size={15} /> Fazer backup completo
           </button>
-          <button className="secondary" onClick={restore}>
+          <button className="secondary" onClick={restore} disabled={restoring || resetting}>
             <RotateCcw size={15} /> Restaurar backup
           </button>
         </div>
@@ -265,10 +301,36 @@ export function SettingsPage() {
           Lumen reinicia sozinho e volta ao estado de instalação nova. Faça um backup antes, se precisar dos dados
           depois.
         </p>
-        <button className="danger" onClick={() => setResetOpen(true)}>
+        <button className="danger" onClick={() => setResetOpen(true)} disabled={restoring || resetting}>
           <Trash2 size={15} /> Resetar dados do aplicativo
         </button>
       </article>
+      {restoreOpen && (
+        <Modal title="Restaurar backup e substituir dados?" onClose={closeRestore}>
+          <div className="modal-form">
+            <p className="muted">
+              Esta ação substituirá contas, transações, categorias, configurações e faturas atuais. O arquivo será
+              validado antes da troca e o Lumen será reiniciado.
+            </p>
+            <label>
+              Digite {RESTORE_CONFIRM_WORD} para confirmar
+              <input value={restoreConfirmText} onChange={(e) => setRestoreConfirmText(e.target.value)} autoFocus />
+            </label>
+            <div className="editor-actions">
+              <button className="secondary" onClick={closeRestore} disabled={restoring}>
+                Cancelar
+              </button>
+              <button
+                className="danger"
+                onClick={confirmRestore}
+                disabled={restoring || restoreConfirmText !== RESTORE_CONFIRM_WORD}
+              >
+                <RotateCcw size={15} /> {restoring ? "Restaurando…" : "Restaurar backup"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
       {resetOpen && (
         <Modal title="Apagar todos os dados?" onClose={closeReset}>
           <div className="modal-form">

@@ -8,7 +8,7 @@
 - Desktop/backend: Tauri 2 + Rust + SQLx/SQLite.
 - A interface nunca acessa SQLite diretamente; toda operação de domínio/persistência cruza um comando Tauri.
 - Valores monetários persistidos são **inteiros em centavos** (`i64`); datas usam ISO `YYYY-MM-DD`. Consulte `docs/adr/0002-money-and-deduplication.md`.
-- O banco ainda **não é criptografado**. Não implemente telemetria, sync externo ou envio de extratos sem uma decisão explícita de produto/segurança.
+- O banco e os backups ainda **não são criptografados**. As proteções atuais garantem integridade, validação e recuperação, mas não confidencialidade em repouso. Não apresente o produto como criptografado e não implemente telemetria, sync externo ou envio de extratos sem uma decisão explícita de produto/segurança.
 
 Leia `README.md` para as funcionalidades e `docs/adr/` antes de alterar decisões arquiteturais.
 
@@ -49,8 +49,8 @@ Ao adicionar um comando, atualize **os três pontos**: implementação Rust, `ge
 
 ### Invariantes importantes
 
-- Centavos são a fonte de verdade; não persistir `float`/`f64` para dinheiro. `parse_brl` e alguns importadores hoje convertem por `f64`; mudanças nessa área devem incluir testes de precisão e entradas inválidas.
-- Importações devem ser confirmadas somente depois de prévia e são persistidas atomicamente. Deduplicação usa `external_id`; ausente isso, usa fingerprint SHA-256 de conta, data, valor e descrição normalizada.
+- Centavos são a fonte de verdade; não persistir `float`/`f64` para dinheiro. O parser decimal usa aritmética inteira verificada e rejeita expoentes, `NaN`, infinito, frações inválidas, `i64::MIN` e overflow; preserve essas garantias e seus testes.
+- Importações devem ser confirmadas somente depois de prévia e são persistidas atomicamente. Deduplicação usa `external_id` normalizado; ausente isso, usa fingerprint SHA-256 de conta, data, valor e descrição normalizada. A prévia e o commit precisam tratar duplicatas existentes, intra-arquivo e corridas entre prévia/edição/confirmação.
 - Transferências são duas pernas vinculadas e não podem entrar como receita/despesa. Não quebre as proteções de edição ou os links de transferência.
 - Exclusões são majoritariamente soft delete (`deleted_at`); consultas e índices precisam respeitá-lo.
 - Categorias, regras e dados seed são parte do comportamento do produto. Respeite `kind`, prioridades e categorias de sistema.
@@ -61,7 +61,9 @@ Ao adicionar um comando, atualize **os três pontos**: implementação Rust, `ge
 
 - Crie uma nova migration sequencial em `src-tauri/migrations/`; **nunca edite migration já distribuída**. SQLx valida checksums. `database.rs` contém apenas uma compatibilidade específica para diferenças CRLF/LF de checksum.
 - `connect()` habilita WAL e foreign keys e roda migrations. Teste uma migration com banco vazio e, se aplicável, banco com dados anteriores.
-- Backup faz checkpoint WAL antes de copiar. Restore atual apenas valida o header SQLite e agenda a troca para a próxima abertura; mudanças nessa área devem preservar o banco atual em caso de arquivo inválido/corrompido.
+- Backup usa `VACUUM INTO` para produzir um snapshot consistente e independente do WAL. Restore trabalha sobre uma cópia de staging, valida integridade, foreign keys, histórico de migrations e schema, e mantém rollback até o banco restaurado abrir com sucesso.
+- No Windows, a publicação de backup e a ativação do restore usam operações nativas de substituição/movimentação com write-through. Preserve a máquina de recovery para estados intermediários (`live`, `pending` e `rollback`) e nunca remova o banco anterior antes da validação completa.
+- Backup, staging e rollback continuam em SQLite sem criptografia. Uma futura adoção de SQLCipher deve cobrir também snapshots, restore, rotação/recuperação de chave e compatibilidade com backups antigos.
 
 ## Comandos de trabalho
 
@@ -81,10 +83,11 @@ O build desktop é `npm run tauri -- build`.
 
 ### Estado atual da qualidade
 
-- Na revisão que criou este arquivo, `npm test` passou com 8 testes e `cargo test` passou com 71 testes.
-- `npm run build` passa, mas gera um bundle inicial grande (~932 KB minificado); prefira carregamento sob demanda para telas pesadas, especialmente relatórios/gráficos/importação.
-- `npm run lint` está **quebrado**: o projeto usa ESLint 9, mas não possui `eslint.config.*`. O CI atual também não roda lint, fmt nem clippy. Não reporte lint como validado até corrigir essa configuração.
-- `node_modules/`, `dist/` e `src-tauri/target/` são artefatos ignorados; não os adicione ao Git.
+- Na revisão de integridade mais recente, `npm test` passou com 12 testes e `cargo test` passou com 95 testes.
+- `npm run check` passa e executa lint, Prettier, testes frontend e build. O CI também executa lint, format check, testes/build frontend, `cargo fmt`, clippy, testes Rust e build Tauri debug.
+- `npm run build` passa, mas gera um bundle inicial grande (~934 KB minificado); prefira carregamento sob demanda para telas pesadas, especialmente relatórios/gráficos/importação.
+- Backup/restore possui testes automatizados de WAL, migrations, schema, rollback e estados interrompidos no Windows, mas releases ainda devem incluir um teste manual no aplicativo Tauri empacotado.
+- `node_modules/`, `dist/`, `src-tauri/target/` e `*.tsbuildinfo` são artefatos; não os adicione ao Git nem deixe alterações geradas no diff.
 
 ## Como alterar com segurança
 
@@ -97,18 +100,20 @@ O build desktop é `npm run tauri -- build`.
 
 ## Prioridades técnicas conhecidas
 
-1. Corrigir ESLint e incluí-lo no CI; adicionar `cargo fmt` e clippy ao pipeline.
-2. Parsing decimal de moeda sem `f64`, com validação de limites e casos como `NaN`/infinito.
-3. Validar restauração SQLite com `integrity_check`, schema e compatibilidade antes de trocar o banco.
-4. Criptografia local (SQLCipher e chave protegida pelo SO), incluindo migração e recuperação.
-5. Cobertura frontend/e2e para onboarding, importação, transferências, faturas e backup/restauração.
-6. Code splitting para reduzir o carregamento inicial.
+1. **Criptografia local em repouso**: definir ADR e threat model; avaliar SQLCipher; proteger a chave pelo SO (DPAPI/Windows Credential Manager, Keychain e Secret Service quando houver suporte); planejar migração transacional do SQLite atual, rotação, recuperação e perda de chave.
+2. **Backup/restore criptografado e compatível**: decidir se backups usarão a mesma chave ou uma senha/chave própria; impedir cópias plaintext residuais; suportar importação controlada de backups legados não criptografados; validar recovery e rollback sem expor a chave.
+3. **Testes desktop/e2e**: cobrir onboarding, importação bancária e de cartão, transferências, faturas, reset e backup/restore em uma build Tauri real, incluindo falha de relaunch, arquivo bloqueado, banco corrompido e upgrade entre versões.
+4. **Code splitting e performance**: lazy loading por rota para reduzir o bundle inicial (~934 KB), começando por relatórios, gráficos e importação; medir startup e regressões antes/depois.
+5. **Reconciliação e qualidade dos dados**: saldo informado por data, diferença para saldo calculado, ajuste auditável e central de pendências para duplicatas, não categorizadas e vínculos incompletos.
+6. **Política de backup local**: lembrete pela idade do último backup, snapshots rotativos opcionais e teste periódico de restauração, sempre sem nuvem ou telemetria implícita.
+7. **Acessibilidade e cobertura frontend**: ampliar testes de teclado/foco, estados de erro e gráficos interativos; consolidar modais sobre uma primitive com focus trap.
 
 ## Checklist antes de finalizar
 
 - [ ] Tipos frontend, chamada `api.ts`, comando registrado e serialização Rust estão coerentes.
 - [ ] Migrations novas são aditivas/compatíveis e não modificam arquivos históricos.
 - [ ] Valores continuam em centavos inteiros e sinais financeiros foram testados.
-- [ ] Não há dados financeiros reais, segredos ou artefatos de build no diff.
-- [ ] `npm test`, `npm run build` e `cargo test --manifest-path src-tauri/Cargo.toml` foram executados.
+- [ ] Não há dados financeiros reais, segredos, chaves de criptografia ou artefatos de build no diff.
+- [ ] Mudanças de criptografia documentam migração, armazenamento/rotação/recuperação da chave, backup legado e comportamento em falhas, sem deixar cópia plaintext residual.
+- [ ] `npm run check` e `cargo test --manifest-path src-tauri/Cargo.toml` foram executados.
 - [ ] Para mudanças Rust: `cargo fmt --check` e clippy foram executados.

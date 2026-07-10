@@ -1,7 +1,7 @@
 use chrono::NaiveDate;
 use serde::Serialize;
-use sqlx::Row;
-use std::path::PathBuf;
+use sqlx::{Row, SqlitePool};
+use std::{collections::HashSet, path::PathBuf};
 use tauri::State;
 use uuid::Uuid;
 
@@ -9,7 +9,7 @@ use super::{apply_category_suggestions_to, load_rules, validate_mapping_draft};
 use crate::{
     application::state::{AppState, CreditCardImportSession},
     domain::{
-        credit_card::{item_fingerprint, totals, CreditCardImportItem},
+        credit_card::{item_fingerprint, mark_intra_file_duplicates, totals, CreditCardImportItem},
         import::CsvMappingDraft,
         import::{DuplicateStatus, SuggestionSource},
         merchant::merchant_key,
@@ -105,16 +105,26 @@ async fn build_credit_card_preview(
         .ok_or_else(|| AppError::Validation("Informe o vencimento da fatura".into()))?;
     validate_date(&due_date)?;
     let rules = load_rules(&state.db).await?;
+    let mut seen_external = HashSet::new();
+    let mut seen_fingerprint = HashSet::new();
     for item in &mut parsed.items {
+        if let Some(id) = item.candidate.external_id.as_mut() {
+            *id = id.trim().to_string();
+            if id.is_empty() {
+                item.candidate.external_id = None;
+            }
+        }
         let fp = item_fingerprint(&account_id, item);
-        if sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM transactions WHERE fingerprint=? AND deleted_at IS NULL",
-        )
-        .bind(fp)
-        .fetch_one(&state.db)
-        .await?
-            > 0
-        {
+        let duplicate = if let Some(id) = item.candidate.external_id.as_deref() {
+            !seen_external.insert(id.to_string()) || sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM transactions WHERE account_id=? AND external_id=? AND deleted_at IS NULL",
+            ).bind(&account_id).bind(id).fetch_one(&state.db).await? > 0
+        } else {
+            !seen_fingerprint.insert(fp.clone()) || sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM transactions WHERE account_id=? AND fingerprint=? AND deleted_at IS NULL",
+            ).bind(&account_id).bind(fp).fetch_one(&state.db).await? > 0
+        };
+        if duplicate {
             item.candidate.duplicate_status = DuplicateStatus::Exact;
             item.included = false;
         }
@@ -123,6 +133,7 @@ async fn build_credit_card_preview(
             item.candidate.suggested_category_name = Some("Pagamento de fatura".into());
         }
     }
+    mark_intra_file_duplicates(&account_id, &mut parsed.items);
     apply_category_suggestions_to(
         &state.db,
         &account_id,
@@ -134,7 +145,7 @@ async fn build_credit_card_preview(
             .map(|item| &mut item.candidate),
     )
     .await?;
-    let totals = totals(&parsed.items);
+    let totals = totals(&parsed.items)?;
     let session_id = Uuid::new_v4().to_string();
     let file_name = path
         .file_name()
@@ -265,6 +276,7 @@ pub async fn update_credit_card_import(
     if let Some(date) = &due_date {
         validate_date(date)?;
     }
+    let _commit_guard = state.import_commit.lock().await;
     let category_name = if let Some(id) = &category_id {
         Some(
             sqlx::query_scalar::<_, String>(
@@ -301,7 +313,7 @@ pub async fn update_credit_card_import(
     item.candidate.suggested_rule_id = None;
     item.candidate.suggested_rule_name = None;
     item.candidate.suggestion_source = None;
-    let totals = totals(&session.items);
+    let totals = totals(&session.items)?;
     Ok(CreditCardImportPreview {
         session_id,
         file_name: session.file_name.clone(),
@@ -319,20 +331,51 @@ pub async fn commit_credit_card_import(
     session_id: String,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
+    let _commit_guard = state.import_commit.lock().await;
     let session = state
         .credit_card_sessions
         .lock()
         .await
-        .remove(&session_id)
+        .get(&session_id)
+        .cloned()
         .ok_or(AppError::SessionExpired)?;
-    let included: Vec<_> = session.items.into_iter().filter(|x| x.included).collect();
+    let invoice_id = commit_credit_card_import_impl(session, &state.db).await?;
+    state.credit_card_sessions.lock().await.remove(&session_id);
+    Ok(invoice_id)
+}
+
+pub(crate) async fn commit_credit_card_import_impl(
+    session: CreditCardImportSession,
+    db: &SqlitePool,
+) -> Result<String, AppError> {
+    let mut tx = db.begin().await?;
+    let mut seen_external = HashSet::new();
+    let mut seen_fingerprint = HashSet::new();
+    for item in session.items.iter().filter(|x| x.included) {
+        let fp = item_fingerprint(&session.account_id, item);
+        let conflict = if let Some(id) = item.candidate.external_id.as_deref() {
+            !seen_external.insert(id.to_string()) || sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM transactions WHERE account_id=? AND external_id=? AND deleted_at IS NULL").bind(&session.account_id).bind(id).fetch_one(&mut *tx).await? > 0
+        } else {
+            !seen_fingerprint.insert(fp.clone()) || sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM transactions WHERE account_id=? AND fingerprint=? AND deleted_at IS NULL").bind(&session.account_id).bind(fp).fetch_one(&mut *tx).await? > 0
+        };
+        if conflict {
+            return Err(AppError::Validation(
+                "O arquivo contém lançamentos que já foram importados".into(),
+            ));
+        }
+    }
+    let included: Vec<_> = session
+        .items
+        .iter()
+        .filter(|x| x.included)
+        .cloned()
+        .collect();
     if included.is_empty() {
         return Err(AppError::Validation(
             "Selecione ao menos um item da fatura".into(),
         ));
     }
-    let totals = totals(&included);
-    let mut tx = state.db.begin().await?;
+    let totals = totals(&included)?;
     let batch_id = Uuid::new_v4().to_string();
     let invoice_id = Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO import_batches(id,file_name,created_at) VALUES(?,?,datetime('now'))")
@@ -358,13 +401,13 @@ pub async fn commit_credit_card_import(
         let merchant = merchant_key(&item.candidate.normalized_description);
         sqlx::query(
             "INSERT INTO transactions(id,account_id,date,description,normalized_description,merchant_key,amount_cents,fingerprint,
-             category_id,category_source,categorization_rule_id,status,import_batch_id)
-             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)"
+             category_id,category_source,categorization_rule_id,status,import_batch_id,external_id)
+             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
         ).bind(&transaction_id).bind(&session.account_id).bind(&item.candidate.date)
             .bind(&item.candidate.description).bind(&item.candidate.normalized_description).bind(&merchant)
             .bind(item.candidate.amount_in_cents).bind(item_fingerprint(&session.account_id, &item))
             .bind(&item.candidate.suggested_category_id).bind(source)
-            .bind(&item.candidate.suggested_rule_id).bind("cleared").bind(&batch_id)
+            .bind(&item.candidate.suggested_rule_id).bind("cleared").bind(&batch_id).bind(&item.candidate.external_id)
             .execute(&mut *tx).await?;
         sqlx::query(
             "INSERT INTO credit_card_invoice_items(invoice_id,transaction_id,holder,installment,source_row,raw_amount_cents,line_kind)
@@ -773,4 +816,111 @@ pub async fn set_credit_card_invoice_deleted(
     }
     tx.commit().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::credit_card::CreditCardLineKind;
+    use crate::domain::import::{DuplicateStatus, ImportCandidate};
+
+    fn card_item(description: &str, external_id: Option<&str>) -> CreditCardImportItem {
+        CreditCardImportItem::new(
+            ImportCandidate {
+                source_row: 1,
+                date: "2026-06-01".into(),
+                description: description.into(),
+                normalized_description: description.to_uppercase(),
+                amount_in_cents: -1000,
+                external_id: external_id.map(str::to_owned),
+                suggested_category_id: None,
+                suggested_category_name: None,
+                suggested_rule_id: None,
+                suggested_rule_name: None,
+                suggestion_source: None,
+                duplicate_status: DuplicateStatus::New,
+                warnings: vec![],
+                included: true,
+            },
+            None,
+            None,
+            1000,
+            CreditCardLineKind::Purchase,
+        )
+    }
+
+    async fn card_test_setup() -> (tempfile::TempDir, sqlx::SqlitePool, String) {
+        let directory = tempfile::tempdir().unwrap();
+        let db = crate::infrastructure::database::connect(&directory.path().join("card.db"))
+            .await
+            .unwrap();
+        let account_id = "card-account".to_string();
+        sqlx::query("INSERT INTO accounts(id,name,kind) VALUES(?,?,?)")
+            .bind(&account_id)
+            .bind("Cartão")
+            .bind("credit_card")
+            .execute(&db)
+            .await
+            .unwrap();
+        (directory, db, account_id)
+    }
+
+    #[tokio::test]
+    async fn card_commit_conflicts_are_atomic_and_success_persists_external_id() {
+        let (_directory, db, account_id) = card_test_setup().await;
+        let external = card_item("EXTERNO", Some("card-existing"));
+        let fingerprint_item = card_item("FINGERPRINT", None);
+        for (id, item, external_id) in [
+            ("card-existing-row", &external, Some("card-existing")),
+            ("card-fingerprint-row", &fingerprint_item, None),
+        ] {
+            sqlx::query("INSERT INTO transactions(id,account_id,date,description,normalized_description,amount_cents,fingerprint,status,external_id) VALUES(?,?,?,?,?,?,?,'cleared',?)")
+                .bind(id).bind(&account_id).bind(&item.candidate.date).bind(&item.candidate.description)
+                .bind(&item.candidate.normalized_description).bind(item.candidate.amount_in_cents)
+                .bind(item_fingerprint(&account_id, item)).bind(external_id).execute(&db).await.unwrap();
+        }
+        let session = |items| CreditCardImportSession {
+            account_id: account_id.clone(),
+            file_name: "fatura.csv".into(),
+            due_date: "2026-06-10".into(),
+            items,
+        };
+        let batches_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM import_batches")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert!(commit_credit_card_import_impl(session(vec![external]), &db)
+            .await
+            .is_err());
+        assert!(
+            commit_credit_card_import_impl(session(vec![fingerprint_item]), &db)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            batches_before,
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM import_batches")
+                .fetch_one(&db)
+                .await
+                .unwrap()
+        );
+        let success = card_item("NOVO", Some("card-new"));
+        let before_transactions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM transactions")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        let invoice_id = commit_credit_card_import_impl(session(vec![success]), &db)
+            .await
+            .unwrap();
+        assert_eq!(
+            before_transactions + 1,
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM transactions")
+                .fetch_one(&db)
+                .await
+                .unwrap()
+        );
+        let persisted: Option<String> = sqlx::query_scalar("SELECT external_id FROM transactions WHERE import_batch_id=(SELECT import_batch_id FROM credit_card_invoices WHERE id=? )").bind(invoice_id).fetch_one(&db).await.unwrap();
+        assert_eq!(persisted.as_deref(), Some("card-new"));
+        assert_eq!(1_i64, sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM credit_card_invoice_items WHERE invoice_id=(SELECT id FROM credit_card_invoices ORDER BY rowid DESC LIMIT 1)").fetch_one(&db).await.unwrap());
+    }
 }

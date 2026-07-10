@@ -20,7 +20,7 @@ export default defineConfig({
         "**/dist/**",
         "**/*.tsbuildinfo",
       ],
-      usePolling: true,
+      usePolling: false,
     },
   },
   envPrefix: ["VITE_", "TAURI_"],

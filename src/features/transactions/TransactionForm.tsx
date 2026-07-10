@@ -21,9 +21,7 @@ export function TransactionForm({ onClose, existing }: Props) {
   const isTransferLeg = Boolean(existing?.isTransferLeg);
   const [accountId, setAccountId] = useState(existing?.accountId ?? "");
   const [toAccountId, setToAccountId] = useState("");
-  const [type, setType] = useState<EntryType>(
-    existing?.isTransferLeg ? "transfer" : existing && existing.amountInCents > 0 ? "income" : "expense",
-  );
+  const [type, setType] = useState<EntryType>(existing && existing.amountInCents > 0 ? "income" : "expense");
   const [cents, setCents] = useState<number | null>(existing ? Math.abs(existing.amountInCents) : null);
   const [date, setDate] = useState(existing?.date ?? todayIso());
   const [description, setDescription] = useState(existing?.description ?? "");
@@ -122,8 +120,7 @@ export function TransactionForm({ onClose, existing }: Props) {
         </div>
         {isTransferLeg && (
           <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-            Esta transação faz parte de uma transferência; valor, data e contas ficam travados para manter as duas
-            pernas sincronizadas.
+            Esta transação está vinculada; valor, data, conta e categoria ficam travados para manter o vínculo.
           </p>
         )}
         <label>
@@ -216,6 +213,7 @@ export function TransactionForm({ onClose, existing }: Props) {
               movementType={type}
               allowEmpty
               emptyLabel="Sem categoria"
+              disabled={isTransferLeg}
             />
           </>
         )}

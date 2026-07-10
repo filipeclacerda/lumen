@@ -65,9 +65,13 @@ pub fn matches_rule(rule: &CategorizationRule, input: &CategorizationInput<'_>) 
     {
         return false;
     }
-    let absolute = input.amount_in_cents.unsigned_abs() as i64;
-    if rule.min_amount_in_cents.is_some_and(|min| absolute < min)
-        || rule.max_amount_in_cents.is_some_and(|max| absolute > max)
+    let absolute = input.amount_in_cents.unsigned_abs();
+    if rule
+        .min_amount_in_cents
+        .is_some_and(|min| absolute < min.unsigned_abs())
+        || rule
+            .max_amount_in_cents
+            .is_some_and(|max| absolute > max.unsigned_abs())
     {
         return false;
     }
