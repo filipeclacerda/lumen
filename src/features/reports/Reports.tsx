@@ -1,3 +1,7 @@
+import { PageHeader } from "../../shared/ui/PageHeader";
+import { Modal } from "../../shared/ui/Modal";
+import { Tabs } from "../../shared/ui/Tabs";
+import { ErrorState, LoadingState } from "../../shared/ui/AsyncState";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -94,6 +98,7 @@ export function Reports() {
     data: report,
     isLoading,
     error,
+    refetch,
   } = useQuery({
     queryKey: ["financial-report", filter],
     queryFn: () => api.financialReport(filter),
@@ -147,7 +152,7 @@ export function Reports() {
 
   return (
     <section className="reports-page">
-      <header>
+      <PageHeader>
         <div>
           <p className="eyebrow">ANÁLISE FINANCEIRA</p>
           <h1>Relatórios</h1>
@@ -163,7 +168,7 @@ export function Reports() {
             <Plus size={16} /> Nova meta
           </button>
         </div>
-      </header>
+      </PageHeader>
       <article className="report-filters">
         <div className="filter-presets">
           {[
@@ -223,8 +228,10 @@ export function Reports() {
         </div>
       </article>
       {invalidPeriod && <p className="form-error">O mês inicial não pode ser posterior ao mês final.</p>}
-      {!invalidPeriod && isLoading && <article className="panel report-loading">Calculando seus relatórios…</article>}
-      {error && <p className="form-error">Não foi possível gerar o relatório: {String(error)}</p>}
+      {!invalidPeriod && isLoading && <LoadingState variant="panel" label="Calculando seus relatórios…" />}
+      {!invalidPeriod && error && (
+        <ErrorState message="Não foi possível gerar o relatório." onRetry={() => void refetch()} />
+      )}
       {!invalidPeriod && report && (
         <ReportContent
           report={report}
@@ -336,19 +343,12 @@ function ReportContent({
           </article>
         ))}
       </div>
-      <div className="report-tabs" role="tablist" aria-label="Seções do relatório">
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            role="tab"
-            aria-selected={activeTab === tab.id}
-            className={activeTab === tab.id ? "active" : ""}
-            onClick={() => setActiveTab(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        value={activeTab}
+        onChange={(value) => setActiveTab(value as typeof activeTab)}
+        hidePanel
+        tabs={tabs.map((tab) => ({ id: tab.id, label: tab.label }))}
+      />
       {activeTab === "overview" && (
         <OverviewTab
           report={report}
@@ -863,7 +863,7 @@ function RenameMerchantModal({
     }
   }
   return (
-    <div className="modal-backdrop">
+    <Modal title="Renomear estabelecimento" onClose={onClose}>
       <article className="modal">
         <h2>Renomear estabelecimento</h2>
         <p className="muted">Esse apelido será usado sempre que este estabelecimento aparecer nos relatórios.</p>
@@ -881,7 +881,7 @@ function RenameMerchantModal({
           </button>
         </div>
       </article>
-    </div>
+    </Modal>
   );
 }
 
@@ -925,7 +925,7 @@ function TargetEditor({
     }
   }
   return (
-    <div className="modal-backdrop">
+    <Modal title={target.id ? "Editar meta" : "Nova meta financeira"} onClose={onClose}>
       <article className="modal target-modal">
         <h2>{target.id ? "Editar meta" : "Nova meta financeira"}</h2>
         <p className="muted">Defina um objetivo recorrente e acompanhe a projeção ao longo do mês.</p>
@@ -966,6 +966,6 @@ function TargetEditor({
           </button>
         </div>
       </article>
-    </div>
+    </Modal>
   );
 }

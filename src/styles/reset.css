@@ -1,0 +1,8 @@
+@layer reset {
+  *,*::before,*::after { box-sizing:border-box; }
+  html { min-width:320px; background:var(--surface-bg); }
+  body { margin:0; min-width:320px; user-select:text; -webkit-user-select:text; }
+  button,input,select,textarea { font:inherit; }
+  button { min-height:44px; }
+  img,svg { max-width:100%; }
+}

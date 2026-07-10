@@ -1,3 +1,6 @@
+import { PageHeader } from "../../shared/ui/PageHeader";
+import { Modal } from "../../shared/ui/Modal";
+import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/AsyncState";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDownRight,
@@ -59,6 +62,13 @@ function centsParam(value: string | null) {
   if (!value) return undefined;
   const cents = Number(value);
   return Number.isFinite(cents) && cents > 0 ? cents : undefined;
+}
+
+function monthFilterLabel(month: string) {
+  const [year, value] = month.split("-").map(Number);
+  return new Date(year, value - 1, 1)
+    .toLocaleDateString("pt-BR", { month: "short", year: "numeric" })
+    .replace(" de ", " ");
 }
 
 function setOrDelete(params: URLSearchParams, key: string, value?: string) {
@@ -192,7 +202,7 @@ export function Transactions() {
     limit: PAGE_SIZE,
     offset: page * PAGE_SIZE,
   };
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["transactions", filter],
     queryFn: () => api.listTransactions(filter),
   });
@@ -251,7 +261,14 @@ export function Transactions() {
       key: uncategorizedFilter ? "uncategorized" : "category",
       label: `Categoria: ${categoryFilterName}`,
     },
-    startMonthFilter && endMonthFilter && { key: "months", label: `Meses: ${startMonthFilter} a ${endMonthFilter}` },
+    startMonthFilter &&
+      endMonthFilter && {
+        key: "months",
+        label:
+          startMonthFilter === endMonthFilter
+            ? `Período: ${monthFilterLabel(startMonthFilter)}`
+            : `Período: ${monthFilterLabel(startMonthFilter)} — ${monthFilterLabel(endMonthFilter)}`,
+      },
     startDateFilter && { key: "startDate", label: `Desde ${shortDate(startDateFilter)}` },
     endDateFilter && { key: "endDate", label: `Até ${shortDate(endDateFilter)}` },
     sourceLabel && { key: "source", label: `Origem: ${sourceLabel}` },
@@ -462,7 +479,7 @@ export function Transactions() {
 
   return (
     <section>
-      <header>
+      <PageHeader>
         <div>
           <p className="eyebrow">MOVIMENTAÇÕES</p>
           <h1>Transações</h1>
@@ -470,21 +487,23 @@ export function Transactions() {
             {totalCount === 0 ? "0 lançamentos" : `${rangeStart}–${rangeEnd} de ${totalCount} lançamentos`}
           </p>
         </div>
-        <div style={{ display: "flex", gap: "10px" }}>
-          <button className="secondary" disabled={exporting} onClick={() => exportFile("csv")}>
-            <Download size={17} /> CSV
-          </button>
-          <button className="secondary" disabled={exporting} onClick={() => exportFile("ofx")}>
-            <Download size={17} /> OFX
-          </button>
-          <button className="secondary" disabled={exporting} onClick={() => exportFile("pdf")}>
-            <Download size={17} /> PDF
-          </button>
+        <div className="transaction-header-actions">
+          <div className="export-actions" aria-label="Exportar transações">
+            <button className="secondary" disabled={exporting} onClick={() => exportFile("csv")}>
+              <Download size={17} /> CSV
+            </button>
+            <button className="secondary" disabled={exporting} onClick={() => exportFile("ofx")}>
+              <Download size={17} /> OFX
+            </button>
+            <button className="secondary" disabled={exporting} onClick={() => exportFile("pdf")}>
+              <Download size={17} /> PDF
+            </button>
+          </div>
           <button onClick={() => setShowNew(true)}>
             <Plus size={17} /> Nova transação
           </button>
         </div>
-      </header>
+      </PageHeader>
       {showNew && <TransactionForm onClose={() => setShowNew(false)} />}
       {editing && <TransactionForm existing={editing} onClose={() => setEditing(undefined)} />}
       {notice && (
@@ -691,20 +710,25 @@ export function Transactions() {
         )}
         {activeChips.length > 0 && (
           <div className="active-filter-chips">
-            <Filter size={14} />
-            {activeChips.map((chip) => (
-              <button key={chip.key} className="filter-chip" onClick={() => removeFilter(chip.key)}>
-                {chip.label}
-                <X size={12} />
-              </button>
-            ))}
-            <button className="text-button" onClick={clearAllFilters}>
+            <span className="active-filter-chips__label">
+              <Filter size={15} aria-hidden="true" /> Filtros ativos
+            </span>
+            <div className="active-filter-chips__items">
+              {activeChips.map((chip) => (
+                <button key={chip.key} className="filter-chip" onClick={() => removeFilter(chip.key)}>
+                  <span>{chip.label}</span>
+                  <X size={13} aria-hidden="true" />
+                </button>
+              ))}
+            </div>
+            <button className="text-button active-filter-chips__clear" onClick={clearAllFilters}>
               Limpar filtros
             </button>
           </div>
         )}
+        <p className="table-hint">Em telas estreitas, deslize horizontalmente para ver todas as colunas e ações.</p>
         <div className="table-scroll">
-          <table>
+          <table className="transactions-table">
             <thead>
               <tr>
                 <th className="select-cell">
@@ -727,8 +751,22 @@ export function Transactions() {
             <tbody>
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={8} style={{ textAlign: "center", padding: "60px 20px", color: "var(--text-soft)" }}>
-                    {isLoading ? "Carregando transações…" : "Nenhuma transação encontrada para este filtro."}
+                  <td colSpan={8}>
+                    {isLoading ? (
+                      <LoadingState variant="table-row" label="Carregando transações…" />
+                    ) : isError ? (
+                      <ErrorState variant="table-row" onRetry={() => void refetch()} />
+                    ) : (
+                      <EmptyState
+                        variant="table-row"
+                        title="Nenhuma transação encontrada"
+                        description={
+                          hasActiveFilters
+                            ? "Tente ajustar ou limpar os filtros."
+                            : "Adicione sua primeira transação para começar."
+                        }
+                      />
+                    )}
                   </td>
                 </tr>
               )}
@@ -742,17 +780,16 @@ export function Transactions() {
                       onChange={() => toggle(t.id)}
                     />
                   </td>
-                  <td style={{ whiteSpace: "nowrap", color: "#66706c" }}>{shortDate(t.date)}</td>
+                  <td className="transaction-date">{shortDate(t.date)}</td>
                   <td>
                     <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
                       {(() => {
                         const c = categories.find((cat) => cat.id === t.categoryId);
                         const isInv = c?.kind === "investment";
                         const isInc = t.amountInCents > 0;
-                        const bg = isInv ? "#eaf1f8" : isInc ? "#e8f5ef" : "#fff0ed";
-                        const col = isInv ? "#3d6f9a" : isInc ? "#16825c" : "#c76155";
+                        const tone = isInv ? "investment" : isInc ? "income" : "expense";
                         return (
-                          <div className="tx-icon" style={{ background: bg, color: col }}>
+                          <div className={`tx-icon tx-icon-${tone}`}>
                             {isInc || isInv ? <ArrowUpRight size={20} /> : <ArrowDownRight size={20} />}
                           </div>
                         );
@@ -766,8 +803,8 @@ export function Transactions() {
                             display: "inline-flex",
                             alignItems: "center",
                             gap: "4px",
-                            background: "#eef0ff",
-                            color: "#4c5bd4",
+                            background: "var(--status-info-bg)",
+                            color: "var(--status-info-fg)",
                           }}
                         >
                           <Repeat size={12} /> Vinculada
@@ -800,10 +837,7 @@ export function Transactions() {
                     )}
                   </td>
                   <td>
-                    <span
-                      className="badge"
-                      style={t.status === "cleared" ? undefined : { background: "#fbf3e5", color: "#a96a1a" }}
-                    >
+                    <span className={t.status === "cleared" ? "badge" : "badge status-warning"}>
                       {t.status === "cleared" ? "Confirmada" : "Pendente"}
                     </span>
                   </td>
@@ -859,7 +893,7 @@ export function Transactions() {
         )}
       </article>
       {learning && (
-        <div className="modal-backdrop">
+        <Modal title="Usar esta correção no futuro?" onClose={() => setLearning(undefined)}>
           <article className="modal">
             <h2>Usar esta correção no futuro?</h2>
             <p className="muted">Você pode criar uma regra local ou manter a alteração somente nesta transação.</p>
@@ -874,10 +908,10 @@ export function Transactions() {
               <button onClick={createRule}>Criar regra</button>
             </div>
           </article>
-        </div>
+        </Modal>
       )}
       {confirmDelete && (
-        <div className="modal-backdrop">
+        <Modal title="Excluir transações" onClose={() => setConfirmDelete(false)}>
           <article className="modal">
             <h2>Excluir {selected.size} transações?</h2>
             <p className="muted">
@@ -892,7 +926,7 @@ export function Transactions() {
               </button>
             </div>
           </article>
-        </div>
+        </Modal>
       )}
     </section>
   );

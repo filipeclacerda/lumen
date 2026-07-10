@@ -1,3 +1,4 @@
+import { PageHeader } from "../../shared/ui/PageHeader";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, Pencil, Play, Repeat, Save } from "lucide-react";
@@ -8,6 +9,7 @@ import { useToast } from "../../shared/ui/toast";
 import { CategorySelect } from "../../shared/ui/CategorySelect";
 import { MoneyInput } from "../../shared/ui/MoneyInput";
 import type { RecurringTransaction, RecurringTransactionInput } from "../../shared/types";
+import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/AsyncState";
 
 const emptyDraft: RecurringTransactionInput = {
   accountId: "",
@@ -25,9 +27,24 @@ const dayLabel = (day: number) => (day === 31 ? "último dia do mês" : `${day}`
 export function RecurringTransactions() {
   const client = useQueryClient();
   const toast = useToast();
-  const { data: recurring = [] } = useQuery({ queryKey: ["recurring"], queryFn: api.recurringTransactions });
-  const { data: accounts = [] } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
-  const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: api.categories });
+  const {
+    data: recurring = [],
+    isLoading: recurringLoading,
+    isError: recurringError,
+    refetch: refetchRecurring,
+  } = useQuery({ queryKey: ["recurring"], queryFn: api.recurringTransactions });
+  const {
+    data: accounts = [],
+    isLoading: accountsLoading,
+    isError: accountsError,
+    refetch: refetchAccounts,
+  } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
+  const {
+    data: categories = [],
+    isLoading: categoriesLoading,
+    isError: categoriesError,
+    refetch: refetchCategories,
+  } = useQuery({ queryKey: ["categories"], queryFn: api.categories });
   const [draft, setDraft] = useState<RecurringTransactionInput>(emptyDraft);
   const [type, setType] = useState<"expense" | "income">("expense");
   const [amountInCents, setAmountInCents] = useState<number | null>(null);
@@ -122,7 +139,7 @@ export function RecurringTransactions() {
 
   return (
     <section>
-      <header>
+      <PageHeader>
         <div>
           <p className="eyebrow">LANÇAMENTOS AUTOMÁTICOS</p>
           <h1>Recorrências</h1>
@@ -131,9 +148,24 @@ export function RecurringTransactions() {
         <button className="secondary" onClick={syncNow}>
           <Play size={16} /> Gerar pendentes agora
         </button>
-      </header>
+      </PageHeader>
+      {(recurringLoading || accountsLoading || categoriesLoading) && (
+        <LoadingState variant="panel" label="Carregando recorrências…" />
+      )}
+      {(recurringError || accountsError || categoriesError) && (
+        <ErrorState
+          message="Não foi possível carregar as recorrências."
+          onRetry={() => void Promise.all([refetchRecurring(), refetchAccounts(), refetchCategories()])}
+        />
+      )}
+      {!recurringLoading && !recurringError && recurring.length === 0 && (
+        <EmptyState
+          title="Nenhuma recorrência cadastrada"
+          description="Crie uma recorrência para automatizar seus lançamentos."
+        />
+      )}
       <div className="rules-layout">
-        <article className="panel rule-editor">
+        <article className="panel rule-editor recurring-editor">
           <div className="panel-title">
             <h2>{editing ? "Editar recorrência" : "Nova recorrência"}</h2>
             {editing && (
@@ -196,14 +228,17 @@ export function RecurringTransactions() {
                 ))}
               </select>
             </label>
-            <CategorySelect
-              value={draft.categoryId}
-              onChange={(id) => setDraft({ ...draft, categoryId: id })}
-              categories={categories}
-              movementType={type}
-              allowEmpty
-              emptyLabel="Sem categoria"
-            />
+            <label>
+              Categoria
+              <CategorySelect
+                value={draft.categoryId}
+                onChange={(id) => setDraft({ ...draft, categoryId: id })}
+                categories={categories}
+                movementType={type}
+                allowEmpty
+                emptyLabel="Sem categoria"
+              />
+            </label>
           </div>
           <div className="form-row">
             <label>

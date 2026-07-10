@@ -13,16 +13,26 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const show = useCallback((message: string, variant: Variant = "success") => {
     const id = Date.now() + Math.random();
     setToasts((current) => [...current, { id, message, variant }]);
-    setTimeout(() => setToasts((current) => current.filter((t) => t.id !== id)), 4000);
+    if (variant !== "error") setTimeout(() => setToasts((current) => current.filter((t) => t.id !== id)), 4000);
   }, []);
   return (
     <ToastContext.Provider value={show}>
       {children}
       <div className="toast-stack" aria-live="polite">
         {toasts.map((t) => (
-          <div key={t.id} className={`toast toast-${t.variant}`} role="status">
+          <div key={t.id} className={`toast toast-${t.variant}`} role={t.variant === "error" ? "alert" : "status"}>
             {t.variant === "error" ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
             <span>{t.message}</span>
+            {t.variant === "error" && (
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="Fechar notificação"
+                onClick={() => setToasts((current) => current.filter((item) => item.id !== t.id))}
+              >
+                ×
+              </button>
+            )}
           </div>
         ))}
       </div>

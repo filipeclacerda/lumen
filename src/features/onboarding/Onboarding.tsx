@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../shared/api";
 import { MoneyInput } from "../../shared/ui/MoneyInput";
 import type { AccountType, AppBootstrap, Category, CategoryKind, FinancialGoal } from "../../shared/types";
+import { ErrorState, LoadingState } from "../../shared/ui/AsyncState";
 
 const goals: { value: FinancialGoal; label: string }[] = [
   { value: "organize", label: "Organizar minhas finanças" },
@@ -34,7 +35,12 @@ export function Onboarding({
   const [saving, setSaving] = useState(false);
   const [completed, setCompleted] = useState(false);
   const queryClient = useQueryClient();
-  const { data: categories = [] } = useQuery<Category[]>({ queryKey: ["categories"], queryFn: api.categories });
+  const {
+    data: categories = [],
+    isLoading: categoriesLoading,
+    isError: categoriesError,
+    refetch: refetchCategories,
+  } = useQuery<Category[]>({ queryKey: ["categories"], queryFn: api.categories });
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newCategoryKind, setNewCategoryKind] = useState<CategoryKind>("expense");
 
@@ -74,6 +80,16 @@ export function Onboarding({
       setSaving(false);
     }
   }
+
+  if (categoriesLoading) return <LoadingState variant="page" label="Preparando categorias…" />;
+  if (categoriesError)
+    return (
+      <ErrorState
+        variant="page"
+        message="Não foi possível carregar as categorias."
+        onRetry={() => void refetchCategories()}
+      />
+    );
 
   if (completed)
     return (

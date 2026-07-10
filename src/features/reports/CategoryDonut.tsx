@@ -63,7 +63,25 @@ export function CategoryDonut({ categories, selectedCategoryKey, onSelect }: Pro
           />
         </PieChart>
       </ResponsiveContainer>
-      <p className="muted donut-hint">{chartMoneyFormatter(total)} no total · clique numa fatia para ver a tendência</p>
+      <p className="muted donut-hint">
+        {chartMoneyFormatter(total)} no total · escolha uma categoria para ver a tendência
+      </p>
+      <div className="chart-data-list" aria-label="Gastos por categoria">
+        {data.map((entry) => {
+          const key = entry.categoryId ?? UNCATEGORIZED_CATEGORY_KEY;
+          return (
+            <button
+              type="button"
+              className="chart-data-list__item"
+              aria-pressed={selectedCategoryKey === key}
+              onClick={() => onSelect(key === selectedCategoryKey ? undefined : key)}
+            >
+              <span>{entry.category}</span>
+              <b>{chartMoneyFormatter(entry.amountInCents)}</b>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { App } from "./app/App";
 import { initTheme } from "./shared/theme";
 import { initZoom } from "./shared/zoom";
 import { ToastProvider } from "./shared/ui/toast";
+import "@fontsource-variable/inter";
 import "./styles.css";
 initTheme();
 initZoom();

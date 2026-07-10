@@ -1,3 +1,4 @@
+import { PageHeader } from "../../shared/ui/PageHeader";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -19,6 +20,7 @@ import { CategoryBarsChart } from "../../shared/ui/Charts";
 import { TransactionForm } from "../transactions/TransactionForm";
 import { CashFlowChart } from "./CashFlowChart";
 import { MonthlySurplusChart } from "./MonthlySurplusChart";
+import { ErrorState, LoadingState } from "../../shared/ui/AsyncState";
 import type { DashboardSummary, FinancialGoal, FinancialReport, Transaction } from "../../shared/types";
 
 /// Picks the single personalized highlight for the onboarding `financialGoal`, using whatever
@@ -62,7 +64,12 @@ function buildGoalHighlight(
 export function Dashboard() {
   const [month, setMonth] = useState(currentMonth());
   const [showForm, setShowForm] = useState(false);
-  const { data: summary } = useQuery({ queryKey: ["summary", month], queryFn: () => api.summary(month) });
+  const {
+    data: summary,
+    isLoading: summaryLoading,
+    isError: summaryError,
+    refetch: refetchSummary,
+  } = useQuery({ queryKey: ["summary", month], queryFn: () => api.summary(month) });
   const { data: transactions = [] } = useQuery({
     queryKey: ["transactions", month],
     queryFn: () => api.transactions(month),
@@ -82,7 +89,15 @@ export function Dashboard() {
     queryFn: () => api.budgetOverview(month),
   });
 
-  if (!summary) return <p>Carregando visão geral…</p>;
+  if (summaryLoading) return <LoadingState variant="page" label="Carregando visão geral…" />;
+  if (summaryError || !summary)
+    return (
+      <ErrorState
+        variant="page"
+        message="Não foi possível carregar a visão geral."
+        onRetry={() => void refetchSummary()}
+      />
+    );
   const categoryTotal = summary.byCategory.reduce((sum, category) => sum + category.amountInCents, 0);
   const categoryBars = summary.byCategory.map((category) => ({
     category: category.category,
@@ -97,10 +112,10 @@ export function Dashboard() {
 
   return (
     <section>
-      <header>
+      <PageHeader>
         <div>
-          <div className="eyebrow" style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
-            {monthTitle(month)}
+          <div className="eyebrow dashboard-period-header">
+            <span>{monthTitle(month)}</span>
             <MonthNavigator month={month} onChange={setMonth} />
           </div>
           <h1>Olá, {profile?.displayName.split(" ")[0] ?? "você"} 👋</h1>
@@ -109,7 +124,7 @@ export function Dashboard() {
         <button onClick={() => setShowForm(true)}>
           <Plus size={17} /> Nova transação
         </button>
-      </header>
+      </PageHeader>
       {goalHighlight && (
         <div className="notice notice-action">
           <span>{goalHighlight.text}</span>
@@ -141,7 +156,7 @@ export function Dashboard() {
           <small>gastos confirmados</small>
         </article>
         <article>
-          <div className="metric-icon" style={{ background: "#e9f0f5", color: "#1a5b82" }}>
+          <div className="metric-icon status-info">
             <TrendingUp />
           </div>
           <p>Investimentos</p>
@@ -160,7 +175,7 @@ export function Dashboard() {
       {report && (
         <div className="cards pace-strip">
           <article>
-            <div className="metric-icon" style={{ background: "#eaf3ef", color: "#176148" }}>
+            <div className="metric-icon status-success">
               <PiggyBank />
             </div>
             <p>Taxa de poupança</p>
@@ -168,7 +183,7 @@ export function Dashboard() {
             <small>da renda ficou guardada em {monthTitle(month).toLowerCase()}</small>
           </article>
           <article>
-            <div className="metric-icon" style={{ background: "#f1ebf5", color: "#835c96" }}>
+            <div className="metric-icon metric-icon-purple">
               <Gauge />
             </div>
             <p>Ritmo diário de gastos</p>
@@ -176,7 +191,7 @@ export function Dashboard() {
             <small>média por dia neste mês</small>
           </article>
           <article>
-            <div className="metric-icon" style={{ background: "#fff7e9", color: "#9b6a1f" }}>
+            <div className="metric-icon status-warning">
               <CalendarClock />
             </div>
             <p>Projeção do mês</p>
@@ -205,7 +220,7 @@ export function Dashboard() {
               <div className={`dashboard-budget-item ${category.status}`} key={category.targetId}>
                 <div className="dashboard-budget-item-heading">
                   <span>
-                    <i style={{ background: category.categoryColor ?? "#728bba" }} />
+                    <i style={{ background: category.categoryColor ?? "var(--data-3)" }} />
                     {category.categoryName}
                   </span>
                   <small>

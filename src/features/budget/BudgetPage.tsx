@@ -1,3 +1,5 @@
+import { PageHeader } from "../../shared/ui/PageHeader";
+import { Modal } from "../../shared/ui/Modal";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Wallet } from "lucide-react";
@@ -7,6 +9,7 @@ import { currentMonth as curMonth, monthLabel } from "../../shared/period";
 import { MonthNavigator } from "../../shared/ui/MonthNavigator";
 import { CategorySelect } from "../../shared/ui/CategorySelect";
 import { MoneyInput } from "../../shared/ui/MoneyInput";
+import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/AsyncState";
 import type { BudgetCategory, Category, FinancialTarget } from "../../shared/types";
 
 const currentMonth = curMonth();
@@ -23,9 +26,22 @@ export function BudgetPage() {
   const [editing, setEditing] = useState<BudgetCategory>();
   const client = useQueryClient();
 
-  const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: api.categories });
-  const { data: targets = [] } = useQuery({ queryKey: ["financial-targets"], queryFn: api.financialTargets });
-  const { data: overview, isLoading } = useQuery({
+  const {
+    data: categories = [],
+    isError: categoriesError,
+    refetch: refetchCategories,
+  } = useQuery({ queryKey: ["categories"], queryFn: api.categories });
+  const {
+    data: targets = [],
+    isError: targetsError,
+    refetch: refetchTargets,
+  } = useQuery({ queryKey: ["financial-targets"], queryFn: api.financialTargets });
+  const {
+    data: overview,
+    isLoading,
+    isError,
+    refetch,
+  } = useQuery({
     queryKey: ["budget-overview", month],
     queryFn: () => api.budgetOverview(month),
   });
@@ -53,7 +69,7 @@ export function BudgetPage() {
 
   return (
     <section className="budget-page">
-      <header>
+      <PageHeader>
         <div>
           <p className="eyebrow">PLANEJAMENTO</p>
           <h1>Orçamento</h1>
@@ -62,7 +78,7 @@ export function BudgetPage() {
         <button onClick={() => setAdding(true)}>
           <Plus size={16} /> Adicionar categoria ao orçamento
         </button>
-      </header>
+      </PageHeader>
 
       <div className="budget-month-row">
         <MonthNavigator month={month} onChange={setMonth} />
@@ -91,20 +107,20 @@ export function BudgetPage() {
         </div>
       )}
 
-      {isLoading && <article className="panel report-loading">Calculando seu orçamento…</article>}
+      {isLoading && <LoadingState variant="panel" label="Calculando seu orçamento…" />}
+      {(isError || categoriesError || targetsError) && (
+        <ErrorState
+          message="Não foi possível carregar o orçamento."
+          onRetry={() => void Promise.all([refetch(), refetchCategories(), refetchTargets()])}
+        />
+      )}
 
-      {overview && overview.categories.length === 0 && (
-        <article className="panel">
-          <div className="report-empty">
-            <Wallet />
-            <div>
-              <b>Nenhuma categoria orçada ainda</b>
-              <p>
-                Adicione uma categoria de despesa e defina um limite mensal para começar a acompanhar seu orçamento.
-              </p>
-            </div>
-          </div>
-        </article>
+      {!isLoading && !isError && overview && overview.categories.length === 0 && (
+        <EmptyState
+          title="Nenhuma categoria orçada ainda"
+          description="Adicione uma categoria de despesa e defina um limite mensal para começar a acompanhar seu orçamento."
+          action={<Wallet aria-hidden="true" />}
+        />
       )}
 
       {overview && overview.categories.length > 0 && (
@@ -209,8 +225,8 @@ function AddBudgetModal({
   }
 
   return (
-    <div className="modal-backdrop">
-      <article className="modal target-modal">
+    <Modal title="Adicionar categoria ao orçamento" onClose={onClose}>
+      <article className="target-modal">
         <h2>Adicionar categoria ao orçamento</h2>
         <p className="muted">Escolha uma categoria de despesa e defina um limite mensal.</p>
         {categories.length === 0 ? (
@@ -244,7 +260,7 @@ function AddBudgetModal({
           </button>
         </div>
       </article>
-    </div>
+    </Modal>
   );
 }
 
@@ -292,8 +308,8 @@ function EditBudgetModal({
   }
 
   return (
-    <div className="modal-backdrop">
-      <article className="modal target-modal">
+    <Modal title="Editar limite" onClose={onClose}>
+      <article className="target-modal">
         <h2>Editar limite · {category.categoryName}</h2>
         <p className="muted">Ajuste o limite mensal para esta categoria.</p>
         <label>
@@ -314,6 +330,6 @@ function EditBudgetModal({
           </button>
         </div>
       </article>
-    </div>
+    </Modal>
   );
 }

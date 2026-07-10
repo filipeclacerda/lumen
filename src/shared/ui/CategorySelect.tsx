@@ -143,7 +143,8 @@ export function CategorySelect({
 
   const selected = useMemo(() => categories.find((c) => c.id === value), [categories, value]);
 
-  if (native) {
+  // Native select is the safe default: it provides complete keyboard and AT behavior.
+  if (native !== false) {
     return (
       <select
         className={"category-select" + (className ? " " + className : "")}

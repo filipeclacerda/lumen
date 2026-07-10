@@ -1,3 +1,4 @@
+import { PageHeader } from "../../shared/ui/PageHeader";
 import { type DragEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -20,6 +21,7 @@ import {
 import { api } from "../../shared/api";
 import { Modal } from "../../shared/ui/Modal";
 import { CategorySelect } from "../../shared/ui/CategorySelect";
+import { ErrorState, LoadingState } from "../../shared/ui/AsyncState";
 import {
   money,
   centsToInput,
@@ -115,8 +117,20 @@ export function ImportPage() {
     }
   }, [showTroubleMenu]);
 
-  const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: api.categories });
-  const { data: accounts = [] } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
+  const {
+    data: categories = [],
+    isLoading: categoriesLoading,
+    isError: categoriesError,
+    refetch: refetchCategories,
+  } = useQuery({ queryKey: ["categories"], queryFn: api.categories });
+  const {
+    data: accounts = [],
+    isLoading: accountsLoading,
+    isError: accountsError,
+    refetch: refetchAccounts,
+  } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
+  const asyncLoading = categoriesLoading || accountsLoading;
+  const asyncError = categoriesError || accountsError;
   const bankAccount = accounts.find((account) => account.kind !== "credit_card");
   const cards = accounts.filter((account) => account.kind === "credit_card");
   const bankAccountId = bankAccount?.id;
@@ -534,18 +548,25 @@ export function ImportPage() {
   }
 
   return (
-    <section>
-      <header>
+    <section className="import-page">
+      <PageHeader>
         <div>
           <p className="eyebrow">IMPORTAÇÃO SEGURA</p>
           <h1>Importar extrato ou fatura</h1>
           <p className="muted">CSV, OFX e PDF são processados somente neste computador.</p>
         </div>
-      </header>
+      </PageHeader>
+      {asyncLoading && <LoadingState variant="panel" label="Carregando dados para importação…" />}
+      {asyncError && (
+        <ErrorState
+          message="Não foi possível carregar os dados para importação."
+          onRetry={() => void Promise.all([refetchCategories(), refetchAccounts()])}
+        />
+      )}
 
       {canStartImport && (
         <article
-          className={`dropzone${isDraggingFile ? " dragging" : ""}`}
+          className={`dropzone import-dropzone${isDraggingFile ? " dragging" : ""}`}
           onDragEnter={handleDropzoneDrag}
           onDragOver={handleDropzoneDrag}
           onDragLeave={handleDropzoneLeave}
@@ -560,7 +581,7 @@ export function ImportPage() {
           <button onClick={choose} disabled={isReadingFile}>
             {isReadingFile ? "Lendo arquivo..." : "Escolher arquivo"}
           </button>
-          <div style={{ position: "relative", display: "inline-block", margin: "0 auto 22px" }}>
+          <div className="import-trouble-menu">
             <button className="text-button" onClick={() => setShowTroubleMenu(!showTroubleMenu)}>
               Enfrentando problemas?
             </button>
@@ -1139,7 +1160,7 @@ export function ImportPage() {
       )}
 
       {learning && (
-        <div className="modal-backdrop">
+        <Modal title="Usar esta correção no futuro?" onClose={() => setLearning(undefined)}>
           <article className="modal">
             <h2>Usar esta correção no futuro?</h2>
             <p className="muted">
@@ -1160,7 +1181,7 @@ export function ImportPage() {
               <button onClick={createRule}>Criar regra</button>
             </div>
           </article>
-        </div>
+        </Modal>
       )}
 
       {creatingCard && (

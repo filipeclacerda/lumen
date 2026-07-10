@@ -1,0 +1,14 @@
+@layer base {
+  :root { font-family:var(--font-sans); color:var(--text); background:var(--surface-bg); font-synthesis:none; text-rendering:optimizeLegibility; font-feature-settings: "cv05", "cv11"; }
+  html, body, #root {
+    min-height:100%;
+    background:var(--surface-bg);
+    color:var(--text);
+  }
+  body { line-height:1.5; }
+  .shell, main { background:var(--surface-bg); color:var(--text); }
+  ::selection { color:var(--text); background:var(--selection); }
+  :where(a,button,input,select,textarea,[tabindex]):focus-visible { outline:3px solid var(--focus); outline-offset:2px; }
+  :where(input[type=number], .amount, .money, .money-input) { font-variant-numeric:tabular-nums; }
+  @media (prefers-reduced-motion: reduce) { *,*::before,*::after { animation-duration:0.001ms!important; animation-iteration-count:1!important; scroll-behavior:auto!important; transition-duration:0.001ms!important; } }
+}

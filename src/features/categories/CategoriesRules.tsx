@@ -1,3 +1,6 @@
+import { PageHeader } from "../../shared/ui/PageHeader";
+import { Modal } from "../../shared/ui/Modal";
+import { Tabs } from "../../shared/ui/Tabs";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, ArrowDown, ArrowUp, Check, Pencil, Plus, Save, Sparkles, TestTube2, X } from "lucide-react";
 import { useMemo, useState, useEffect } from "react";
@@ -16,6 +19,7 @@ import { shortDate, money } from "../../shared/format";
 import { currentMonth as curMonth, shiftMonth } from "../../shared/period";
 import { CategoryIcon, CategorySelect } from "../../shared/ui/CategorySelect";
 import { MoneyInput } from "../../shared/ui/MoneyInput";
+import { ErrorState, LoadingState } from "../../shared/ui/AsyncState";
 
 const emptyRule: RuleInput = {
   name: "",
@@ -31,8 +35,18 @@ const emptyRule: RuleInput = {
 
 export function CategoriesRules() {
   const client = useQueryClient();
-  const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: api.categories });
-  const { data: rules = [] } = useQuery({ queryKey: ["rules"], queryFn: api.rules });
+  const {
+    data: categories = [],
+    isLoading: categoriesLoading,
+    isError: categoriesError,
+    refetch: refetchCategories,
+  } = useQuery({ queryKey: ["categories"], queryFn: api.categories });
+  const {
+    data: rules = [],
+    isLoading: rulesLoading,
+    isError: rulesError,
+    refetch: refetchRules,
+  } = useQuery({ queryKey: ["rules"], queryFn: api.rules });
   const { data: accounts = [] } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
   const [tab, setTab] = useState<"rules" | "categories" | "merchants">("rules");
   const [rule, setRule] = useState<RuleInput>(emptyRule);
@@ -182,33 +196,41 @@ export function CategoriesRules() {
   }
 
   return (
-    <section>
-      <header>
+    <section className="categories-rules-page">
+      <PageHeader>
         <div>
           <p className="eyebrow">ORGANIZAÇÃO AUTOMÁTICA</p>
           <h1>Categorias e regras</h1>
           <p className="muted">Regras locais, previsíveis e sempre revisáveis.</p>
         </div>
-        <button onClick={applyAll}>
+        <button className="history-action" onClick={applyAll}>
           <Sparkles size={17} /> Aplicar ao histórico
         </button>
-      </header>
-      <div className="tabs">
-        <button className={tab === "rules" ? "selected" : ""} onClick={() => setTab("rules")}>
-          Regras ({rules.length})
-        </button>
-        <button className={tab === "categories" ? "selected" : ""} onClick={() => setTab("categories")}>
-          Categorias ({categories.length})
-        </button>
-        <button className={tab === "merchants" ? "selected" : ""} onClick={() => setTab("merchants")}>
-          Estabelecimentos
-        </button>
-      </div>
+      </PageHeader>
+      {categoriesLoading || rulesLoading ? (
+        <LoadingState variant="panel" label="Carregando categorias e regras…" />
+      ) : null}
+      {(categoriesError || rulesError) && (
+        <ErrorState
+          message="Não foi possível carregar categorias e regras."
+          onRetry={() => void Promise.all([refetchCategories(), refetchRules()])}
+        />
+      )}
+      <Tabs
+        value={tab}
+        onChange={(value) => setTab(value as typeof tab)}
+        hidePanel
+        tabs={[
+          { id: "rules", label: `Regras (${rules.length})` },
+          { id: "categories", label: `Categorias (${categories.length})` },
+          { id: "merchants", label: "Estabelecimentos" },
+        ]}
+      />
       {message && <p className="notice">{message}</p>}
 
       {tab === "rules" && (
-        <div className="rules-layout">
-          <article className="panel rule-editor">
+        <div className="rules-layout rules-workspace">
+          <article className="panel rule-editor rules-form-card">
             <div className="panel-title">
               <h2>{rule.id ? "Editar regra" : "Nova regra"}</h2>
               {rule.id && (
@@ -334,11 +356,11 @@ export function CategoriesRules() {
               />{" "}
               Regra ativa
             </label>
-            <div className="editor-actions">
-              <button className="secondary" onClick={testRule}>
+            <div className="editor-actions rule-editor-actions">
+              <button className="secondary rule-test-button" onClick={testRule}>
                 <TestTube2 size={16} /> Testar impacto
               </button>
-              <button onClick={saveRule}>
+              <button className="rule-save-button" onClick={saveRule}>
                 <Save size={16} /> Salvar regra
               </button>
             </div>
@@ -358,14 +380,14 @@ export function CategoriesRules() {
               </div>
             )}
           </article>
-          <article className="panel">
+          <article className="panel rules-priority-panel">
             <div className="panel-title">
               <h2>Prioridade das regras</h2>
               <span>A primeira correspondência vence</span>
             </div>
             <div className="rule-list">
               {rules.map((r, index) => (
-                <div className={`rule-item ${!r.enabled ? "disabled" : ""}`} key={r.id}>
+                <div className={`rule-item rule-priority-item ${!r.enabled ? "disabled" : ""}`} key={r.id}>
                   <span
                     className="category-swatch"
                     style={{ background: categoryMap.get(r.categoryId)?.color ?? "#789" }}
@@ -377,13 +399,30 @@ export function CategoriesRules() {
                     </small>
                   </div>
                   <span className="uses">{r.useCount} usos</span>
-                  <button className="icon-button" title="Subir" onClick={() => moveRule(index, -1)}>
+                  <button
+                    className="icon-button rule-order-button"
+                    title="Subir"
+                    aria-label={`Subir ${r.name}`}
+                    disabled={index === 0}
+                    onClick={() => moveRule(index, -1)}
+                  >
                     <ArrowUp size={14} />
                   </button>
-                  <button className="icon-button" title="Descer" onClick={() => moveRule(index, 1)}>
+                  <button
+                    className="icon-button rule-order-button"
+                    title="Descer"
+                    aria-label={`Descer ${r.name}`}
+                    disabled={index === rules.length - 1}
+                    onClick={() => moveRule(index, 1)}
+                  >
                     <ArrowDown size={14} />
                   </button>
-                  <button className="icon-button" title="Arquivar" onClick={() => archiveRule(r.id)}>
+                  <button
+                    className="icon-button rule-archive-button"
+                    title="Arquivar"
+                    aria-label={`Arquivar ${r.name}`}
+                    onClick={() => archiveRule(r.id)}
+                  >
                     <Archive size={14} />
                   </button>
                 </div>
@@ -525,7 +564,7 @@ export function CategoriesRules() {
       )}
       {tab === "merchants" && <MerchantsTab />}
       {historyImpact && (
-        <div className="modal-backdrop">
+        <Modal title="Aplicar regras ao histórico?" onClose={() => setHistoryImpact(undefined)}>
           <article className="modal">
             <h2>Aplicar regras ao histórico?</h2>
             <p className="muted">
@@ -550,7 +589,7 @@ export function CategoriesRules() {
               <button onClick={confirmApplyAll}>Confirmar aplicação</button>
             </div>
           </article>
-        </div>
+        </Modal>
       )}
     </section>
   );
@@ -707,16 +746,31 @@ function CategoryTreeNode({
         </div>
         {category.isSystem && <span className="system-label">padrão</span>}
         <div className="tree-row-actions">
-          <button className="icon-button" title="Subir" onClick={onMoveUp} aria-label={`Subir ${category.name}`}>
+          <button
+            className="icon-button category-action-button category-action-button--square"
+            title="Subir"
+            onClick={onMoveUp}
+            aria-label={`Subir ${category.name}`}
+          >
             <ArrowUp size={14} />
           </button>
-          <button className="icon-button" title="Descer" onClick={onMoveDown} aria-label={`Descer ${category.name}`}>
+          <button
+            className="icon-button category-action-button category-action-button--square"
+            title="Descer"
+            onClick={onMoveDown}
+            aria-label={`Descer ${category.name}`}
+          >
             <ArrowDown size={14} />
           </button>
-          <button className="icon-button" onClick={onEdit} aria-label={`Editar ${category.name}`}>
+          <button className="icon-button category-action-button" title="Editar" onClick={onEdit} aria-label={`Editar ${category.name}`}>
             Editar
           </button>
-          <button className="icon-button" onClick={onArchive} aria-label={`Arquivar ${category.name}`}>
+          <button
+            className="icon-button category-action-button category-action-button--square"
+            title="Arquivar"
+            onClick={onArchive}
+            aria-label={`Arquivar ${category.name}`}
+          >
             <Archive size={14} />
           </button>
         </div>

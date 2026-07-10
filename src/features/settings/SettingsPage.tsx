@@ -1,3 +1,4 @@
+import { PageHeader } from "../../shared/ui/PageHeader";
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -24,6 +25,7 @@ import { Modal } from "../../shared/ui/Modal";
 import { MoneyInput } from "../../shared/ui/MoneyInput";
 import { useToast } from "../../shared/ui/toast";
 import type { FinancialGoal } from "../../shared/types";
+import { ErrorState, LoadingState } from "../../shared/ui/AsyncState";
 
 const RESET_CONFIRM_WORD = "APAGAR";
 const RESTORE_CONFIRM_WORD = "RESTAURAR";
@@ -39,7 +41,12 @@ const goalLabels: Record<FinancialGoal, string> = {
 export function SettingsPage() {
   const client = useQueryClient();
   const toast = useToast();
-  const { data: profile } = useQuery({ queryKey: ["profile"], queryFn: api.profile });
+  const {
+    data: profile,
+    isLoading: profileLoading,
+    isError: profileError,
+    refetch: refetchProfile,
+  } = useQuery({ queryKey: ["profile"], queryFn: api.profile });
   const [name, setName] = useState("");
   const [incomeInCents, setIncomeInCents] = useState<number | null>(null);
   const [day, setDay] = useState("");
@@ -192,15 +199,24 @@ export function SettingsPage() {
       setResetting(false);
     }
   }
+  if (profileError)
+    return (
+      <ErrorState
+        variant="page"
+        message="Não foi possível carregar suas configurações."
+        onRetry={() => void refetchProfile()}
+      />
+    );
   return (
     <section>
-      <header>
+      <PageHeader>
         <div>
           <p className="eyebrow">PREFERÊNCIAS</p>
           <h1>Configurações</h1>
           <p className="muted">Atualize seus dados de planejamento.</p>
         </div>
-      </header>
+      </PageHeader>
+      {profileLoading && <LoadingState variant="panel" label="Carregando configurações…" />}
       <div className="settings-grid">
         <article className="panel rule-editor">
           <div className="panel-title">

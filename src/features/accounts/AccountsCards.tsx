@@ -1,3 +1,4 @@
+import { PageHeader } from "../../shared/ui/PageHeader";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
@@ -17,6 +18,7 @@ import { api } from "../../shared/api";
 import { money, shortDate } from "../../shared/format";
 import { Modal } from "../../shared/ui/Modal";
 import { useToast } from "../../shared/ui/toast";
+import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/AsyncState";
 import type { Account, AccountType, CreditCardInvoice, PaymentMatchCandidate } from "../../shared/types";
 
 export function AccountsCards() {
@@ -34,8 +36,18 @@ export function AccountsCards() {
   }>();
   const [undoId, setUndoId] = useState<string>();
   const [notice, setNotice] = useState("");
-  const { data: accounts = [] } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
-  const { data: invoices = [] } = useQuery({ queryKey: ["credit-card-invoices"], queryFn: api.creditCardInvoices });
+  const {
+    data: accounts = [],
+    isLoading: accountsLoading,
+    isError: accountsError,
+    refetch: refetchAccounts,
+  } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
+  const {
+    data: invoices = [],
+    isLoading: invoicesLoading,
+    isError: invoicesError,
+    refetch: refetchInvoices,
+  } = useQuery({ queryKey: ["credit-card-invoices"], queryFn: api.creditCardInvoices });
   const { data: items = [] } = useQuery({
     queryKey: ["credit-card-invoice-items", expanded],
     queryFn: () => api.creditCardInvoiceItems(expanded!),
@@ -122,7 +134,7 @@ export function AccountsCards() {
 
   return (
     <section>
-      <header>
+      <PageHeader>
         <div>
           <p className="eyebrow">PATRIMÔNIO E CRÉDITO</p>
           <h1>Contas e cartões</h1>
@@ -131,7 +143,7 @@ export function AccountsCards() {
         <button onClick={() => setAccountModal({ mode: "new" })}>
           <Plus size={17} /> Adicionar conta
         </button>
-      </header>
+      </PageHeader>
       {notice && (
         <div className="notice notice-action">
           <span>{notice}</span>
@@ -142,198 +154,213 @@ export function AccountsCards() {
           )}
         </div>
       )}
-      <div className="account-grid">
-        {accounts.map((account) => (
-          <article className="account-card" key={account.id}>
-            <div className={`metric-icon ${account.kind === "credit_card" ? "red" : "green"}`}>
-              {account.kind === "credit_card" ? <CreditCard /> : <Landmark />}
-            </div>
-            <div>
-              <small>{account.kind === "credit_card" ? "Cartão de crédito" : "Conta"}</small>
-              <h3>{account.name}</h3>
-            </div>
-            <div className="account-card-right">
-              <strong>{money(account.balanceInCents)}</strong>
-              <div className="account-actions">
-                <button
-                  className="icon-button"
-                  title="Renomear conta"
-                  aria-label={`Renomear ${account.name}`}
-                  onClick={() => setAccountModal({ mode: "edit", account })}
-                >
-                  <Pencil size={13} />
-                </button>
-                <button
-                  className="icon-button"
-                  title="Arquivar conta"
-                  aria-label={`Arquivar ${account.name}`}
-                  onClick={() => setArchiving(account)}
-                >
-                  <Archive size={13} />
-                </button>
+      {accountsLoading && <LoadingState variant="panel" label="Carregando contas…" />}
+      {accountsError && (
+        <ErrorState message="Não foi possível carregar as contas." onRetry={() => void refetchAccounts()} />
+      )}
+      {!accountsLoading && !accountsError && accounts.length === 0 && (
+        <EmptyState title="Nenhuma conta cadastrada" description="Adicione uma conta para acompanhar seu patrimônio." />
+      )}
+      {!accountsLoading && !accountsError && accounts.length > 0 && (
+        <div className="account-grid">
+          {accounts.map((account) => (
+            <article className="account-card" key={account.id}>
+              <div className={`metric-icon ${account.kind === "credit_card" ? "red" : "green"}`}>
+                {account.kind === "credit_card" ? <CreditCard /> : <Landmark />}
               </div>
-            </div>
-          </article>
-        ))}
-      </div>
-      <article className="panel">
-        <div className="panel-title">
-          <h2>Faturas importadas</h2>
-          <span>
-            {invoices.length} fatura{invoices.length === 1 ? "" : "s"}
-          </span>
-        </div>
-        {invoices.length === 0 ? (
-          <div className="empty-state">
-            <CreditCard size={34} />
-            <h3>Nenhuma fatura importada</h3>
-            <p className="muted">Use a área Importar para adicionar o CSV do cartão.</p>
-          </div>
-        ) : (
-          <div className="invoice-list">
-            {invoices.map((invoice) => (
-              <div className="invoice-row-wrap" key={invoice.id}>
-                <div className="invoice-row">
+              <div>
+                <small>{account.kind === "credit_card" ? "Cartão de crédito" : "Conta"}</small>
+                <h3>{account.name}</h3>
+              </div>
+              <div className="account-card-right">
+                <strong>{money(account.balanceInCents)}</strong>
+                <div className="account-actions">
                   <button
-                    className={`invoice-expand-toggle ${expanded === invoice.id ? "expanded" : ""}`}
-                    title={expanded === invoice.id ? "Recolher fatura" : "Expandir fatura"}
-                    aria-label={
-                      expanded === invoice.id
-                        ? `Recolher fatura ${invoice.accountName}`
-                        : `Expandir fatura ${invoice.accountName}`
-                    }
-                    aria-expanded={expanded === invoice.id}
-                    onClick={() => setExpanded(expanded === invoice.id ? undefined : invoice.id)}
+                    className="icon-button"
+                    title="Renomear conta"
+                    aria-label={`Renomear ${account.name}`}
+                    onClick={() => setAccountModal({ mode: "edit", account })}
                   >
-                    <ChevronDown size={17} />
+                    <Pencil size={13} />
                   </button>
                   <button
-                    className="invoice-identity"
-                    onClick={() => setExpanded(expanded === invoice.id ? undefined : invoice.id)}
+                    className="icon-button"
+                    title="Arquivar conta"
+                    aria-label={`Arquivar ${account.name}`}
+                    onClick={() => setArchiving(account)}
                   >
-                    <b>{invoice.accountName}</b>
-                    <small>Vence em {shortDate(invoice.dueDate)}</small>
-                    <span className={`invoice-payment-slot ${invoice.paymentTransactionId ? "" : "empty"}`}>
-                      <Link2 size={12} />
-                      {invoice.paymentTransactionId
-                        ? `${invoice.paymentDescription} em ${shortDate(invoice.paymentDate!)}`
-                        : "Vincule um pagamento"}
-                    </span>
+                    <Archive size={13} />
                   </button>
-                  <div className="invoice-metric">
-                    <small>Compras</small>
-                    <b>{money(invoice.purchasesInCents)}</b>
-                  </div>
-                  <div className="invoice-metric">
-                    <small>Créditos e pagamentos</small>
-                    <b>{money(invoice.creditsInCents)}</b>
-                  </div>
-                  <div className="invoice-metric invoice-total-value">
-                    <small>Total</small>
-                    <strong>{money(invoice.totalInCents)}</strong>
-                  </div>
-                  <div className="invoice-status">
-                    <span className={`badge ${invoice.status === "paid" ? "success-badge" : ""}`}>
-                      {invoice.status === "paid" ? "Paga" : "Aberta"}
-                    </span>
-                  </div>
-                  <div className="invoice-actions">
-                    {invoice.paymentTransactionId ? (
-                      <button
-                        className="secondary icon-button"
-                        title="Desvincular pagamento"
-                        onClick={() => unlink(invoice.id)}
-                      >
-                        <Unlink size={16} />
-                      </button>
-                    ) : (
-                      <>
-                        <button
-                          className="secondary icon-button"
-                          title={invoice.status === "paid" ? "Reabrir fatura" : "Marcar fatura como paga"}
-                          onClick={() => toggleStatus(invoice)}
-                        >
-                          {invoice.status === "paid" ? <Undo2 size={16} /> : <CheckCircle2 size={16} />}
-                        </button>
-                        <button
-                          className="secondary icon-button"
-                          title="Vincular pagamento"
-                          onClick={() => findPayment(invoice)}
-                        >
-                          <Link2 size={16} />
-                        </button>
-                      </>
-                    )}
-                    <button className="danger icon-button" title="Excluir fatura" onClick={() => remove(invoice.id)}>
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
                 </div>
-                {expanded === invoice.id && (
-                  <div className="invoice-items">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Data</th>
-                          <th>Descrição</th>
-                          <th>Portador</th>
-                          <th>Parcela</th>
-                          <th>Categoria</th>
-                          <th>Valor</th>
-                          <th></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {items.map((item) => (
-                          <tr key={item.transactionId}>
-                            <td>{shortDate(item.date)}</td>
-                            <td>{item.description}</td>
-                            <td>{item.holder ?? "—"}</td>
-                            <td>{item.installment ?? "—"}</td>
-                            <td>{item.categoryName ?? "Sem categoria"}</td>
-                            <td className={item.amountInCents > 0 ? "positive amount" : "amount"}>
-                              {money(item.amountInCents)}
-                            </td>
-                            <td>
-                              <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
-                                {item.lineKind === "payment" &&
-                                  (item.isLinked ? (
-                                    <button
-                                      className="secondary"
-                                      onClick={() => unlinkImportedPayment(item.transactionId)}
-                                    >
-                                      <Unlink size={14} /> Desvincular
-                                    </button>
-                                  ) : (
-                                    <button
-                                      className="secondary"
-                                      onClick={() => findImportedPayment(item.transactionId, item.amountInCents)}
-                                    >
-                                      <Link2 size={14} /> Conciliar
-                                    </button>
-                                  ))}
-                                <button
-                                  className="danger icon-button"
-                                  title="Excluir lançamento"
-                                  onClick={() => setDeletingTransaction(item.transactionId)}
-                                >
-                                  <Trash2 size={16} />
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
               </div>
-            ))}
+            </article>
+          ))}
+        </div>
+      )}
+      {invoicesLoading && <LoadingState variant="panel" label="Carregando faturas…" />}
+      {invoicesError && (
+        <ErrorState message="Não foi possível carregar as faturas." onRetry={() => void refetchInvoices()} />
+      )}
+      {!invoicesLoading && !invoicesError && (
+        <article className="panel">
+          <div className="panel-title">
+            <h2>Faturas importadas</h2>
+            <span>
+              {invoices.length} fatura{invoices.length === 1 ? "" : "s"}
+            </span>
           </div>
-        )}
-      </article>
+          {invoices.length === 0 ? (
+            <div className="empty-state">
+              <CreditCard size={34} />
+              <h3>Nenhuma fatura importada</h3>
+              <p className="muted">Use a área Importar para adicionar o CSV do cartão.</p>
+            </div>
+          ) : (
+            <div className="invoice-list">
+              {invoices.map((invoice) => (
+                <div className="invoice-row-wrap" key={invoice.id}>
+                  <div className="invoice-row">
+                    <button
+                      className={`invoice-expand-toggle ${expanded === invoice.id ? "expanded" : ""}`}
+                      title={expanded === invoice.id ? "Recolher fatura" : "Expandir fatura"}
+                      aria-label={
+                        expanded === invoice.id
+                          ? `Recolher fatura ${invoice.accountName}`
+                          : `Expandir fatura ${invoice.accountName}`
+                      }
+                      aria-expanded={expanded === invoice.id}
+                      onClick={() => setExpanded(expanded === invoice.id ? undefined : invoice.id)}
+                    >
+                      <ChevronDown size={17} />
+                    </button>
+                    <button
+                      className="invoice-identity"
+                      onClick={() => setExpanded(expanded === invoice.id ? undefined : invoice.id)}
+                    >
+                      <b>{invoice.accountName}</b>
+                      <small>Vence em {shortDate(invoice.dueDate)}</small>
+                      <span className={`invoice-payment-slot ${invoice.paymentTransactionId ? "" : "empty"}`}>
+                        <Link2 size={12} />
+                        {invoice.paymentTransactionId
+                          ? `${invoice.paymentDescription} em ${shortDate(invoice.paymentDate!)}`
+                          : "Vincule um pagamento"}
+                      </span>
+                    </button>
+                    <div className="invoice-metric">
+                      <small>Compras</small>
+                      <b>{money(invoice.purchasesInCents)}</b>
+                    </div>
+                    <div className="invoice-metric">
+                      <small>Créditos e pagamentos</small>
+                      <b>{money(invoice.creditsInCents)}</b>
+                    </div>
+                    <div className="invoice-metric invoice-total-value">
+                      <small>Total</small>
+                      <strong>{money(invoice.totalInCents)}</strong>
+                    </div>
+                    <div className="invoice-status">
+                      <span className={`badge ${invoice.status === "paid" ? "success-badge" : ""}`}>
+                        {invoice.status === "paid" ? "Paga" : "Aberta"}
+                      </span>
+                    </div>
+                    <div className="invoice-actions">
+                      {invoice.paymentTransactionId ? (
+                        <button
+                          className="secondary icon-button"
+                          title="Desvincular pagamento"
+                          onClick={() => unlink(invoice.id)}
+                        >
+                          <Unlink size={16} />
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            className="secondary icon-button"
+                            title={invoice.status === "paid" ? "Reabrir fatura" : "Marcar fatura como paga"}
+                            onClick={() => toggleStatus(invoice)}
+                          >
+                            {invoice.status === "paid" ? <Undo2 size={16} /> : <CheckCircle2 size={16} />}
+                          </button>
+                          <button
+                            className="secondary icon-button"
+                            title="Vincular pagamento"
+                            onClick={() => findPayment(invoice)}
+                          >
+                            <Link2 size={16} />
+                          </button>
+                        </>
+                      )}
+                      <button className="danger icon-button" title="Excluir fatura" onClick={() => remove(invoice.id)}>
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </div>
+                  {expanded === invoice.id && (
+                    <div className="invoice-items">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Data</th>
+                            <th>Descrição</th>
+                            <th>Portador</th>
+                            <th>Parcela</th>
+                            <th>Categoria</th>
+                            <th>Valor</th>
+                            <th></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {items.map((item) => (
+                            <tr key={item.transactionId}>
+                              <td>{shortDate(item.date)}</td>
+                              <td>{item.description}</td>
+                              <td>{item.holder ?? "—"}</td>
+                              <td>{item.installment ?? "—"}</td>
+                              <td>{item.categoryName ?? "Sem categoria"}</td>
+                              <td className={item.amountInCents > 0 ? "positive amount" : "amount"}>
+                                {money(item.amountInCents)}
+                              </td>
+                              <td>
+                                <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+                                  {item.lineKind === "payment" &&
+                                    (item.isLinked ? (
+                                      <button
+                                        className="secondary"
+                                        onClick={() => unlinkImportedPayment(item.transactionId)}
+                                      >
+                                        <Unlink size={14} /> Desvincular
+                                      </button>
+                                    ) : (
+                                      <button
+                                        className="secondary"
+                                        onClick={() => findImportedPayment(item.transactionId, item.amountInCents)}
+                                      >
+                                        <Link2 size={14} /> Conciliar
+                                      </button>
+                                    ))}
+                                  <button
+                                    className="danger icon-button"
+                                    title="Excluir lançamento"
+                                    onClick={() => setDeletingTransaction(item.transactionId)}
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </article>
+      )}
       {matching && (
-        <div className="modal-backdrop">
+        <Modal title="Vincular pagamento" onClose={() => setMatching(undefined)}>
           <article className="modal wide-modal">
             <h2>Vincular pagamento de {money(matching.amountInCents)}</h2>
             <p className="muted">
@@ -368,10 +395,10 @@ export function AccountsCards() {
               </button>
             </div>
           </article>
-        </div>
+        </Modal>
       )}
       {deletingTransaction && (
-        <div className="modal-backdrop">
+        <Modal title="Excluir lançamento" onClose={() => setDeletingTransaction(undefined)}>
           <article className="modal">
             <h2>Excluir lançamento</h2>
             <p className="muted">Deseja realmente excluir este lançamento?</p>
@@ -384,7 +411,7 @@ export function AccountsCards() {
               </button>
             </div>
           </article>
-        </div>
+        </Modal>
       )}
       {accountModal && (
         <AccountModal
