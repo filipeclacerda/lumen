@@ -2,7 +2,22 @@ import { PageHeader } from "../../shared/ui/PageHeader";
 import { Modal } from "../../shared/ui/Modal";
 import { Tabs } from "../../shared/ui/Tabs";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, ArrowDown, ArrowUp, Check, Pencil, Plus, Save, Sparkles, TestTube2, X } from "lucide-react";
+import {
+  Archive,
+  ArrowDown,
+  ArrowUp,
+  Check,
+  CornerDownRight,
+  FolderTree,
+  Layers3,
+  Pencil,
+  Plus,
+  Save,
+  ShieldCheck,
+  Sparkles,
+  TestTube2,
+  X,
+} from "lucide-react";
 import { useMemo, useState, useEffect } from "react";
 import type { ReactNode } from "react";
 import { api } from "../../shared/api";
@@ -51,6 +66,7 @@ export function CategoriesRules() {
   } = useQuery({ queryKey: ["rules"], queryFn: api.rules });
   const { data: accounts = [] } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
   const [tab, setTab] = useState<"rules" | "categories" | "merchants">("rules");
+  const [categoryKindFilter, setCategoryKindFilter] = useState<"all" | CategoryKind>("all");
   const [rulesPage, setRulesPage] = useState(0);
   const [rulesPageSize, setRulesPageSize] = useState<PaginationSize>(10);
   const [rule, setRule] = useState<RuleInput>(emptyRule);
@@ -67,6 +83,14 @@ export function CategoriesRules() {
     sortOrder: number;
   }>({ name: "", kind: "expense", color: "#497ca5", sortOrder: 0 });
   const categoryMap = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
+  const categorySummary = useMemo(
+    () => ({
+      roots: categories.filter((category) => !category.parentId).length,
+      children: categories.filter((category) => category.parentId).length,
+      system: categories.filter((category) => category.isSystem).length,
+    }),
+    [categories],
+  );
   const visibleRules = rules.slice(rulesPage * rulesPageSize, (rulesPage + 1) * rulesPageSize);
 
   useEffect(() => {
@@ -208,13 +232,19 @@ export function CategoriesRules() {
     <section className="categories-rules-page">
       <PageHeader>
         <div>
-          <p className="eyebrow">ORGANIZAÇÃO AUTOMÁTICA</p>
+          <p className="eyebrow">{tab === "categories" ? "PLANO DE CATEGORIAS" : "ORGANIZAÇÃO AUTOMÁTICA"}</p>
           <h1>Categorias e regras</h1>
-          <p className="muted">Regras locais, previsíveis e sempre revisáveis.</p>
+          <p className="muted">
+            {tab === "categories"
+              ? "Organize receitas, despesas e investimentos em uma estrutura fácil de reconhecer."
+              : "Regras locais, previsíveis e sempre revisáveis."}
+          </p>
         </div>
-        <button className="history-action" onClick={applyAll}>
-          <Sparkles size={17} /> Aplicar ao histórico
-        </button>
+        {tab === "rules" && (
+          <button className="history-action" onClick={applyAll}>
+            <Sparkles size={17} /> Aplicar ao histórico
+          </button>
+        )}
       </PageHeader>
       {categoriesLoading || rulesLoading ? (
         <LoadingState variant="panel" label="Carregando categorias e regras…" />
@@ -465,132 +495,233 @@ export function CategoriesRules() {
       )}
 
       {tab === "categories" && (
-        <div className="rules-layout">
-          <article className="panel rule-editor">
-            <div className="panel-title">
-              <h2>{categoryDraft.id ? "Editar categoria" : "Nova categoria"}</h2>
-              {categoryDraft.id && (
-                <button
-                  className="text-button"
-                  onClick={() => setCategoryDraft({ name: "", kind: "expense", color: "#497ca5", sortOrder: 0 })}
+        <>
+          <section className="categories-summary" aria-label="Resumo das categorias">
+            <article className="categories-summary-card">
+              <span className="categories-summary-icon" aria-hidden>
+                <Layers3 size={18} />
+              </span>
+              <div>
+                <strong>{categories.length}</strong>
+                <span>Categorias ativas</span>
+              </div>
+            </article>
+            <article className="categories-summary-card">
+              <span className="categories-summary-icon" aria-hidden>
+                <FolderTree size={18} />
+              </span>
+              <div>
+                <strong>{categorySummary.roots}</strong>
+                <span>Principais</span>
+              </div>
+            </article>
+            <article className="categories-summary-card">
+              <span className="categories-summary-icon" aria-hidden>
+                <CornerDownRight size={18} />
+              </span>
+              <div>
+                <strong>{categorySummary.children}</strong>
+                <span>Subcategorias</span>
+              </div>
+            </article>
+            <article className="categories-summary-card">
+              <span className="categories-summary-icon" aria-hidden>
+                <ShieldCheck size={18} />
+              </span>
+              <div>
+                <strong>{categorySummary.system}</strong>
+                <span>Categorias padrão</span>
+              </div>
+            </article>
+          </section>
+          <div className="rules-layout categories-layout">
+            <article className="panel rule-editor category-editor-panel">
+              <div className="panel-title category-editor-heading">
+                <div>
+                  <p className="eyebrow">{categoryDraft.id ? "EDIÇÃO" : "NOVA CATEGORIA"}</p>
+                  <h2>{categoryDraft.id ? categoryDraft.name : "Criar categoria"}</h2>
+                  <span>Defina como ela aparece e onde fica na hierarquia.</span>
+                </div>
+                {categoryDraft.id && (
+                  <button
+                    className="text-button"
+                    type="button"
+                    onClick={() => setCategoryDraft({ name: "", kind: "expense", color: "#497ca5", sortOrder: 0 })}
+                  >
+                    Cancelar
+                  </button>
+                )}
+              </div>
+              <div className="category-editor-preview" aria-label="Prévia da categoria">
+                <span
+                  className="category-editor-preview-icon"
+                  style={{ color: categoryDraft.color, backgroundColor: `${categoryDraft.color}1a` }}
                 >
-                  Cancelar
-                </button>
-              )}
-            </div>
-            <label>
-              Nome
-              <input
-                value={categoryDraft.name}
-                onChange={(e) => setCategoryDraft({ ...categoryDraft, name: e.target.value })}
-              />
-            </label>
-            <label>
-              Tipo
-              <Select
-                value={categoryDraft.kind}
-                onChange={(value) => setCategoryDraft({ ...categoryDraft, kind: value as CategoryKind })}
-                options={[
-                  { value: "expense", label: "Despesa" },
-                  { value: "income", label: "Receita" },
-                  { value: "transfer", label: "Transferência" },
-                  { value: "investment", label: "Investimento" },
-                ]}
-              />
-            </label>
-            <label>
-              Categoria superior
-              <Select
-                value={categoryDraft.parentId ?? ""}
-                onChange={(value) => setCategoryDraft({ ...categoryDraft, parentId: value || undefined })}
-                options={[
-                  { value: "", label: "Nenhuma" },
-                  ...categories
-                    .filter((category) => category.id !== categoryDraft.id)
-                    .map((category) => ({ value: category.id, label: category.name })),
-                ]}
-              />
-            </label>
-            <label>
-              Ordem
-              <input
-                type="number"
-                value={categoryDraft.sortOrder}
-                onChange={(e) => setCategoryDraft({ ...categoryDraft, sortOrder: Number(e.target.value) })}
-              />
-            </label>
-            <label>
-              Cor
-              <input
-                type="color"
-                value={categoryDraft.color}
-                onChange={(e) => setCategoryDraft({ ...categoryDraft, color: e.target.value })}
-              />
-            </label>
-            <button onClick={saveCategory}>
-              <Plus size={16} /> {categoryDraft.id ? "Salvar categoria" : "Criar categoria"}
-            </button>
-          </article>
-          <article className="panel">
-            <div className="panel-title">
-              <h2>Estrutura atual</h2>
-              <span>Transferências não contam como despesa</span>
-            </div>
-            {(() => {
-              const kinds: CategoryKind[] = ["income", "expense", "investment", "transfer"];
-              const kindLabels: Record<CategoryKind, string> = {
-                income: "Receitas",
-                expense: "Despesas",
-                investment: "Investimentos",
-                transfer: "Transferências",
-              };
-              return kinds.map((kind) => {
-                const items = categories
-                  .filter((c) => c.kind === kind)
-                  .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
-                if (items.length === 0) return null;
-                const roots = items.filter((c) => !c.parentId);
-                const childrenOf = (parentId: string): Category[] => items.filter((c) => c.parentId === parentId);
-                const renderNode = (cat: Category, depth: number): React.ReactNode => {
-                  const children = childrenOf(cat.id);
+                  <CategoryIcon name="tag" size={18} />
+                </span>
+                <div>
+                  <strong>{categoryDraft.name || "Nome da categoria"}</strong>
+                  <span>
+                    {categoryDraft.parentId
+                      ? `Dentro de ${categoryMap.get(categoryDraft.parentId)?.name ?? "categoria"}`
+                      : "Categoria principal"}
+                  </span>
+                </div>
+              </div>
+              <label className="category-field category-field--name">
+                Nome
+                <input
+                  value={categoryDraft.name}
+                  onChange={(e) => setCategoryDraft({ ...categoryDraft, name: e.target.value })}
+                />
+              </label>
+              <label className="category-field">
+                Tipo
+                <Select
+                  value={categoryDraft.kind}
+                  onChange={(value) => setCategoryDraft({ ...categoryDraft, kind: value as CategoryKind })}
+                  options={[
+                    { value: "expense", label: "Despesa" },
+                    { value: "income", label: "Receita" },
+                    { value: "transfer", label: "Transferência" },
+                    { value: "investment", label: "Investimento" },
+                  ]}
+                />
+              </label>
+              <label className="category-field category-parent-field">
+                Categoria superior
+                <Select
+                  value={categoryDraft.parentId ?? ""}
+                  onChange={(value) => setCategoryDraft({ ...categoryDraft, parentId: value || undefined })}
+                  options={[
+                    { value: "", label: "Nenhuma" },
+                    ...categories
+                      .filter((category) => category.id !== categoryDraft.id)
+                      .map((category) => ({ value: category.id, label: category.name })),
+                  ]}
+                />
+              </label>
+              <label className="category-field category-order-field">
+                Ordem
+                <input
+                  type="number"
+                  value={categoryDraft.sortOrder}
+                  onChange={(e) => setCategoryDraft({ ...categoryDraft, sortOrder: Number(e.target.value) })}
+                />
+              </label>
+              <label className="category-field category-color-field">
+                Cor
+                <input
+                  type="color"
+                  value={categoryDraft.color}
+                  onChange={(e) => setCategoryDraft({ ...categoryDraft, color: e.target.value })}
+                />
+              </label>
+              <button className="category-editor-submit" onClick={saveCategory}>
+                <Plus size={16} /> {categoryDraft.id ? "Salvar categoria" : "Criar categoria"}
+              </button>
+            </article>
+            <article className="panel categories-structure-panel">
+              <div className="panel-title categories-structure-heading">
+                <div>
+                  <h2>Estrutura de categorias</h2>
+                  <span>As subcategorias ficam agrupadas abaixo da categoria principal.</span>
+                </div>
+                <span className="categories-structure-count">{categories.length} no total</span>
+              </div>
+              <div className="category-kind-filters" role="group" aria-label="Filtrar categorias por tipo">
+                {(
+                  [
+                    ["all", "Todas"],
+                    ["income", "Receitas"],
+                    ["expense", "Despesas"],
+                    ["investment", "Investimentos"],
+                    ["transfer", "Transferências"],
+                  ] as const
+                ).map(([value, label]) => {
+                  const count = value === "all" ? categories.length : categories.filter((c) => c.kind === value).length;
                   return (
-                    <CategoryTreeNode
-                      key={cat.id}
-                      category={cat}
-                      depth={depth}
-                      hasChildren={children.length > 0}
-                      categories={categories}
-                      onEdit={() =>
-                        setCategoryDraft({
-                          id: cat.id,
-                          parentId: cat.parentId,
-                          name: cat.name,
-                          kind: cat.kind,
-                          color: cat.color ?? "#497ca5",
-                          sortOrder: cat.sortOrder,
-                        })
-                      }
-                      onArchive={() => archiveCategory(cat.id)}
-                      onMoveUp={() => moveCategory(cat, -1)}
-                      onMoveDown={() => moveCategory(cat, 1)}
-                      onDrop={(draggedId) => dropCategory(draggedId, cat.id)}
+                    <button
+                      key={value}
+                      type="button"
+                      className={`category-kind-filter ${categoryKindFilter === value ? "active" : ""}`}
+                      aria-pressed={categoryKindFilter === value}
+                      onClick={() => setCategoryKindFilter(value)}
                     >
-                      {children.map((child) => renderNode(child, depth + 1))}
-                    </CategoryTreeNode>
+                      <span>{label}</span>
+                      <small>{count}</small>
+                    </button>
                   );
+                })}
+              </div>
+              {(() => {
+                const kinds: CategoryKind[] = ["income", "expense", "investment", "transfer"];
+                const kindLabels: Record<CategoryKind, string> = {
+                  income: "Receitas",
+                  expense: "Despesas",
+                  investment: "Investimentos",
+                  transfer: "Transferências",
                 };
-                return (
-                  <div key={kind} className="category-group">
-                    <h3 className="category-group-title">
-                      {kindLabels[kind]} ({items.length})
-                    </h3>
-                    <div className="category-tree">{roots.map((root) => renderNode(root, 0))}</div>
-                  </div>
+                const visibleKinds = categoryKindFilter === "all" ? kinds : [categoryKindFilter];
+                const groups = visibleKinds.map((kind) => {
+                  const items = categories
+                    .filter((c) => c.kind === kind)
+                    .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+                  if (items.length === 0) return null;
+                  const itemIds = new Set(items.map((item) => item.id));
+                  const roots = items.filter((c) => !c.parentId || !itemIds.has(c.parentId));
+                  const childrenOf = (parentId: string): Category[] => items.filter((c) => c.parentId === parentId);
+                  const renderNode = (cat: Category, depth: number): React.ReactNode => {
+                    const children = childrenOf(cat.id);
+                    return (
+                      <CategoryTreeNode
+                        key={cat.id}
+                        category={cat}
+                        depth={depth}
+                        hasChildren={children.length > 0}
+                        categories={categories}
+                        onEdit={() =>
+                          setCategoryDraft({
+                            id: cat.id,
+                            parentId: cat.parentId,
+                            name: cat.name,
+                            kind: cat.kind,
+                            color: cat.color ?? "#497ca5",
+                            sortOrder: cat.sortOrder,
+                          })
+                        }
+                        onArchive={() => archiveCategory(cat.id)}
+                        onMoveUp={() => moveCategory(cat, -1)}
+                        onMoveDown={() => moveCategory(cat, 1)}
+                        onDrop={(draggedId) => dropCategory(draggedId, cat.id)}
+                      >
+                        {children.map((child) => renderNode(child, depth + 1))}
+                      </CategoryTreeNode>
+                    );
+                  };
+                  return (
+                    <div key={kind} className={`category-group category-group--${kind}`}>
+                      <div className="category-group-heading">
+                        <h3 className="category-group-title">{kindLabels[kind]}</h3>
+                        <span>
+                          {items.length} {items.length === 1 ? "categoria" : "categorias"}
+                        </span>
+                      </div>
+                      <div className={`category-tree category-tree--${kind}`} role="tree">
+                        {roots.map((root) => renderNode(root, 0))}
+                      </div>
+                    </div>
+                  );
+                });
+                return groups.some(Boolean) ? (
+                  groups
+                ) : (
+                  <p className="categories-empty-state muted">Nenhuma categoria neste tipo.</p>
                 );
-              });
-            })()}
-          </article>
-        </div>
+              })()}
+            </article>
+          </div>
+        </>
       )}
       {tab === "merchants" && <MerchantsTab />}
       {historyImpact && (
@@ -738,18 +869,13 @@ function CategoryTreeNode({
   onDrop: (draggedId: string) => void;
   children?: ReactNode;
 }) {
-  const kindLabels: Record<CategoryKind, string> = {
-    income: "Receita",
-    expense: "Despesa",
-    investment: "Investimento",
-    transfer: "Transferência",
-  };
   const parent = category.parentId ? categories.find((c) => c.id === category.parentId) : undefined;
-  const barColor = depth > 0 ? (parent?.color ?? category.color ?? "#789") : (category.color ?? "#789");
   return (
     <div
-      className="category-tree-node"
-      style={{ marginLeft: depth > 0 ? depth * 16 : 0 }}
+      className={`category-tree-node ${depth > 0 ? "category-tree-node--child" : "category-tree-node--root"}`}
+      role="treeitem"
+      aria-level={depth + 1}
+      aria-expanded={hasChildren ? true : undefined}
       draggable
       onDragStart={(e) => {
         e.dataTransfer.setData("text/category-id", category.id);
@@ -764,30 +890,37 @@ function CategoryTreeNode({
         if (draggedId) onDrop(draggedId);
       }}
     >
-      {depth > 0 && (
-        <span className="tree-bar" style={{ background: barColor, left: -10 - (depth - 1) * 16 }} aria-hidden />
-      )}
       <div className="category-row tree-row">
         <span className="category-drag-handle" aria-hidden title="Arraste para reordenar">
           ⋮⋮
         </span>
         <span className="category-swatch" style={{ background: category.color ?? "#789" }} />
-        {category.icon && (
-          <span className="category-icon" style={{ color: category.color ?? "#789" }}>
-            <CategoryIcon name={category.icon} />
-          </span>
-        )}
+        <span
+          className="category-icon category-icon-tile"
+          style={{ color: category.color ?? "#789", backgroundColor: `${category.color ?? "#789"}1a` }}
+        >
+          <CategoryIcon name={category.icon ?? "tag"} size={18} />
+        </span>
         <div className="tree-content">
-          <b>{category.name}</b>
-          <small>{parent ? `${parent.name}` : "Raiz"}</small>
-          <span className={`kind-badge ${category.kind}`}>{kindLabels[category.kind]}</span>
+          <div className="category-title-row">
+            <b>{category.name}</b>
+            {category.isSystem && <span className="system-label">padrão</span>}
+          </div>
+          <small className={`category-hierarchy-label ${parent ? "is-child" : "is-root"}`}>
+            {parent ? (
+              <>
+                <CornerDownRight size={12} aria-hidden /> Subcategoria de {parent.name}
+              </>
+            ) : (
+              "Categoria principal"
+            )}
+          </small>
           {hasChildren && (
-            <span className="tree-children-count" title="Sub-categorias">
-              ▾
+            <span className="tree-children-count" title="Possui subcategorias">
+              Possui subcategorias
             </span>
           )}
         </div>
-        {category.isSystem && <span className="system-label">padrão</span>}
         <div className="tree-row-actions">
           <button
             className="icon-button category-action-button category-action-button--square"
@@ -811,7 +944,7 @@ function CategoryTreeNode({
             onClick={onEdit}
             aria-label={`Editar ${category.name}`}
           >
-            Editar
+            <Pencil size={14} /> <span>Editar</span>
           </button>
           <button
             className="icon-button category-action-button category-action-button--square"
@@ -823,7 +956,11 @@ function CategoryTreeNode({
           </button>
         </div>
       </div>
-      {hasChildren && <div className="category-tree-children">{children}</div>}
+      {hasChildren && (
+        <div className="category-tree-children" role="group">
+          {children}
+        </div>
+      )}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   ArrowLeftRight,
   ArrowUpRight,
@@ -41,7 +41,7 @@ type Props = {
   emptyLabel?: string;
   disabled?: boolean;
   id?: string;
-  /** Renderiza o select nativo (sem ícone/tooltip/busca). Útil em tabelas densas. */
+  /** Renderiza o select compacto (sem ícone/tooltip/busca). Útil em tabelas densas. */
   native?: boolean;
   "aria-label"?: string;
   className?: string;
@@ -98,9 +98,15 @@ function depth(categories: Category[], id?: string): number {
   return d;
 }
 
-export function CategoryIcon({ name, size = 14 }: { name?: string; size?: number }) {
-  if (!name) return null;
-  const Icon = ICONS[name] ?? Tag;
+const KIND_FALLBACK_ICON: Record<CategoryKind, LucideIcon> = {
+  income: CirclePlus,
+  expense: Receipt,
+  investment: Landmark,
+  transfer: ArrowLeftRight,
+};
+
+export function CategoryIcon({ name, kind, size = 14 }: { name?: string; kind?: CategoryKind; size?: number }) {
+  const Icon = (name ? ICONS[name] : undefined) ?? (kind ? KIND_FALLBACK_ICON[kind] : Tag);
   return <Icon size={size} strokeWidth={2} aria-hidden />;
 }
 
@@ -144,8 +150,9 @@ export function CategorySelect({
 
   const selected = useMemo(() => categories.find((c) => c.id === value), [categories, value]);
 
-  // Keep the compact category API, but use the shared custom select everywhere.
-  if (native !== false) {
+  // Category selects use the rich dropdown by default so color and icon metadata
+  // remain visible in import, transactions, and the other category surfaces.
+  if (native) {
     return (
       <Select
         className={"category-select" + (className ? " " + className : "")}
@@ -215,6 +222,7 @@ function CategoryDropdown({
   const [query, setQuery] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const listboxId = useId();
 
   useEffect(() => {
     if (!open) return;
@@ -253,7 +261,11 @@ function CategoryDropdown({
   }
 
   return (
-    <div className={"category-dropdown" + (open ? " open" : "") + (className ? " " + className : "")} ref={rootRef}>
+    <div
+      className={"category-dropdown" + (open ? " open" : "") + (className ? " " + className : "")}
+      data-kind={selected?.kind}
+      ref={rootRef}
+    >
       <button
         type="button"
         className="category-dropdown-trigger"
@@ -261,18 +273,22 @@ function CategoryDropdown({
         id={id}
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-controls={listboxId}
         aria-label={ariaLabel}
         onClick={() => setOpen((o) => !o)}
         title={selected ? `${selected.name}${selected.icon ? " · " + selected.icon : ""}` : emptyLabel}
       >
         {selected ? (
-          <span className="category-dropdown-value">
-            {selected.color && <span className="category-dropdown-swatch" style={{ background: selected.color }} />}
-            {selected.icon && (
-              <span className="category-dropdown-icon">
-                <CategoryIcon name={selected.icon} />
-              </span>
-            )}
+          <span className="category-dropdown-value" data-kind={selected.kind}>
+            <span
+              className="category-dropdown-swatch"
+              data-kind={selected.kind}
+              style={selected.color ? { background: selected.color } : undefined}
+              aria-hidden
+            />
+            <span className="category-dropdown-icon" data-kind={selected.kind} aria-hidden>
+              <CategoryIcon name={selected.icon} kind={selected.kind} />
+            </span>
             <span className="category-dropdown-name">{selected.name}</span>
           </span>
         ) : (
@@ -284,7 +300,7 @@ function CategoryDropdown({
       </button>
 
       {open && (
-        <div className="category-dropdown-panel" role="listbox">
+        <div className="category-dropdown-panel">
           <div className="category-dropdown-search">
             <input
               ref={inputRef}
@@ -294,13 +310,18 @@ function CategoryDropdown({
               aria-label="Buscar categoria"
             />
           </div>
-          <div className="category-dropdown-list">
+          <div className="category-dropdown-list" id={listboxId} role="listbox" aria-label={ariaLabel}>
             {allowEmpty && totalItems >= 0 && (
               <button
                 type="button"
                 className={"category-dropdown-option" + (!value ? " selected" : "")}
                 onClick={() => select(undefined)}
+                role="option"
+                aria-selected={!value}
               >
+                <span className="category-dropdown-icon category-dropdown-icon-muted">
+                  <Tag size={14} strokeWidth={2} aria-hidden />
+                </span>
                 <span className="category-dropdown-placeholder">{emptyLabel}</span>
               </button>
             )}
@@ -310,31 +331,56 @@ function CategoryDropdown({
             {groups.map((g) => {
               const visible = g.items.filter(matches);
               if (visible.length === 0) return null;
+              const groupLabelId = `${listboxId}-${g.kind}`;
               return (
-                <div key={g.kind} className="category-dropdown-group">
-                  <div className="category-dropdown-group-label">{KIND_LABEL[g.kind]}</div>
+                <div
+                  key={g.kind}
+                  className={`category-dropdown-group category-dropdown-group--${g.kind}`}
+                  data-kind={g.kind}
+                  role="group"
+                  aria-labelledby={groupLabelId}
+                >
+                  <div id={groupLabelId} className="category-dropdown-group-label">
+                    {KIND_LABEL[g.kind]}
+                  </div>
                   {visible.map((c) => {
-                    const d = depth(categories, c.parentId);
+                    const d = depth(categories, c.id);
+                    const parent = c.parentId ? categories.find((category) => category.id === c.parentId) : undefined;
                     const isSelected = c.id === value;
                     return (
                       <button
                         key={c.id}
                         type="button"
-                        className={"category-dropdown-option" + (isSelected ? " selected" : "")}
-                        style={{ paddingLeft: 8 + d * 14 }}
+                        className={`category-dropdown-option category-dropdown-option--${c.kind}${
+                          c.parentId ? " category-dropdown-option--child" : ""
+                        }${isSelected ? " selected" : ""}`}
+                        data-kind={c.kind}
+                        data-depth={d}
+                        style={{ "--category-depth": d } as CSSProperties}
                         onClick={() => select(c.id)}
-                        title={c.name}
+                        title={parent ? `${c.name} · Subcategoria de ${parent.name}` : c.name}
                         role="option"
                         aria-selected={isSelected}
                       >
-                        {c.color && <span className="category-dropdown-swatch" style={{ background: c.color }} />}
-                        {c.icon && (
-                          <span className="category-dropdown-icon">
-                            <CategoryIcon name={c.icon} />
+                        <span
+                          className="category-dropdown-swatch"
+                          data-kind={c.kind}
+                          style={c.color ? { background: c.color } : undefined}
+                          aria-hidden
+                        />
+                        {c.parentId && (
+                          <span className="category-dropdown-branch" aria-hidden>
+                            <span className="category-dropdown-branch-line" />
+                            <span className="category-dropdown-branch-corner" />
                           </span>
                         )}
-                        <span className="category-dropdown-name">{c.name}</span>
-                        {c.kind && <small className="category-dropdown-kind">{KIND_LABEL[c.kind]}</small>}
+                        <span className="category-dropdown-icon" data-kind={c.kind} aria-hidden>
+                          <CategoryIcon name={c.icon} kind={c.kind} />
+                        </span>
+                        <span className="category-dropdown-option-copy">
+                          <span className="category-dropdown-name">{c.name}</span>
+                          {parent && <small className="category-dropdown-parent-label">em {parent.name}</small>}
+                        </span>
                       </button>
                     );
                   })}

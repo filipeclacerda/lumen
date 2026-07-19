@@ -1003,7 +1003,6 @@ export function ImportPage() {
                       <CategorySelect
                         value={candidate.suggestedCategoryId}
                         categories={categories}
-                        native
                         onChange={(value) => changeBankCategory(candidate.sourceRow, value)}
                       />
                     </td>
@@ -1108,7 +1107,6 @@ export function ImportPage() {
                       <CategorySelect
                         value={item.candidate.suggestedCategoryId}
                         categories={categories}
-                        native
                         onChange={(value) => updateCard(item.candidate.sourceRow, item.included, value)}
                       />
                     </td>
