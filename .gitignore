@@ -8,5 +8,8 @@ src-tauri/target/
 .env
 *.key*
 *.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+vite.config.js.map
 .claude/worktrees/
 .pi-subagents/
