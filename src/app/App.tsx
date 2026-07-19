@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Menu, Moon, Sun } from "lucide-react";
+import { ChevronLeft, ChevronRight, Menu, Moon, Sun } from "lucide-react";
 import { getTheme, setTheme, type Theme } from "../shared/theme";
 import { Dashboard } from "../features/dashboard/Dashboard";
 import { Transactions } from "../features/transactions/Transactions";
@@ -19,6 +19,7 @@ import { APP_VERSION } from "../shared/version";
 import { CommandPalette } from "../shared/ui/CommandPalette";
 import { navigation } from "../shared/navigation";
 import { ErrorState, LoadingState } from "../shared/ui/AsyncState";
+import { BrandLogo } from "../shared/ui/BrandLogo";
 
 export function App() {
   const client = useQueryClient();
@@ -153,19 +154,17 @@ export function App() {
       )}
       <aside ref={drawer} id="main-navigation">
         <div className="brand">
+          <BrandLogo size={39} decorative />
+          <div className="brand-copy">Lumen</div>
           <button
-            className="hamburger"
+            className="sidebar-collapse"
             onClick={() => setCollapsed((current) => !current)}
             aria-label={collapsed ? "Expandir menu" : "Recolher menu"}
             aria-expanded={!collapsed}
+            title={collapsed ? "Expandir menu" : "Recolher menu"}
           >
-            <Menu size={20} />
+            {collapsed ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}
           </button>
-          <div>
-            Lumen
-            <br />
-            <small>iluminando suas finanças</small>
-          </div>
         </div>
         <nav>
           {navigation.map(({ to, label, icon: Icon }) => (

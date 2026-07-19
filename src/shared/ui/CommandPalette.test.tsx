@@ -33,5 +33,13 @@ describe("CommandPalette", () => {
     await waitFor(() =>
       expect(document.activeElement).toBe(screen.getByRole("combobox", { name: "Buscar ou navegar" })),
     );
+    expect(screen.queryByText("route")).toBeNull();
+    expect(screen.getByText("Visão geral")).toBeTruthy();
+
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
+    expect(screen.getByRole("option", { name: "Transações" }).getAttribute("aria-selected")).toBe("true");
+
+    await Promise.resolve();
+    expect(screen.getByRole("option", { name: "Transações" }).getAttribute("aria-selected")).toBe("true");
   });
 });

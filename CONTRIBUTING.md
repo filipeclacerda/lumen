@@ -1,6 +1,6 @@
 # Contribuindo com o Lumen
 
-Obrigado por seu interesse em contribuir com o Lumen! Este projeto é 100% open source e depende de contribuidores como você para crescer e melhorar.
+Obrigado por seu interesse em contribuir com o Lumen! O gestor financeiro pessoal privado e local-first é open source e depende de contribuidores como você para crescer e melhorar.
 
 ## 📋 Índice
 
@@ -291,5 +291,6 @@ Por favor, use nosso template de PR e inclua:
 Obrigado por contribuir com o Lumen! Cada contribuição ajuda a tornar as finanças mais privadas e acessíveis para todos.
 
 <div align="center">
+  <p><strong>Lumen — Seu dinheiro, mais claro.</strong></p>
   <p>Feito com 💚 pela comunidade open source</p>
 </div>

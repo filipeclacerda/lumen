@@ -492,15 +492,33 @@ export function Transactions() {
           </p>
         </div>
         <div className="transaction-header-actions">
-          <div className="export-actions" aria-label="Exportar transações">
-            <button className="secondary" disabled={exporting} onClick={() => exportFile("csv")}>
-              <Download size={17} /> CSV
+          <div className="export-actions" role="group" aria-label="Exportar transações">
+            <button
+              className="secondary"
+              aria-label="Exportar CSV"
+              title="Exportar CSV"
+              disabled={exporting}
+              onClick={() => exportFile("csv")}
+            >
+              <Download size={14} /> CSV
             </button>
-            <button className="secondary" disabled={exporting} onClick={() => exportFile("ofx")}>
-              <Download size={17} /> OFX
+            <button
+              className="secondary"
+              aria-label="Exportar OFX"
+              title="Exportar OFX"
+              disabled={exporting}
+              onClick={() => exportFile("ofx")}
+            >
+              <Download size={14} /> OFX
             </button>
-            <button className="secondary" disabled={exporting} onClick={() => exportFile("pdf")}>
-              <Download size={17} /> PDF
+            <button
+              className="secondary"
+              aria-label="Exportar PDF"
+              title="Exportar PDF"
+              disabled={exporting}
+              onClick={() => exportFile("pdf")}
+            >
+              <Download size={14} /> PDF
             </button>
           </div>
           <button onClick={() => setShowNew(true)}>
@@ -834,7 +852,7 @@ export function Transactions() {
                       </span>
                     </span>
                   </td>
-                  <td>
+                  <td className="transaction-category-cell">
                     <CategorySelect
                       value={t.categoryId}
                       onChange={(id) => changeCategory(t, id)}

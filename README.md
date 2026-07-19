@@ -4,7 +4,11 @@
   <h1>Lumen</h1>
 
   <p>
-    <strong>Gestor financeiro pessoal, local-first, privado e open source.</strong>
+    <strong>Seu dinheiro, mais claro.</strong>
+  </p>
+
+  <p>
+    Gestor financeiro pessoal, privado e local-first.
   </p>
 
   <p>
@@ -15,7 +19,7 @@
   </p>
 
   <p>
-    Organize contas, cartões, transações, orçamentos e relatórios sem entregar seus dados financeiros a uma nuvem de terceiros.
+    Controle suas finanças no computador sem conectar sua conta bancária e sem enviar seus dados para uma nuvem.
   </p>
 
   <p>
@@ -32,7 +36,7 @@
 
 ## Visão geral
 
-O **Lumen** é uma aplicação desktop para controle financeiro pessoal criada para quem quer clareza sobre o próprio dinheiro sem abrir mão de autonomia e privacidade.
+O **Lumen** é um gestor financeiro pessoal para desktop criado para deixar seu dinheiro mais claro sem abrir mão de autonomia e privacidade.
 
 Ele centraliza movimentações de contas e cartões, organiza categorias, importa extratos, acompanha recorrências, projeta orçamento mensal e gera relatórios para análise. A proposta é ajudar você a responder perguntas simples e importantes:
 
@@ -42,7 +46,7 @@ Ele centraliza movimentações de contas e cartões, organiza categorias, import
 - Que lançamentos futuros ou recorrentes merecem atenção?
 - Meus dados financeiros continuam sob meu controle?
 
-Diferente de ferramentas financeiras baseadas em conta online obrigatória, o Lumen segue uma abordagem **local-first**: os dados são armazenados em um banco SQLite no próprio computador e a aplicação foi desenhada para funcionar sem depender de servidores externos para processar suas informações financeiras.
+Você não precisa conectar uma conta bancária nem enviar extratos para uma nuvem. O Lumen segue uma abordagem **local-first**: os dados são armazenados em um banco SQLite no próprio computador e a aplicação foi desenhada para funcionar sem depender de servidores externos para processar suas informações financeiras.
 
 > O Lumen não substitui aconselhamento financeiro profissional. Ele é uma ferramenta de organização, análise e acompanhamento pessoal.
 

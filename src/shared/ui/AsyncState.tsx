@@ -1,9 +1,19 @@
 import type { ReactNode } from "react";
+import { BrandLogo } from "./BrandLogo";
 type Variant = "page" | "panel" | "table-row";
 export function LoadingState({ label = "Carregando…", variant = "panel" }: { label?: string; variant?: Variant }) {
   return (
     <div className={`async-state async-state--${variant}`} role="status" aria-live="polite">
-      <span aria-hidden="true">◌</span> {label}
+      {variant === "page" ? (
+        <div className="async-state__brand">
+          <BrandLogo size={64} decorative />
+          <span>{label}</span>
+        </div>
+      ) : (
+        <>
+          <span aria-hidden="true">◌</span> {label}
+        </>
+      )}
     </div>
   );
 }

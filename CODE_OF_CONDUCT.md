@@ -47,5 +47,5 @@ Para respostas a perguntas comuns sobre este código de conduta, veja a FAQ em [
 ---
 
 <div align="center">
-  <p>Lumen - Iluminando suas finanças, respeitando sua privacidade.</p>
+  <p>Lumen — Seu dinheiro, mais claro.</p>
 </div>

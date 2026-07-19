@@ -1,4 +1,7 @@
 import { check, type Update } from "@tauri-apps/plugin-updater";
+import { isTauriRuntime } from "./runtime";
+
+export { isTauriRuntime } from "./runtime";
 
 export type LumenUpdate = {
   update: Update;
@@ -11,7 +14,6 @@ export type LumenUpdate = {
 const dismissedUpdateKey = "lumen-dismissed-update-version";
 export const forceUpdateCheckEvent = "lumen:force-update-check";
 
-export const isTauriRuntime = () => "__TAURI_INTERNALS__" in window;
 export const canCheckForUpdates = () => isTauriRuntime() && !import.meta.env.DEV;
 
 export function isUpdateDismissed(version: string) {

@@ -6,6 +6,7 @@ type Props = {
   title: string;
   children: ReactNode;
   onClose: () => void;
+  className?: string;
   description?: string;
   dismissible?: boolean;
   wide?: boolean;
@@ -19,6 +20,7 @@ export function OverlayDialog({
   description,
   children,
   onClose,
+  className,
   dismissible = true,
   wide,
   initialFocus,
@@ -86,7 +88,7 @@ export function OverlayDialog({
     >
       <div
         ref={dialog}
-        className={`overlay-dialog${wide ? " wide-modal" : ""}`}
+        className={`overlay-dialog${wide ? " wide-modal" : ""}${className ? ` ${className}` : ""}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}

@@ -76,20 +76,6 @@
     border-radius:var(--radius-sm);
   }
   .filter-chip { min-height:32px; }
-  .month-nav button.icon-button {
-    width:34px;
-    min-width:34px;
-    height:34px;
-    min-height:34px;
-    padding:0;
-  }
-  .month-nav button.text-button {
-    width:60px;
-    height:34px;
-    min-height:34px;
-    padding-inline:14px;
-  }
-
   .pagination {
     display:grid;
     grid-template-columns:minmax(150px,1fr) auto minmax(150px,1fr);
@@ -693,27 +679,36 @@
   .transactions-panel > .pagination { margin:var(--space-4) var(--space-6) var(--space-6); }
   .transaction-description { display:flex; align-items:center; gap:var(--space-3); min-width:220px; }
   .transaction-description__text { min-width:0; line-height:1.35; }
+
+  .transactions-table .transaction-category-cell .category-select {
+    width:100%;
+    max-width: 240px;
+  }
   .transactions-table tbody tr { transition:background var(--motion-duration-fast) var(--motion-ease); }
   .transactions-table tbody tr:hover { background:var(--surface-2); }
   .export-actions {
     display:grid;
-    grid-template-columns:repeat(3,88px);
+    grid-template-columns:repeat(3,max-content);
     gap:var(--space-1);
-    padding:var(--space-1);
-    height:52px;
+    box-sizing:border-box;
+    height:44px;
+    padding:3px;
     border:1px solid var(--border);
     border-radius:var(--radius-md);
     background:var(--surface-2);
   }
   .export-actions .secondary {
-    min-width:88px;
-    min-height:44px;
-    height:44px;
-    padding:0 12px;
+    width:auto;
+    min-width:0;
+    min-height:36px;
+    height:36px;
+    gap:4px;
+    padding:0 6px;
     justify-content:center;
     background:transparent;
     color:var(--brand-strong);
     box-shadow:none;
+    font-size:11px;
   }
   .export-actions .secondary:not(:disabled):hover {
     background:var(--surface);
@@ -721,10 +716,6 @@
     filter:none;
   }
   .transaction-header-actions > button {
-    min-width:176px;
-    min-height:52px;
-    height:52px;
-    padding-inline:18px;
     justify-content:center;
     white-space:nowrap;
   }
@@ -792,7 +783,7 @@
   @media(max-width:900px) {
     .transaction-header-actions { align-items:stretch; flex-direction:column; width:100%; }
     .transaction-header-actions > button { width:100%; }
-    .export-actions { width:100%; grid-template-columns:repeat(3,minmax(0,1fr)); }
+    .export-actions { width:max-content; grid-template-columns:repeat(3,max-content); }
   }
   @media(max-width:650px) {
     .transactions-panel__heading { align-items:flex-start; padding:var(--space-4); }
@@ -802,5 +793,24 @@
     .transactions-panel > .active-filter-chips,
     .transactions-panel > .table-hint { margin-inline:var(--space-4); }
     .transactions-panel > .pagination { margin-inline:var(--space-4); }
+  }
+}
+
+@layer features {
+  .dashboard-period-header { display:flex; align-items:center; gap:var(--space-3); min-width:0; margin-bottom:var(--space-3); }
+  .dashboard-period-header > .eyebrow { flex:none; }
+
+  @media(max-width:650px) {
+    .dashboard-period-header { align-items:flex-start; flex-direction:column; gap:var(--space-2); }
+    .dashboard-period-header .month-nav { width:100%; }
+  }
+}
+
+@layer utilities {
+  /* Ações no cabeçalho seguem a mesma escala da ação principal da visão geral. */
+  .page-header > button,
+  .page-header > div + div > button {
+    min-height:44px;
+    height:44px;
   }
 }

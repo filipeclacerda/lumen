@@ -7,6 +7,7 @@ import { Modal } from "../../shared/ui/Modal";
 import { Select } from "../../shared/ui/Select";
 import type { AccountType, AppBootstrap, Category, CategoryKind, FinancialGoal } from "../../shared/types";
 import { ErrorState, LoadingState } from "../../shared/ui/AsyncState";
+import { BrandLogo } from "../../shared/ui/BrandLogo";
 
 const goals: { value: FinancialGoal; label: string }[] = [
   { value: "organize", label: "Organizar minhas finanças" },
@@ -131,7 +132,7 @@ export function Onboarding({
     <div className="onboarding-shell">
       <div className="onboarding-card">
         <div className="onboarding-brand">
-          <span>L</span>
+          <BrandLogo size={34} decorative />
           <b>Lumen</b>
         </div>
         <div className="step-indicator">

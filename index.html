@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/png" href="./src-tauri/icons/icon.png" />
     <title>Lumen</title>
     <style>
       body {
@@ -24,15 +25,9 @@
         animation: pulse 1.5s ease-in-out infinite;
       }
       .initial-loader-icon {
-        width: 48px;
-        height: 48px;
-        border-radius: 14px;
-        background: #155c47;
-        color: white;
-        display: grid;
-        place-items: center;
-        font-size: 26px;
-        font-weight: 700;
+        width: 64px;
+        height: 64px;
+        object-fit: contain;
       }
       @keyframes pulse {
         0%,
@@ -54,13 +49,16 @@
           color: #f7f8f5;
         }
       }
+      @media (prefers-reduced-motion: reduce) {
+        .initial-loader-content { animation: none; }
+      }
     </style>
   </head>
   <body>
     <div id="root">
       <div class="initial-loader">
         <div class="initial-loader-content">
-          <div class="initial-loader-icon">L</div>
+          <img class="initial-loader-icon" src="./src-tauri/icons/icon.png" alt="" aria-hidden="true" />
           <strong>Carregando Lumen...</strong>
         </div>
       </div>

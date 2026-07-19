@@ -6,6 +6,7 @@ import { App } from "./app/App";
 import { initTheme } from "./shared/theme";
 import { initZoom } from "./shared/zoom";
 import { ToastProvider } from "./shared/ui/toast";
+import { WindowFrame } from "./shared/ui/WindowFrame";
 import "@fontsource-variable/inter";
 import "./styles.css";
 initTheme();
@@ -16,7 +17,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
         <BrowserRouter>
-          <App />
+          <WindowFrame>
+            <App />
+          </WindowFrame>
         </BrowserRouter>
       </ToastProvider>
     </QueryClientProvider>

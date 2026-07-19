@@ -8,12 +8,17 @@ import {
 } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { CreditCard, Search, Tags } from "lucide-react";
+import { ArrowDown, ArrowUp, CornerDownLeft, CreditCard, Search, Tags } from "lucide-react";
 import { api } from "../api";
 import { money, normalizeText, shortDate } from "../format";
 import { navigation } from "../navigation";
 import { OverlayDialog } from "./OverlayDialog";
 import type { CategorizationRule, Category, Transaction } from "../types";
+
+const emptyTransactions: Transaction[] = [];
+const emptyCategories: Category[] = [];
+const emptyRules: CategorizationRule[] = [];
+
 type Entry =
   | { kind: "route"; to: string; label: string; icon: ComponentType<{ size?: number }> }
   | { kind: "transaction"; transaction: Transaction }
@@ -48,13 +53,21 @@ export function CommandPalette() {
     return () => clearTimeout(t);
   }, [query]);
   const searchActive = debounced.trim().length >= 3;
-  const { data: transactions = [] } = useQuery({
+  const { data: transactions = emptyTransactions } = useQuery({
     queryKey: ["command-palette-transactions", debounced],
     queryFn: () => api.listTransactions({ search: debounced.trim(), limit: 8 }).then((p) => p.items),
     enabled: open && searchActive,
   });
-  const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: api.categories, enabled: open });
-  const { data: rules = [] } = useQuery({ queryKey: ["rules"], queryFn: api.rules, enabled: open && searchActive });
+  const { data: categories = emptyCategories } = useQuery({
+    queryKey: ["categories"],
+    queryFn: api.categories,
+    enabled: open,
+  });
+  const { data: rules = emptyRules } = useQuery({
+    queryKey: ["rules"],
+    queryFn: api.rules,
+    enabled: open && searchActive,
+  });
   const entries = useMemo<Entry[]>(() => {
     const n = normalizeText(query.trim());
     const routes = navigation
@@ -78,8 +91,8 @@ export function CommandPalette() {
     ];
   }, [categories, query, rules, searchActive, transactions]);
   useEffect(() => {
-    setActive(0);
-  }, [entries]);
+    setActive((current) => Math.min(current, Math.max(entries.length - 1, 0)));
+  }, [entries.length]);
   useEffect(() => {
     const option = document.getElementById(`palette-option-${active}`);
     option?.scrollIntoView?.({ block: "nearest" });
@@ -111,13 +124,21 @@ export function CommandPalette() {
   if (!open) return null;
   const activeId = entries[active] ? `palette-option-${active}` : undefined;
   return (
-    <OverlayDialog title="Busca e navegação" onClose={() => setOpen(false)} initialFocus={inputRef}>
+    <OverlayDialog
+      title="Busca rápida"
+      className="command-palette"
+      onClose={() => setOpen(false)}
+      initialFocus={inputRef}
+    >
       <div className="command-palette-input">
         <Search size={18} aria-hidden="true" />
         <input
           ref={inputRef}
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setActive(0);
+          }}
           onKeyDown={onKey}
           placeholder="Buscar ou navegar…"
           aria-label="Buscar ou navegar"
@@ -127,9 +148,16 @@ export function CommandPalette() {
           aria-controls="command-palette-options"
           aria-activedescendant={activeId}
         />
+        <kbd>Ctrl K</kbd>
       </div>
       <div id="command-palette-options" className="command-palette-list" role="listbox" aria-label="Resultados">
-        {!entries.length && <p className="muted command-palette-empty">Nenhum resultado encontrado.</p>}
+        {!entries.length && (
+          <div className="command-palette-empty">
+            <Search size={20} aria-hidden="true" />
+            <b>Nenhum resultado encontrado</b>
+            <span>Tente buscar por outra palavra.</span>
+          </div>
+        )}
         {entries.map((entry, i) => {
           const label =
             entry.kind === "route"
@@ -140,6 +168,14 @@ export function CommandPalette() {
                   ? entry.rule.name
                   : entry.transaction.description;
           const Icon = entry.kind === "route" ? entry.icon : entry.kind === "transaction" ? CreditCard : Tags;
+          const detail =
+            entry.kind === "transaction"
+              ? shortDate(entry.transaction.date)
+              : entry.kind === "category"
+                ? "Categoria"
+                : entry.kind === "rule"
+                  ? "Regra de categorização"
+                  : null;
           return (
             <div
               id={`palette-option-${i}`}
@@ -154,7 +190,7 @@ export function CommandPalette() {
               <Icon size={16} />
               <span className="command-palette-tx">
                 <b>{label}</b>
-                <small>{entry.kind === "transaction" ? shortDate(entry.transaction.date) : entry.kind}</small>
+                {detail && <small>{detail}</small>}
               </span>
               {entry.kind === "transaction" && (
                 <span className={entry.transaction.amountInCents > 0 ? "positive" : ""}>
@@ -164,6 +200,26 @@ export function CommandPalette() {
             </div>
           );
         })}
+      </div>
+      <div className="command-palette-footer" aria-hidden="true">
+        <span>
+          <kbd>
+            <ArrowUp size={12} />
+          </kbd>
+          <kbd>
+            <ArrowDown size={12} />
+          </kbd>
+          navegar
+        </span>
+        <span>
+          <kbd>
+            <CornerDownLeft size={12} />
+          </kbd>
+          abrir
+        </span>
+        <span>
+          <kbd>Esc</kbd> fechar
+        </span>
       </div>
     </OverlayDialog>
   );

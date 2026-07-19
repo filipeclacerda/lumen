@@ -17,4 +17,10 @@ describe("AsyncState", () => {
     fireEvent.click(screen.getByRole("button", { name: "Tentar novamente" }));
     expect(retry).toHaveBeenCalledOnce();
   });
+  it("shows the Lumen logo only for page loading states", () => {
+    const { rerender } = render(<LoadingState variant="page" />);
+    expect(document.querySelector(".brand-logo")).toBeTruthy();
+    rerender(<LoadingState variant="panel" />);
+    expect(document.querySelector(".brand-logo")).toBeNull();
+  });
 });

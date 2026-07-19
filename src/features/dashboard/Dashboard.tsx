@@ -114,8 +114,8 @@ export function Dashboard() {
     <section>
       <PageHeader>
         <div>
-          <div className="eyebrow dashboard-period-header">
-            <span>{monthTitle(month)}</span>
+          <div className="dashboard-period-header">
+            <span className="eyebrow">PERÍODO</span>
             <MonthNavigator month={month} onChange={setMonth} />
           </div>
           <h1>Olá, {profile?.displayName.split(" ")[0] ?? "você"} 👋</h1>
