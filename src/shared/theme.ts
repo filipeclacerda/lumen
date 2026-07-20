@@ -1,11 +1,9 @@
-export type Theme = "light" | "dark";
+import { initializeUiPreferences, useUiPreferences, type ResolvedTheme } from "./uiPreferences";
 
-const STORAGE_KEY = "financa-theme";
+export type Theme = ResolvedTheme;
 
 export function getTheme(): Theme {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored === "light" || stored === "dark") return stored;
-  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  return useUiPreferences.getState().resolvedTheme;
 }
 
 export function applyTheme(theme: Theme) {
@@ -13,11 +11,10 @@ export function applyTheme(theme: Theme) {
 }
 
 export function setTheme(theme: Theme) {
-  localStorage.setItem(STORAGE_KEY, theme);
-  applyTheme(theme);
+  useUiPreferences.getState().setThemePreference(theme);
 }
 
 /** Applies the persisted (or system) theme. Call once before rendering. */
 export function initTheme() {
-  applyTheme(getTheme());
+  initializeUiPreferences();
 }

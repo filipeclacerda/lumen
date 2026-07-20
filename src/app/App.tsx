@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, HardDrive, Menu, Moon, Sun } from "lucide-react";
-import { getTheme, setTheme, type Theme } from "../shared/theme";
 import { Dashboard } from "../features/dashboard/Dashboard";
 import { Transactions } from "../features/transactions/Transactions";
 import { ImportPage } from "../features/import/ImportPage";
@@ -18,29 +17,27 @@ import { UpdateNotice } from "../shared/ui/UpdateNotice";
 import { APP_VERSION } from "../shared/version";
 import { CommandPalette } from "../shared/ui/CommandPalette";
 import { navigationGroups, settingsNavigation } from "../shared/navigation";
-import { getSidebarCollapsed, setSidebarCollapsed } from "../shared/sidebarPreference";
+import { useUiPreferences, type ThemePreference } from "../shared/uiPreferences";
 import { ErrorState, LoadingState } from "../shared/ui/AsyncState";
 import { BrandLogo } from "../shared/ui/BrandLogo";
+import { useMaintenanceRestart } from "../shared/maintenanceRestart";
+import { MaintenanceRestartNotice } from "../shared/ui/MaintenanceRestartNotice";
+import { BackupReminderNotice } from "../shared/ui/BackupReminderNotice";
 
 export function App() {
   const client = useQueryClient();
   const navigate = useNavigate();
   const location = useLocation();
   const SettingsIcon = settingsNavigation.icon;
-  const [theme, setThemeState] = useState<Theme>(getTheme());
+  const maintenanceRestartRequired = useMaintenanceRestart((state) => state.reason !== null);
+  const theme = useUiPreferences((state) => state.resolvedTheme);
+  const setThemePreference = useUiPreferences((state) => state.setThemePreference);
   const toggleTheme = () => {
-    const next: Theme = theme === "dark" ? "light" : "dark";
-    setTheme(next);
-    setThemeState(next);
+    const next: ThemePreference = theme === "dark" ? "light" : "dark";
+    setThemePreference(next);
   };
-  const [collapsed, setCollapsed] = useState(getSidebarCollapsed);
-  const toggleSidebar = () => {
-    setCollapsed((current) => {
-      const next = !current;
-      setSidebarCollapsed(next);
-      return next;
-    });
-  };
+  const collapsed = useUiPreferences((state) => state.sidebar === "compact");
+  const toggleSidebar = useUiPreferences((state) => state.toggleSidebar);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [isMobileNavigation, setIsMobileNavigation] = useState(() => window.matchMedia("(max-width: 850px)").matches);
   const drawerTrigger = useRef<HTMLButtonElement>(null);
@@ -229,7 +226,8 @@ export function App() {
       </aside>
       <main>
         <UpdateNotice enabled={bootstrap.onboardingCompleted} />
-        <CommandPalette />
+        <BackupReminderNotice enabled={bootstrap.onboardingCompleted} />
+        {!maintenanceRestartRequired && <CommandPalette />}
         <div className="route-view" key={location.pathname}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
@@ -245,6 +243,7 @@ export function App() {
           </Routes>
         </div>
       </main>
+      <MaintenanceRestartNotice />
     </div>
   );
 }

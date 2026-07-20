@@ -1,24 +1,31 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useBackupReminder } from "../../shared/backupReminder";
+import { useUiPreferences } from "../../shared/uiPreferences";
+import { useMaintenanceRestart } from "../../shared/maintenanceRestart";
 import { SettingsPage } from "./SettingsPage";
 
 const mocks = vi.hoisted(() => ({
-  open: vi.fn(),
+  chooseBackupToRestore: vi.fn(),
+  exportTransactions: vi.fn(),
+  createDatabaseBackup: vi.fn(),
   profile: vi.fn(),
+  saveProfile: vi.fn(),
   restoreDatabase: vi.fn(),
-  relaunch: vi.fn(),
+  resetDatabase: vi.fn(),
   toast: vi.fn(),
 }));
 
-vi.mock("@tauri-apps/plugin-dialog", () => ({ open: mocks.open, save: vi.fn() }));
-vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: mocks.relaunch }));
 vi.mock("../../shared/api", () => ({
   api: {
     profile: mocks.profile,
+    saveProfile: mocks.saveProfile,
     restoreDatabase: mocks.restoreDatabase,
+    resetDatabase: mocks.resetDatabase,
   },
 }));
 vi.mock("../../shared/ui/toast", () => ({ useToast: () => mocks.toast }));
@@ -29,44 +36,94 @@ vi.mock("../../shared/updater", () => ({
   clearDismissedUpdate: vi.fn(),
   requestUpdateNoticeRefresh: vi.fn(),
 }));
+vi.mock("./desktopDataOperations", () => ({
+  chooseBackupToRestore: mocks.chooseBackupToRestore,
+  exportTransactions: mocks.exportTransactions,
+  createDatabaseBackup: mocks.createDatabaseBackup,
+  prepareDatabaseRestore: mocks.restoreDatabase,
+  prepareDatabaseReset: mocks.resetDatabase,
+}));
 
-function renderPage() {
+function LocationProbe() {
+  return <output data-testid="location">{useLocation().search}</output>;
+}
+
+function renderPage(entry = "/settings") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <SettingsPage />
+      <MemoryRouter initialEntries={[entry]}>
+        <LocationProbe />
+        <SettingsPage />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
 
 async function openRestoreDialog() {
-  mocks.open.mockResolvedValue("backup.db");
-  fireEvent.click(screen.getByRole("button", { name: /Restaurar backup$/ }));
+  mocks.chooseBackupToRestore.mockResolvedValue({
+    status: "success",
+    value: { path: "backup.db", fileName: "backup.db" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /Escolher backup/ }));
   return within(await screen.findByRole("dialog"));
 }
 
-describe("SettingsPage restore", () => {
+describe("SettingsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.profile.mockResolvedValue({ displayName: "", monthlyIncomeInCents: null });
+    mocks.profile.mockResolvedValue({
+      displayName: "Filipe",
+      monthlyIncomeInCents: 600000,
+      onboardingCompletedAt: "2026-01-01",
+    });
+    mocks.saveProfile.mockImplementation(async (input) => ({ ...input, onboardingCompletedAt: "2026-01-01" }));
     mocks.restoreDatabase.mockResolvedValue(undefined);
-    mocks.relaunch.mockResolvedValue(undefined);
+    mocks.resetDatabase.mockResolvedValue(undefined);
+    useUiPreferences.setState({ themePreference: "system", resolvedTheme: "light", zoom: 1, sidebar: "expanded" });
+    useBackupReminder.setState({ reminder: null, initialized: false, isBackingUp: false });
+    useMaintenanceRestart.getState().clearForTests();
   });
 
   afterEach(() => {
     cleanup();
     vi.useRealTimers();
-    vi.restoreAllMocks();
+  });
+
+  it("uses Geral as fallback and keeps the selected section in the URL", async () => {
+    renderPage("/settings?section=not-real");
+    expect(await screen.findByRole("heading", { name: "Perfil financeiro" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /Aparência/ }));
+    expect(await screen.findByRole("heading", { name: "Aparência e acessibilidade" })).toBeTruthy();
+    expect(screen.getByTestId("location").textContent).toBe("?section=appearance");
+  });
+
+  it("saves a profile only after edits and allows discarding the draft", async () => {
+    renderPage();
+    const name = await screen.findByRole("textbox", { name: "Nome" });
+    await waitFor(() => expect((name as HTMLInputElement).value).toBe("Filipe"));
+    expect(screen.queryByRole("button", { name: /Salvar alterações/ })).toBeNull();
+
+    fireEvent.change(name, { target: { value: "Outro nome" } });
+    fireEvent.click(screen.getByRole("button", { name: "Descartar" }));
+    expect((name as HTMLInputElement).value).toBe("Filipe");
+
+    fireEvent.change(name, { target: { value: "Nome salvo" } });
+    fireEvent.click(screen.getByRole("button", { name: /Salvar alterações/ }));
+    await waitFor(() =>
+      expect(mocks.saveProfile).toHaveBeenCalledWith(expect.objectContaining({ displayName: "Nome salvo" })),
+    );
   });
 
   it("does not restore merely when a file is selected", async () => {
-    renderPage();
+    renderPage("/settings?section=data");
     await openRestoreDialog();
     expect(mocks.restoreDatabase).not.toHaveBeenCalled();
   });
 
-  it("enables confirmation only for the exact RESTAURAR text", async () => {
-    renderPage();
+  it("enables restore confirmation only for the exact RESTAURAR text", async () => {
+    renderPage("/settings?section=data");
     const dialog = await openRestoreDialog();
     const input = dialog.getByRole("textbox");
     const confirm = dialog.getByRole("button", { name: /Restaurar backup$/ });
@@ -79,27 +136,80 @@ describe("SettingsPage restore", () => {
 
   it("does not relaunch when the backend restore fails", async () => {
     mocks.restoreDatabase.mockRejectedValue(new Error("backup inválido"));
-    renderPage();
+    renderPage("/settings?section=data");
     const dialog = await openRestoreDialog();
     fireEvent.change(dialog.getByRole("textbox"), { target: { value: "RESTAURAR" } });
     fireEvent.click(dialog.getByRole("button", { name: /Restaurar backup$/ }));
     await waitFor(() => expect(mocks.restoreDatabase).toHaveBeenCalledWith("backup.db"));
-    expect(mocks.relaunch).not.toHaveBeenCalled();
+    expect(useMaintenanceRestart.getState().reason).toBeNull();
   });
 
-  it("explains how to reopen when relaunch fails", async () => {
-    mocks.relaunch.mockRejectedValue(new Error("relaunch indisponível"));
-    renderPage();
+  it("does not reset data if the requested pre-reset backup is cancelled", async () => {
+    mocks.createDatabaseBackup.mockResolvedValue({ status: "cancelled" });
+    renderPage("/settings?section=danger");
+    fireEvent.click(await screen.findByRole("button", { name: /Apagar dados financeiros/ }));
+    const dialog = within(await screen.findByRole("dialog"));
+    fireEvent.change(dialog.getByRole("textbox"), { target: { value: "APAGAR" } });
+    fireEvent.click(dialog.getByRole("button", { name: /Apagar dados financeiros/ }));
+    await waitFor(() => expect(mocks.createDatabaseBackup).toHaveBeenCalled());
+    expect(mocks.resetDatabase).not.toHaveBeenCalled();
+  });
+
+  it("does not reset data if the requested pre-reset backup fails", async () => {
+    mocks.createDatabaseBackup.mockRejectedValue(new Error("disco indisponível"));
+    renderPage("/settings?section=danger");
+    fireEvent.click(await screen.findByRole("button", { name: /Apagar dados financeiros/ }));
+    const dialog = within(await screen.findByRole("dialog"));
+    fireEvent.change(dialog.getByRole("textbox"), { target: { value: "APAGAR" } });
+    fireEvent.click(dialog.getByRole("button", { name: /Apagar dados financeiros/ }));
+
+    await waitFor(() => expect(mocks.createDatabaseBackup).toHaveBeenCalled());
+    expect(mocks.resetDatabase).not.toHaveBeenCalled();
+    expect(useMaintenanceRestart.getState().reason).toBeNull();
+  });
+
+  it("backs up before reset and raises the global safety lock in order", async () => {
+    const order: string[] = [];
+    mocks.createDatabaseBackup.mockImplementation(async () => {
+      order.push("backup");
+      return { status: "success", value: { reminderRecorded: true } };
+    });
+    mocks.resetDatabase.mockImplementation(async () => {
+      order.push("reset");
+    });
+    renderPage("/settings?section=danger");
+    fireEvent.click(await screen.findByRole("button", { name: /Apagar dados financeiros/ }));
+    const dialog = within(await screen.findByRole("dialog"));
+    fireEvent.change(dialog.getByRole("textbox"), { target: { value: "APAGAR" } });
+    fireEvent.click(dialog.getByRole("button", { name: /Apagar dados financeiros/ }));
+
+    await waitFor(() => expect(useMaintenanceRestart.getState().reason).toBe("reset"));
+    expect(order).toEqual(["backup", "reset"]);
+  });
+
+  it("exports the selected format through the centralized operation", async () => {
+    mocks.exportTransactions.mockResolvedValue({ status: "success", value: 4 });
+    renderPage("/settings?section=data");
+    fireEvent.click(await screen.findByRole("button", { name: "Exportar" }));
+    await waitFor(() => expect(mocks.exportTransactions).toHaveBeenCalledWith("csv"));
+    expect(mocks.toast).toHaveBeenCalledWith("4 transações exportadas em CSV.");
+  });
+
+  it("raises the global safety lock after a restore is prepared", async () => {
+    renderPage("/settings?section=data");
     const dialog = await openRestoreDialog();
     fireEvent.change(dialog.getByRole("textbox"), { target: { value: "RESTAURAR" } });
-    vi.useFakeTimers();
-    await act(async () => {
-      fireEvent.click(dialog.getByRole("button", { name: /Restaurar backup$/ }));
-      await Promise.resolve();
-      await vi.advanceTimersByTimeAsync(900);
-    });
-    vi.useRealTimers();
-    expect(mocks.restoreDatabase).toHaveBeenCalled();
-    expect(mocks.toast).toHaveBeenCalledWith(expect.stringContaining("Feche e abra o Lumen"), "error");
+    fireEvent.click(dialog.getByRole("button", { name: /Restaurar backup$/ }));
+    await waitFor(() => expect(useMaintenanceRestart.getState().reason).toBe("restore"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("validates the complete profile name constraint before saving", async () => {
+    renderPage();
+    const name = await screen.findByRole("textbox", { name: "Nome" });
+    await waitFor(() => expect((name as HTMLInputElement).value).toBe("Filipe"));
+    fireEvent.change(name, { target: { value: "A" } });
+    expect(screen.getByRole("alert").textContent).toContain("entre 2 e 80 caracteres");
+    expect((screen.getByRole("button", { name: /Salvar alterações/ }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

@@ -4,6 +4,8 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import { useMaintenanceRestart } from "../shared/maintenanceRestart";
+import { disposeUiPreferences, initializeUiPreferences } from "../shared/uiPreferences";
 
 const mocks = vi.hoisted(() => ({
   bootstrap: vi.fn(),
@@ -19,6 +21,7 @@ vi.mock("../shared/api", () => ({
 vi.mock("../features/dashboard/Dashboard", () => ({ Dashboard: () => <div>Dashboard</div> }));
 vi.mock("../shared/ui/CommandPalette", () => ({ CommandPalette: () => null }));
 vi.mock("../shared/ui/UpdateNotice", () => ({ UpdateNotice: () => null }));
+vi.mock("../shared/ui/BackupReminderNotice", () => ({ BackupReminderNotice: () => null }));
 
 function renderApp() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -35,6 +38,7 @@ describe("App sidebar", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    useMaintenanceRestart.getState().clearForTests();
     mocks.bootstrap.mockResolvedValue({ onboardingCompleted: true });
     mocks.syncRecurringTransactions.mockResolvedValue(0);
     Object.defineProperty(window, "matchMedia", {
@@ -45,9 +49,13 @@ describe("App sidebar", () => {
         removeEventListener: vi.fn(),
       }),
     });
+    initializeUiPreferences();
   });
 
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    disposeUiPreferences();
+  });
 
   it("renders grouped navigation and keeps settings in the utility footer", async () => {
     renderApp();

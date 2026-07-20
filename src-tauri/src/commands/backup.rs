@@ -51,7 +51,12 @@ fn reject_managed_database_path(path: &Path, dir: &Path) -> Result<(), AppError>
     Ok(())
 }
 fn sync_file(path: &Path) -> Result<(), AppError> {
-    let file = std::fs::OpenOptions::new().read(true).open(path)?;
+    // FlushFileBuffers requires a writable handle on Windows. Opening only for
+    // reading makes a valid snapshot fail after VACUUM INTO with FILE_IO.
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?;
     file.sync_all()?;
     Ok(())
 }
@@ -159,6 +164,16 @@ pub async fn restore_database(
 mod tests {
     use super::*;
     use crate::infrastructure::database::{connect, validate_restore_source};
+
+    #[test]
+    fn sync_file_flushes_an_existing_snapshot() {
+        let directory = tempfile::tempdir().unwrap();
+        let snapshot = directory.path().join("snapshot.db");
+        std::fs::write(&snapshot, b"snapshot").unwrap();
+
+        sync_file(&snapshot).unwrap();
+        assert_eq!(std::fs::read(&snapshot).unwrap(), b"snapshot");
+    }
 
     #[test]
     fn sync_failure_without_old_keeps_published_file_and_error() {

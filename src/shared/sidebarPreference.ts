@@ -1,9 +1,13 @@
-const STORAGE_KEY = "financa-sidebar-collapsed";
+import { UI_PREFERENCE_STORAGE_KEYS, useUiPreferences } from "./uiPreferences";
 
 export function getSidebarCollapsed() {
-  return localStorage.getItem(STORAGE_KEY) === "true";
+  try {
+    return localStorage.getItem(UI_PREFERENCE_STORAGE_KEYS.sidebarCollapsed) === "true";
+  } catch {
+    return useUiPreferences.getState().sidebar === "compact";
+  }
 }
 
 export function setSidebarCollapsed(collapsed: boolean) {
-  localStorage.setItem(STORAGE_KEY, String(collapsed));
+  useUiPreferences.getState().setSidebar(collapsed ? "compact" : "expanded");
 }
