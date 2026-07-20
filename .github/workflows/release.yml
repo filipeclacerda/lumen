@@ -18,6 +18,7 @@ jobs:
         include:
           - platform: windows-latest
             args: ""
+            rustTargets: ""
             assetNamePattern: "Lumen-v[version]-windows-x64[setup][ext]"
             artifactPaths: |
               src-tauri/target/release/bundle/msi/*.msi
@@ -26,6 +27,7 @@ jobs:
               src-tauri/target/release/bundle/nsis/*.nsis.zip
           - platform: ubuntu-22.04
             args: "--bundles deb,appimage"
+            rustTargets: ""
             assetNamePattern: "Lumen-v[version]-linux-x64[setup][ext]"
             artifactPaths: |
               src-tauri/target/release/bundle/deb/*.deb
@@ -33,12 +35,14 @@ jobs:
               src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz
           - platform: macos-latest
             args: "--target aarch64-apple-darwin --bundles dmg"
+            rustTargets: "aarch64-apple-darwin"
             assetNamePattern: "Lumen-v[version]-macos-arm64[setup][ext]"
             artifactPaths: |
               src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
               src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
           - platform: macos-latest
             args: "--target x86_64-apple-darwin --bundles dmg"
+            rustTargets: "x86_64-apple-darwin"
             assetNamePattern: "Lumen-v[version]-macos-x64[setup][ext]"
             artifactPaths: |
               src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
@@ -64,7 +68,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ startsWith(matrix.platform, 'macos-') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.rustTargets }}
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2

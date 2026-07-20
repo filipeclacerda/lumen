@@ -37,10 +37,10 @@ describe("CommandPalette", () => {
     expect(screen.getByText("Visão geral")).toBeTruthy();
 
     fireEvent.keyDown(screen.getByRole("combobox"), { key: "ArrowDown" });
-    expect(screen.getByRole("option", { name: "Transações" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("option", { name: "Relatórios" }).getAttribute("aria-selected")).toBe("true");
 
     await Promise.resolve();
-    expect(screen.getByRole("option", { name: "Transações" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("option", { name: "Relatórios" }).getAttribute("aria-selected")).toBe("true");
   });
 
   it("opens from the titlebar search event", async () => {

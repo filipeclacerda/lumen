@@ -23,16 +23,6 @@
 :root{background:var(--surface-bg);color:var(--text);transition:background var(--motion-duration-base) ease}
 body{background:var(--surface-bg);color:var(--text);zoom:var(--app-zoom,1)}
 
-/* Shell e navegação */
-nav a{transition:background var(--motion-duration-fast) var(--motion-ease),color var(--motion-duration-fast) var(--motion-ease)}
-nav a:hover{background:var(--surface-hover);color:var(--text)}
-nav a.active{background:var(--brand-soft);color:var(--brand);position:relative}
-nav a.active::before{content:"";position:absolute;left:-13px;top:50%;translate:0 -50%;width:3px;height:60%;border-radius:3px;background:var(--brand)}
-.shell.collapsed nav a.active::before{display:none}
-nav a svg{transition:transform var(--motion-duration-fast) var(--motion-ease)}
-nav a:hover svg{transform:translateX(1px)}
-.privacy{background:var(--surface-2);color:var(--brand-strong)}
-
 /* Tipografia */
 h1,h2,h3{color:var(--text)}
 .muted{color:var(--text-muted)}
@@ -138,15 +128,6 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,
 textarea:focus-visible,[role="button"]:focus-visible,[tabindex]:focus-visible{
   outline:2px solid var(--brand);outline-offset:2px;border-radius:var(--radius-sm)
 }
-
-/* Rodapé da barra lateral e toggle de tema */
-.sidebar-footer{margin-top:auto;display:flex;flex-direction:column;gap:10px}
-.sidebar-footer .privacy{margin-top:0}
-.app-version{text-align:center;font-size:10px;color:var(--text-muted);letter-spacing:.3px}
-.theme-toggle{background:var(--surface-2);color:var(--text-muted);justify-content:flex-start;
-  width:100%;font-weight:500}
-.theme-toggle:hover{color:var(--text)}
-@media(max-width:850px){.theme-toggle span{display:none}.theme-toggle{justify-content:center}nav a.active::before{display:none}}
 
 /* ================================================================
    Tabela de faturas — layout em grid para alinhamento entre linhas
@@ -259,126 +240,6 @@ button:disabled {
   transform: none !important;
 }
 
-/* Sidebar Collapse Transitions and States */
-.shell {
-  transition: grid-template-columns var(--motion-duration-slow) var(--motion-ease);
-}
-aside {
-  position: sticky;
-  top: 0;
-  height: calc(100vh / var(--app-zoom, 1));
-  transition: padding var(--motion-duration-slow) var(--motion-ease);
-  overflow-x: hidden;
-}
-.brand, .brand div, nav a, nav a span, .sidebar-footer, .theme-toggle, .theme-toggle span, .privacy, .app-version {
-  transition: all var(--motion-duration-slow) var(--motion-ease);
-}
-.brand {
-  flex-wrap: nowrap;
-  gap: var(--space-3);
-  padding: 0 2px var(--space-8);
-}
-.brand-copy {
-  min-width: 0;
-  color: var(--text);
-  font-size: 16px;
-  font-weight: 750;
-  line-height: 1;
-  letter-spacing: -.035em;
-  white-space: nowrap;
-}
-.brand-logo { display:block; flex:none; object-fit:contain; }
-.brand > .sidebar-collapse {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  min-width: 36px;
-  min-height: 36px;
-  margin-left: auto;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-soft);
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  flex: none;
-  padding: 0;
-  box-shadow: none;
-}
-.brand > .sidebar-collapse:not(:disabled):hover {
-  border-color: var(--border-strong);
-  background: var(--surface-3) !important;
-  color: var(--text) !important;
-  box-shadow: none !important;
-  filter: none !important;
-  transform: none !important;
-}
-.brand > .sidebar-collapse:focus-visible {
-  outline: none;
-  border-color: var(--focus);
-  box-shadow: var(--ring);
-}
-nav a {
-  overflow: hidden;
-  white-space: nowrap;
-}
-nav a span {
-  white-space: nowrap;
-}
-
-/* Collapsed State */
-.shell.collapsed {
-  grid-template-columns: 78px 1fr;
-}
-.shell.collapsed aside {
-  padding: 30px 12px;
-}
-.shell.collapsed .brand {
-  padding-left: 2px;
-  padding-right: 2px;
-  gap: var(--space-2);
-  flex-direction: column;
-}
-.shell.collapsed .brand div {
-  opacity: 0;
-  width: 0;
-  overflow: hidden;
-}
-.shell.collapsed .brand > .sidebar-collapse { margin-left:0; }
-.shell.collapsed nav a {
-  padding: 11px;
-  justify-content: center;
-  gap: 0;
-}
-.shell.collapsed nav a span {
-  opacity: 0;
-  width: 0;
-  display: inline-block;
-  overflow: hidden;
-}
-.shell.collapsed .sidebar-footer {
-  align-items: center;
-}
-.shell.collapsed .theme-toggle span {
-  opacity: 0;
-  width: 0;
-  display: inline-block;
-  overflow: hidden;
-}
-.shell.collapsed .theme-toggle {
-  padding: 11px;
-  justify-content: center;
-  gap: 0;
-}
-.shell.collapsed .privacy,
-.shell.collapsed .app-version {
-  opacity: 0;
-  pointer-events: none;
-  height: 0;
-  padding: 0;
-  margin: 0;
-  overflow: hidden;
-}
 @media(max-width:1050px){.invoice-row{grid-template-columns:28px minmax(180px,1.4fr) repeat(2,minmax(95px,.75fr)) minmax(110px,.8fr) 66px 106px;column-gap:9px}}
 @media(max-width:850px){.invoice-row{display:grid;grid-template-columns:28px 1fr 1fr 70px;gap:12px;padding:14px 0}.invoice-expand-toggle{grid-column:1;grid-row:1}.invoice-identity{grid-column:2/4;padding:0}.invoice-metric{align-items:flex-start}.invoice-total-value{align-items:flex-start;text-align:left}.invoice-status{grid-column:4;grid-row:1;justify-content:flex-end}.invoice-actions{grid-column:3/5;width:auto;justify-self:end}}
 

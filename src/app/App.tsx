@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Menu, Moon, Sun } from "lucide-react";
+import { ChevronLeft, ChevronRight, HardDrive, Menu, Moon, Sun } from "lucide-react";
 import { getTheme, setTheme, type Theme } from "../shared/theme";
 import { Dashboard } from "../features/dashboard/Dashboard";
 import { Transactions } from "../features/transactions/Transactions";
@@ -17,7 +17,8 @@ import { api } from "../shared/api";
 import { UpdateNotice } from "../shared/ui/UpdateNotice";
 import { APP_VERSION } from "../shared/version";
 import { CommandPalette } from "../shared/ui/CommandPalette";
-import { navigation } from "../shared/navigation";
+import { navigationGroups, settingsNavigation } from "../shared/navigation";
+import { getSidebarCollapsed, setSidebarCollapsed } from "../shared/sidebarPreference";
 import { ErrorState, LoadingState } from "../shared/ui/AsyncState";
 import { BrandLogo } from "../shared/ui/BrandLogo";
 
@@ -25,13 +26,21 @@ export function App() {
   const client = useQueryClient();
   const navigate = useNavigate();
   const location = useLocation();
+  const SettingsIcon = settingsNavigation.icon;
   const [theme, setThemeState] = useState<Theme>(getTheme());
   const toggleTheme = () => {
     const next: Theme = theme === "dark" ? "light" : "dark";
     setTheme(next);
     setThemeState(next);
   };
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(getSidebarCollapsed);
+  const toggleSidebar = () => {
+    setCollapsed((current) => {
+      const next = !current;
+      setSidebarCollapsed(next);
+      return next;
+    });
+  };
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [isMobileNavigation, setIsMobileNavigation] = useState(() => window.matchMedia("(max-width: 850px)").matches);
   const drawerTrigger = useRef<HTMLButtonElement>(null);
@@ -158,7 +167,7 @@ export function App() {
           <div className="brand-copy">Lumen</div>
           <button
             className="sidebar-collapse"
-            onClick={() => setCollapsed((current) => !current)}
+            onClick={toggleSidebar}
             aria-label={collapsed ? "Expandir menu" : "Recolher menu"}
             aria-expanded={!collapsed}
             title={collapsed ? "Expandir menu" : "Recolher menu"}
@@ -166,23 +175,42 @@ export function App() {
             {collapsed ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}
           </button>
         </div>
-        <nav>
-          {navigation.map(({ to, label, icon: Icon }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={to === "/"}
-              title={label}
-              onClick={() => {
-                setDrawerOpen(false);
-              }}
-            >
-              <Icon size={18} aria-hidden="true" />
-              <span>{label}</span>
-            </NavLink>
-          ))}
+        <nav className="sidebar-navigation" aria-label="Navegação principal">
+          {navigationGroups.map((group, groupIndex) => {
+            const headingId = `sidebar-group-${groupIndex}`;
+            return (
+              <section className="sidebar-nav-group" aria-labelledby={headingId} key={group.label}>
+                <h2 id={headingId}>{group.label}</h2>
+                <div>
+                  {group.items.map(({ to, label, icon: Icon }) => (
+                    <NavLink
+                      key={to}
+                      to={to}
+                      end={to === "/"}
+                      title={label}
+                      aria-label={collapsed && !isMobileNavigation ? label : undefined}
+                      onClick={() => setDrawerOpen(false)}
+                    >
+                      <Icon size={18} aria-hidden="true" />
+                      <span>{label}</span>
+                    </NavLink>
+                  ))}
+                </div>
+              </section>
+            );
+          })}
         </nav>
         <div className="sidebar-footer">
+          <NavLink
+            className="sidebar-settings"
+            to={settingsNavigation.to}
+            title={settingsNavigation.label}
+            aria-label={collapsed && !isMobileNavigation ? settingsNavigation.label : undefined}
+            onClick={() => setDrawerOpen(false)}
+          >
+            <SettingsIcon size={18} aria-hidden="true" />
+            <span>{settingsNavigation.label}</span>
+          </NavLink>
           <button
             className="theme-toggle"
             onClick={toggleTheme}
@@ -192,7 +220,10 @@ export function App() {
             {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
             <span>{theme === "dark" ? "Tema claro" : "Tema escuro"}</span>
           </button>
-          <div className="privacy">🔒 Seus dados ficam neste computador</div>
+          <div className="sidebar-local-data">
+            <HardDrive size={15} aria-hidden="true" />
+            <span>Dados salvos localmente</span>
+          </div>
           <div className="app-version">Lumen v{APP_VERSION}</div>
         </div>
       </aside>
