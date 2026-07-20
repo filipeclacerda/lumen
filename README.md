@@ -117,6 +117,16 @@ O Lumen foi desenhado para reduzir exposição desnecessária de informações f
 - Backups são arquivos locais escolhidos pelo usuário.
 - Não há conta online obrigatória, assinatura ou coleta silenciosa de dados financeiros pelo projeto.
 
+### Verificação dos artefatos de release
+
+Os instaladores e pacotes de atualização gerados pelo workflow de release recebem uma attestation de proveniência do GitHub. Depois de baixar um artefato, verifique se ele foi produzido por este repositório:
+
+```bash
+gh attestation verify CAMINHO_DO_ARTEFATO --repo filipeclacerda/lumen
+```
+
+A verificação exige o [GitHub CLI](https://cli.github.com/). Releases anteriores à adoção das attestations podem não possuir esse registro. A attestation comprova a origem do build, mas não substitui a assinatura do updater nem garante, isoladamente, que o artefato seja seguro.
+
 ### Nota importante sobre criptografia
 
 O banco local ainda não é criptografado pela própria aplicação. Até que a criptografia nativa seja implementada, recomenda-se proteger o computador com recursos do sistema operacional, como senha forte, disco criptografado e backups guardados em local seguro.
