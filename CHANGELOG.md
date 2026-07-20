@@ -5,6 +5,58 @@ Todas as mudanças relevantes deste projeto são documentadas neste arquivo.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o
 projeto adota o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.7.0] - 2026-07-20
+
+Foco em tornar a manutenção dos dados locais mais preventiva e deixar a
+navegação e as configurações mais rápidas no uso diário.
+
+### Adicionado
+
+- **Lembretes de backup local**: o Lumen avisa quando uma nova cópia está
+  pendente, permite adiar por um dia e oferece ciclos de 7, 14 ou 30 dias, além
+  da opção de desativar o lembrete.
+- **Paleta de comandos ampliada** com ações para criar lançamentos, contas,
+  importações e limites de orçamento, histórico recente e busca por contas,
+  categorias, regras e transações.
+- **Navegação voltar/avançar na barra de título desktop**, respeitando o
+  histórico disponível da aplicação.
+
+### Alterado
+
+- **Configurações reorganizadas** em Geral, Aparência, Dados e backup,
+  Privacidade, Sobre e Zona de risco, com a seção selecionada preservada na URL
+  e layout adaptado para telas menores.
+- Tema do sistema, modo claro/escuro, zoom e densidade da sidebar passam a ser
+  gerenciados como preferências visuais unificadas e persistidas no dispositivo.
+- A sidebar passa a agrupar as áreas por acompanhamento, gerenciamento e
+  planejamento, mantendo Configurações como ação utilitária.
+- Exportação, backup, restauração e limpeza passam por um fluxo centralizado;
+  a limpeza pode criar um backup antes de apagar os dados.
+
+### Corrigido
+
+- A sincronização de snapshots no Windows passa a abrir o arquivo com permissão
+  de escrita, evitando falhas de `FlushFileBuffers` após um backup válido.
+
+### Segurança
+
+- Operações de dados concorrentes agora são bloqueadas e, após preparar uma
+  restauração ou limpeza, novas alterações ficam indisponíveis até o aplicativo
+  reiniciar.
+
+### Testes e qualidade
+
+- Ampliada a cobertura de preferências visuais, lembretes de backup, operações
+  de dados, navegação, paleta de comandos, restauração, limpeza e bloqueio até o
+  reinício.
+
+### Projeto
+
+- O workflow de release passa a publicar nomes de artefatos explícitos por
+  sistema e arquitetura e a gerar attestations de proveniência no GitHub.
+- Adicionados manifests do Windows Package Manager para a versão `0.6.0` e
+  ajustada a execução do CI para evitar builds redundantes.
+
 ## [0.6.0] - 2026-07-20
 
 Busca global mais acessível no aplicativo desktop e distribuição ampliada para
@@ -443,3 +495,4 @@ erros, com cadastro rápido de cartão sem sair do fluxo.
 [0.3.6]: https://github.com/filipeclacerda/lumen/compare/v0.3.5...v0.3.6
 [0.3.7]: https://github.com/filipeclacerda/lumen/compare/v0.3.6...v0.3.7
 [0.4.0]: https://github.com/filipeclacerda/lumen/compare/v0.3.7...v0.4.0
+[0.7.0]: https://github.com/filipeclacerda/lumen/compare/v0.6.0...v0.7.0
