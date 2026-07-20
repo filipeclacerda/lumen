@@ -98,7 +98,7 @@ export function SpendingBarsChart({ data }: { data: MonthlyReportPoint[] }) {
   return (
     <div className="chart-wrap">
       <ResponsiveContainer width="100%" height={230}>
-        <ComposedChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
+        <ComposedChart accessibilityLayer={false} data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
           <CartesianGrid stroke="var(--border)" vertical={false} />
           <XAxis
             dataKey="month"
@@ -118,6 +118,7 @@ export function SpendingBarsChart({ data }: { data: MonthlyReportPoint[] }) {
             contentStyle={chartTooltipStyle}
             labelStyle={chartTooltipLabelStyle}
             itemStyle={chartTooltipItemStyle}
+            cursor={{ fill: "var(--surface-3)", fillOpacity: 0.72 }}
           />
           <Line type="monotone" dataKey="Saldo" stroke="var(--brand)" strokeWidth={2} dot={false} />
           <Bar dataKey="Gasto" fill="var(--danger)" radius={[4, 4, 0, 0]} />
@@ -174,7 +175,12 @@ export function CategoryBarsChart({
   return (
     <div className="chart-wrap category-bars-chart">
       <ResponsiveContainer width="100%" height={Math.max(rows.length * 38, 220)}>
-        <BarChart layout="vertical" data={rows} margin={{ top: 4, right: 16, bottom: 6, left: 12 }}>
+        <BarChart
+          accessibilityLayer={false}
+          layout="vertical"
+          data={rows}
+          margin={{ top: 4, right: 16, bottom: 6, left: 12 }}
+        >
           <CartesianGrid stroke="var(--border)" horizontal={false} />
           <XAxis
             type="number"
@@ -212,6 +218,7 @@ export function CategoryBarsChart({
                     : "Pressione Enter ou Espaço para filtrar por esta categoria."
                 }`}
                 aria-pressed={row.categoryKey === selectedCategoryKey}
+                onPointerDown={(event) => event.preventDefault()}
                 onClick={() => toggleCategory(row.categoryKey)}
                 onKeyDown={(event) => {
                   if (event.key !== "Enter" && event.key !== " ") return;
@@ -254,7 +261,12 @@ export function SourceComparisonChart({ sources }: { sources: FinancialReport["s
   return (
     <div className="chart-wrap">
       <ResponsiveContainer width="100%" height={190}>
-        <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 18, bottom: 0, left: 8 }}>
+        <BarChart
+          accessibilityLayer={false}
+          data={chartData}
+          layout="vertical"
+          margin={{ top: 4, right: 18, bottom: 0, left: 8 }}
+        >
           <CartesianGrid stroke="var(--border)" horizontal={false} />
           <XAxis
             type="number"
@@ -276,6 +288,7 @@ export function SourceComparisonChart({ sources }: { sources: FinancialReport["s
             contentStyle={chartTooltipStyle}
             labelStyle={chartTooltipLabelStyle}
             itemStyle={chartTooltipItemStyle}
+            cursor={{ fill: "var(--surface-3)", fillOpacity: 0.72 }}
           />
           <Bar dataKey="amount" fill="var(--brand)" radius={[0, 8, 8, 0]}>
             {chartData.map((item) => (
@@ -319,6 +332,7 @@ export function CumulativeExpensesChart({ data }: { data: DailyReportPoint[] }) 
       <div className="chart-wrap">
         <ResponsiveContainer width="100%" height={210}>
           <AreaChart
+            accessibilityLayer={false}
             data={rows}
             margin={{ top: 8, right: 8, bottom: 2, left: 8 }}
             onMouseMove={(state) => {
@@ -410,7 +424,7 @@ export function SourceDonutChart({ sources }: { sources: FinancialReport["source
   return (
     <div className="chart-wrap">
       <ResponsiveContainer width="100%" height={210}>
-        <PieChart>
+        <PieChart accessibilityLayer={false}>
           <Pie
             data={data}
             dataKey="value"

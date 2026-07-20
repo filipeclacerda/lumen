@@ -63,7 +63,7 @@ export function MonthlySurplusChart({ monthly }: Props) {
   return (
     <div className="chart-wrap">
       <ResponsiveContainer width="100%" height={220}>
-        <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
+        <BarChart accessibilityLayer={false} data={data} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
           <CartesianGrid stroke="var(--border)" vertical={false} />
           <XAxis
             dataKey="label"

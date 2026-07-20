@@ -1,7 +1,7 @@
 import { PageHeader } from "../../shared/ui/PageHeader";
 import { Modal } from "../../shared/ui/Modal";
 import { Tabs } from "../../shared/ui/Tabs";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
   ArrowDown,
@@ -12,7 +12,9 @@ import {
   Layers3,
   Pencil,
   Plus,
+  RotateCcw,
   Save,
+  Search,
   ShieldCheck,
   Sparkles,
   TestTube2,
@@ -20,6 +22,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState, useEffect } from "react";
 import type { ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../../shared/api";
 import type {
   Category,
@@ -31,12 +34,12 @@ import type {
   RuleOperator,
 } from "../../shared/types";
 import { shortDate, money } from "../../shared/format";
-import { currentMonth as curMonth, shiftMonth } from "../../shared/period";
 import { CategoryIcon, CategorySelect } from "../../shared/ui/CategorySelect";
 import { MoneyInput } from "../../shared/ui/MoneyInput";
-import { ErrorState, LoadingState } from "../../shared/ui/AsyncState";
+import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/AsyncState";
 import { Pagination, type PaginationSize } from "../../shared/ui/Pagination";
 import { Select } from "../../shared/ui/Select";
+import { useToast } from "../../shared/ui/toast";
 
 const emptyRule: RuleInput = {
   name: "",
@@ -758,87 +761,217 @@ export function CategoriesRules() {
 
 function MerchantsTab() {
   const client = useQueryClient();
-  const startMonth = shiftMonth(curMonth(), -11);
-  const filter = { startMonth, endMonth: curMonth(), source: "all" as const, accountId: undefined };
+  const toast = useToast();
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PaginationSize>(10);
-  const { data } = useQuery({
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const filter = { search: debouncedSearch || undefined, sort: "transaction_count" as const };
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["merchants", filter, page, pageSize],
     queryFn: () => api.listMerchantsPage({ ...filter, limit: pageSize, offset: page * pageSize }),
+    placeholderData: keepPreviousData,
   });
+  const { data: aliases = [] } = useQuery({ queryKey: ["merchant-aliases"], queryFn: api.merchantAliases });
   const [editingKey, setEditingKey] = useState<string>();
   const [draftName, setDraftName] = useState("");
+  const [savingKey, setSavingKey] = useState<string>();
   const merchants = data?.items ?? [];
+  const totalCount = data?.totalCount;
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    return () => window.clearTimeout(timeout);
+  }, [search]);
+
+  useEffect(() => setPage(0), [debouncedSearch, pageSize]);
+
+  useEffect(() => {
+    if (totalCount === undefined) return;
+    const lastPage = Math.max(0, Math.ceil(totalCount / pageSize) - 1);
+    if (page > lastPage) setPage(lastPage);
+  }, [totalCount, page, pageSize]);
 
   async function save(key: string) {
     if (!draftName.trim()) return;
-    await api.saveMerchantAlias(key, draftName.trim());
-    setEditingKey(undefined);
-    await client.invalidateQueries({ queryKey: ["merchants"] });
+    setSavingKey(key);
+    try {
+      await api.saveMerchantAlias(key, draftName.trim());
+      setEditingKey(undefined);
+      toast("Nome do estabelecimento atualizado.");
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["merchants"] }),
+        client.invalidateQueries({ queryKey: ["merchant-aliases"] }),
+      ]);
+    } catch (error: any) {
+      toast(`Não foi possível atualizar o nome: ${error?.message || error}`, "error");
+    } finally {
+      setSavingKey(undefined);
+    }
+  }
+
+  async function restore(key: string) {
+    const alias = aliases.find((item) => item.merchantKey === key);
+    if (!alias) return;
+    setSavingKey(key);
+    try {
+      await api.deleteMerchantAlias(alias.id);
+      setEditingKey(undefined);
+      toast("Nome original restaurado.");
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["merchants"] }),
+        client.invalidateQueries({ queryKey: ["merchant-aliases"] }),
+      ]);
+    } catch (error: any) {
+      toast(`Não foi possível restaurar o nome: ${error?.message || error}`, "error");
+    } finally {
+      setSavingKey(undefined);
+    }
   }
 
   return (
-    <div className="rules-layout">
-      <article className="panel">
-        <div className="panel-title">
-          <h2>Principais estabelecimentos</h2>
-          <span>Últimos 12 meses · renomeie para agrupar apelidos</span>
+    <section className="merchants-workspace">
+      <article className="panel merchants-panel">
+        <div className="panel-title merchants-heading">
+          <div>
+            <h2>Gerenciar estabelecimentos</h2>
+            <span>Use nomes mais claros sem alterar nem combinar os lançamentos originais.</span>
+          </div>
+          <span className="merchants-total">{data?.totalCount ?? 0} no histórico</span>
         </div>
-        {merchants.length === 0 && <p className="muted">Nenhum gasto encontrado nos últimos 12 meses.</p>}
-        <div className="rule-list">
-          {merchants.map((m) => (
-            <div className="rule-item" key={m.merchant}>
-              <span className="category-swatch" style={{ background: "transparent" }} />
-              {editingKey === m.merchantKey ? (
-                <>
-                  <input value={draftName} onChange={(e) => setDraftName(e.target.value)} autoFocus />
-                  <span />
-                  <button className="icon-button" title="Salvar" onClick={() => save(m.merchantKey!)}>
-                    <Check size={14} />
-                  </button>
-                  <button className="icon-button" title="Cancelar" onClick={() => setEditingKey(undefined)}>
-                    <X size={14} />
-                  </button>
-                </>
-              ) : (
-                <>
-                  <div>
-                    <b>{m.merchant}</b>
-                    <small>
-                      {m.transactionCount} lançamento{m.transactionCount === 1 ? "" : "s"}
-                    </small>
+        <label className="merchants-search">
+          <span>Buscar por nome original ou personalizado</span>
+          <span className="merchants-search-control">
+            <Search size={17} aria-hidden />
+            <input
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Ex.: supermercado"
+            />
+          </span>
+        </label>
+        {isLoading && <LoadingState label="Carregando estabelecimentos…" />}
+        {isError && (
+          <ErrorState message="Não foi possível carregar os estabelecimentos." onRetry={() => void refetch()} />
+        )}
+        {!isLoading && !isError && merchants.length === 0 && (
+          <EmptyState
+            title={debouncedSearch ? "Nenhum estabelecimento encontrado" : "Nenhum estabelecimento disponível"}
+            description={
+              debouncedSearch
+                ? "Tente buscar por outro nome original ou personalizado."
+                : "Os estabelecimentos aparecerão após a importação de despesas."
+            }
+          />
+        )}
+        {!isLoading && !isError && merchants.length > 0 && (
+          <div className="merchants-list" role="list">
+            {merchants.map((merchant) => {
+              const displayName = merchant.alias ?? merchant.originalName;
+              const editing = editingKey === merchant.merchantKey;
+              const saving = savingKey === merchant.merchantKey;
+              return (
+                <div className="merchant-row" role="listitem" key={merchant.merchantKey}>
+                  <div className="merchant-identity">
+                    {editing ? (
+                      <label>
+                        <span>Nome personalizado</span>
+                        <input
+                          value={draftName}
+                          onChange={(event) => setDraftName(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") void save(merchant.merchantKey);
+                            if (event.key === "Escape") setEditingKey(undefined);
+                          }}
+                          disabled={saving}
+                          autoFocus
+                        />
+                      </label>
+                    ) : (
+                      <>
+                        <strong>{displayName}</strong>
+                        {merchant.alias && <small>Original: {merchant.originalName}</small>}
+                      </>
+                    )}
                   </div>
-                  <span className="uses">{money(m.amountInCents)}</span>
-                  {m.merchantKey && (
-                    <button
-                      className="icon-button"
-                      title="Renomear"
-                      onClick={() => {
-                        setEditingKey(m.merchantKey);
-                        setDraftName(m.merchant);
-                      }}
-                    >
-                      <Pencil size={14} />
-                    </button>
-                  )}
-                </>
-              )}
-            </div>
-          ))}
+                  <div className="merchant-metric">
+                    <span>Lançamentos</span>
+                    <strong>{merchant.transactionCount}</strong>
+                  </div>
+                  <div className="merchant-metric merchant-amount">
+                    <span>Total de despesas</span>
+                    <strong>{money(merchant.amountInCents)}</strong>
+                  </div>
+                  <div className="merchant-actions">
+                    {editing ? (
+                      <>
+                        <button
+                          className="secondary compact merchant-action-cancel"
+                          aria-label={`Cancelar edição de ${displayName}`}
+                          onClick={() => setEditingKey(undefined)}
+                          disabled={saving}
+                        >
+                          <X size={15} /> Cancelar
+                        </button>
+                        <button
+                          className="compact merchant-action-save"
+                          aria-label={`Salvar nome de ${merchant.originalName}`}
+                          onClick={() => void save(merchant.merchantKey)}
+                          disabled={saving || !draftName.trim()}
+                        >
+                          <Check size={15} /> {saving ? "Salvando…" : "Salvar"}
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <Link
+                          className="merchant-action-link merchant-action-view"
+                          to={`/transactions?merchantKey=${encodeURIComponent(merchant.merchantKey)}`}
+                        >
+                          Ver lançamentos
+                        </Link>
+                        <button
+                          className="secondary compact merchant-action-rename"
+                          onClick={() => {
+                            setEditingKey(merchant.merchantKey);
+                            setDraftName(displayName);
+                          }}
+                        >
+                          <Pencil size={15} /> Renomear
+                        </button>
+                        {merchant.alias && (
+                          <button
+                            className="secondary compact merchant-action-restore"
+                            onClick={() => void restore(merchant.merchantKey)}
+                            disabled={saving}
+                          >
+                            <RotateCcw size={15} /> Restaurar
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div className="merchants-pagination">
+          <Pagination
+            page={page}
+            pageSize={pageSize}
+            totalCount={data?.totalCount ?? 0}
+            onPageChange={setPage}
+            onPageSizeChange={(size) => {
+              setPageSize(size);
+              setPage(0);
+            }}
+            itemLabel="estabelecimentos"
+          />
         </div>
-        <Pagination
-          page={page}
-          pageSize={pageSize}
-          totalCount={data?.totalCount ?? 0}
-          onPageChange={setPage}
-          onPageSizeChange={(size) => {
-            setPageSize(size);
-            setPage(0);
-          }}
-          itemLabel="estabelecimentos"
-        />
       </article>
-    </div>
+    </section>
   );
 }
 
@@ -894,7 +1027,6 @@ function CategoryTreeNode({
         <span className="category-drag-handle" aria-hidden title="Arraste para reordenar">
           ⋮⋮
         </span>
-        <span className="category-swatch" style={{ background: category.color ?? "#789" }} />
         <span
           className="category-icon category-icon-tile"
           style={{ color: category.color ?? "#789", backgroundColor: `${category.color ?? "#789"}1a` }}

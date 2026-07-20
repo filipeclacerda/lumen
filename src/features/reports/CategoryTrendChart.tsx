@@ -15,7 +15,7 @@ export function CategoryTrendChart({ data }: Props) {
   const points = data.map((p) => ({ label: monthLabel(p.month), amount: p.amountInCents }));
   return (
     <ResponsiveContainer width="100%" height={180}>
-      <AreaChart data={points} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
+      <AreaChart accessibilityLayer={false} data={points} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
         <defs>
           <linearGradient id="categoryTrendFill" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="var(--brand)" stopOpacity={0.28} />

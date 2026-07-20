@@ -22,7 +22,12 @@ export function CashFlowChart({ monthly }: Props) {
   return (
     <div className="chart-wrap">
       <ResponsiveContainer width="100%" height={260}>
-        <ComposedChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 8 }} barGap={4}>
+        <ComposedChart
+          accessibilityLayer={false}
+          data={data}
+          margin={{ top: 8, right: 8, bottom: 0, left: 8 }}
+          barGap={4}
+        >
           <CartesianGrid stroke="var(--border)" vertical={false} />
           <XAxis
             dataKey="label"

@@ -76,7 +76,9 @@ pub struct KindBreakdown {
 #[serde(rename_all = "camelCase")]
 pub struct MerchantReport {
     merchant: String,
-    merchant_key: Option<String>,
+    merchant_key: String,
+    original_name: String,
+    alias: Option<String>,
     amount_in_cents: i64,
     transaction_count: i64,
 }
@@ -84,12 +86,10 @@ pub struct MerchantReport {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MerchantPageFilter {
-    start_month: String,
-    end_month: String,
-    source: String,
-    account_id: Option<String>,
+    search: Option<String>,
     limit: Option<i64>,
     offset: Option<i64>,
+    sort: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -552,41 +552,34 @@ pub async fn list_merchants_page(
     filter: MerchantPageFilter,
     state: State<'_, AppState>,
 ) -> Result<MerchantPage, AppError> {
-    if !["all", "bank", "credit_card"].contains(&filter.source.as_str()) {
-        return Err(AppError::Validation("Origem de relatório inválida".into()));
-    }
-    month_range(&filter.start_month, &filter.end_month)?;
-    if let Some(account_id) = &filter.account_id {
-        let exists: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM accounts WHERE id=? AND deleted_at IS NULL")
-                .bind(account_id)
-                .fetch_one(&state.db)
-                .await?;
-        if exists == 0 {
-            return Err(AppError::Validation("Conta não encontrada".into()));
-        }
-    }
+    list_merchants_page_impl(filter, &state.db).await
+}
 
+async fn list_merchants_page_impl(
+    filter: MerchantPageFilter,
+    db: &SqlitePool,
+) -> Result<MerchantPage, AppError> {
+    let sort = filter.sort.as_deref().unwrap_or("transaction_count");
+    if !["transaction_count", "amount", "name"].contains(&sort) {
+        return Err(AppError::Validation(
+            "Ordenação de estabelecimentos inválida".into(),
+        ));
+    }
     let rows = sqlx::query(
         "SELECT t.date, strftime('%Y-%m',t.date) month, t.merchant_key,
+         COALESCE(t.merchant_key, t.description) original_name, ma.display_name merchant_alias,
          COALESCE(ma.display_name, t.merchant_key, t.description) merchant_label, t.amount_cents,
          a.kind account_kind, t.category_id, c.name category_name, c.color category_color, c.kind category_kind
          FROM transactions t JOIN accounts a ON a.id=t.account_id
          LEFT JOIN categories c ON c.id=t.category_id
          LEFT JOIN merchant_aliases ma ON ma.merchant_key=t.merchant_key
          WHERE t.deleted_at IS NULL AND a.deleted_at IS NULL
-         AND strftime('%Y-%m',t.date)>=? AND strftime('%Y-%m',t.date)<=?
-         AND (?='all' OR (?='bank' AND a.kind!='credit_card') OR (?='credit_card' AND a.kind='credit_card'))
-         AND (? IS NULL OR t.account_id=?)",
+         AND NOT EXISTS (
+             SELECT 1 FROM transaction_links l
+             WHERE l.debit_transaction_id=t.id OR l.credit_transaction_id=t.id
+         )",
     )
-    .bind(&filter.start_month)
-    .bind(&filter.end_month)
-    .bind(&filter.source)
-    .bind(&filter.source)
-    .bind(&filter.source)
-    .bind(&filter.account_id)
-    .bind(&filter.account_id)
-    .fetch_all(&state.db)
+    .fetch_all(db)
     .await?;
 
     let mut merchant_map: HashMap<String, (String, Option<String>, i64, i64)> = HashMap::new();
@@ -611,32 +604,59 @@ pub async fn list_merchants_page(
             .merchant_key
             .clone()
             .unwrap_or_else(|| report_row.merchant_label.clone());
-        let merchant = merchant_map.entry(key).or_insert((
-            report_row.merchant_label.clone(),
-            report_row.merchant_key.clone(),
-            0,
-            0,
-        ));
+        let original_name: String = row.get("original_name");
+        let alias: Option<String> = row.get("merchant_alias");
+        let merchant = merchant_map
+            .entry(key)
+            .or_insert((original_name, alias, 0, 0));
         merchant.2 += expense;
         merchant.3 += 1;
     }
 
     let mut merchants: Vec<MerchantReport> = merchant_map
-        .into_values()
+        .into_iter()
         .map(
-            |(merchant, merchant_key, amount_in_cents, transaction_count)| MerchantReport {
-                merchant,
-                merchant_key,
-                amount_in_cents,
-                transaction_count,
+            |(merchant_key, (original_name, alias, amount_in_cents, transaction_count))| {
+                MerchantReport {
+                    merchant: alias.clone().unwrap_or_else(|| original_name.clone()),
+                    merchant_key,
+                    original_name,
+                    alias,
+                    amount_in_cents,
+                    transaction_count,
+                }
             },
         )
         .collect();
+    let search = filter
+        .search
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(search) = search {
+        let search = search.to_lowercase();
+        merchants.retain(|item| {
+            item.original_name.to_lowercase().contains(&search)
+                || item
+                    .alias
+                    .as_deref()
+                    .is_some_and(|alias| alias.to_lowercase().contains(&search))
+        });
+    }
     merchants.sort_by(|left, right| {
-        right
-            .amount_in_cents
-            .cmp(&left.amount_in_cents)
-            .then_with(|| left.merchant.cmp(&right.merchant))
+        let primary = match sort {
+            "amount" => right.amount_in_cents.cmp(&left.amount_in_cents),
+            "name" => left
+                .merchant
+                .to_lowercase()
+                .cmp(&right.merchant.to_lowercase()),
+            _ => right.transaction_count.cmp(&left.transaction_count),
+        };
+        primary.then_with(|| {
+            left.merchant
+                .to_lowercase()
+                .cmp(&right.merchant.to_lowercase())
+        })
     });
     let total_count = merchants.len() as i64;
     let limit = filter.limit.unwrap_or(10).clamp(1, 1000) as usize;
@@ -879,8 +899,10 @@ async fn generate_financial_report_impl(
     let mut merchants: Vec<_> = merchant_map
         .into_iter()
         .map(|(_, (label, key, amount, count))| MerchantReport {
-            merchant: label,
-            merchant_key: key,
+            merchant: label.clone(),
+            merchant_key: key.unwrap_or_else(|| label.clone()),
+            original_name: label,
+            alias: None,
             amount_in_cents: amount.max(0),
             transaction_count: count,
         })
@@ -1237,6 +1259,97 @@ mod tests {
         .unwrap();
 
         assert_eq!(report.merchants[0].merchant, "Mercadinho da esquina");
+    }
+
+    #[tokio::test]
+    async fn merchant_admin_searches_before_pagination_and_uses_all_expense_history() {
+        let (_directory, db, _account_id) = setup().await;
+        insert_expense(&db, "old-1", "2020-01-01", "LOJA ANTIGA", -1000).await;
+        insert_expense(&db, "old-2", "2020-02-01", "LOJA ANTIGA", -2000).await;
+        insert_expense(&db, "other", "2026-06-01", "PADARIA LOCAL", -500).await;
+        insert_transaction(
+            &db,
+            "income",
+            "acc",
+            "2026-06-02",
+            "LOJA ANTIGA",
+            9000,
+            None,
+        )
+        .await;
+        insert_expense(&db, "deleted", "2026-06-03", "LOJA ANTIGA", -8000).await;
+        sqlx::query("UPDATE transactions SET deleted_at=datetime('now') WHERE id='deleted'")
+            .execute(&db)
+            .await
+            .unwrap();
+
+        let old_key = merchant_key("LOJA ANTIGA");
+        sqlx::query(
+            "INSERT INTO merchant_aliases(id,merchant_key,display_name) VALUES('alias-old',?,?)",
+        )
+        .bind(&old_key)
+        .bind("Favorita")
+        .execute(&db)
+        .await
+        .unwrap();
+
+        let page = list_merchants_page_impl(
+            MerchantPageFilter {
+                search: Some("favorita".into()),
+                limit: Some(1),
+                offset: Some(0),
+                sort: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            page.total_count, 1,
+            "search must be applied before pagination"
+        );
+        assert_eq!(page.items[0].merchant_key, old_key);
+        assert_eq!(page.items[0].original_name, "LOJA ANTIGA");
+        assert_eq!(page.items[0].alias.as_deref(), Some("Favorita"));
+        assert_eq!(page.items[0].amount_in_cents, 3000);
+        assert_eq!(page.items[0].transaction_count, 2);
+    }
+
+    #[tokio::test]
+    async fn merchant_admin_defaults_to_count_then_name_and_excludes_transfer_legs() {
+        let (_directory, db, _account_id) = setup().await;
+        insert_expense(&db, "b1", "2026-01-01", "BETA", -100).await;
+        insert_expense(&db, "b2", "2026-01-02", "BETA", -100).await;
+        insert_expense(&db, "a1", "2026-01-01", "ALFA", -1000).await;
+        insert_expense(&db, "a2", "2026-01-02", "ALFA", -1000).await;
+        insert_expense(&db, "z1", "2026-01-03", "TRANSFERENCIA TESTE", -7000).await;
+        insert_transaction(
+            &db,
+            "z2",
+            "acc",
+            "2026-01-03",
+            "TRANSFERENCIA TESTE",
+            7000,
+            None,
+        )
+        .await;
+        sqlx::query("INSERT INTO transaction_links(id,kind,debit_transaction_id,credit_transaction_id) VALUES('link','transfer','z1','z2')")
+            .execute(&db).await.unwrap();
+
+        let page = list_merchants_page_impl(
+            MerchantPageFilter {
+                search: None,
+                limit: None,
+                offset: None,
+                sort: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+        assert_eq!(page.total_count, 2);
+        assert_eq!(page.items[0].original_name, "ALFA");
+        assert_eq!(page.items[1].original_name, "BETA");
     }
 
     #[tokio::test]

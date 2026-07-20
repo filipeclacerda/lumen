@@ -1,5 +1,5 @@
 import { PageHeader } from "../../shared/ui/PageHeader";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
   CheckCircle2,
@@ -54,6 +54,7 @@ export function AccountsCards() {
   } = useQuery({
     queryKey: ["credit-card-invoices", invoicePage, invoicePageSize],
     queryFn: () => api.creditCardInvoicesPage({ limit: invoicePageSize, offset: invoicePage * invoicePageSize }),
+    placeholderData: keepPreviousData,
   });
   const invoices = invoicePageData?.items ?? [];
   useEffect(() => {

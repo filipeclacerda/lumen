@@ -228,6 +228,7 @@ const demoMerchants: MerchantPage["items"] = Object.values(
     const current = groups[key] ?? {
       merchant: transaction.description,
       merchantKey: key,
+      originalName: key,
       amountInCents: 0,
       transactionCount: 0,
     };
@@ -236,7 +237,7 @@ const demoMerchants: MerchantPage["items"] = Object.values(
     groups[key] = current;
     return groups;
   }, {}),
-).sort((a, b) => b.amountInCents - a.amountInCents || a.merchant.localeCompare(b.merchant));
+).sort((a, b) => b.transactionCount - a.transactionCount || a.originalName.localeCompare(b.originalName));
 
 const isTauri = () => "__TAURI_INTERNALS__" in window;
 const demoProfile = (): UserProfile | undefined => {
@@ -307,7 +308,8 @@ export const api = {
                 ? t.category === "Investimentos"
                 : t.category === "Transferências")) &&
         (!filter.minAbsAmountInCents || Math.abs(t.amountInCents) >= filter.minAbsAmountInCents) &&
-        (!filter.maxAbsAmountInCents || Math.abs(t.amountInCents) <= filter.maxAbsAmountInCents),
+        (!filter.maxAbsAmountInCents || Math.abs(t.amountInCents) <= filter.maxAbsAmountInCents) &&
+        (!filter.merchantKey || t.description.toUpperCase() === filter.merchantKey),
     );
     return paginateDemo(items, filter.limit, filter.offset);
   },
@@ -331,7 +333,24 @@ export const api = {
   rules: async (): Promise<CategorizationRule[]> => (isTauri() ? invoke("list_rules") : demoRules),
   listMerchantsPage: async (filter: MerchantPageFilter): Promise<MerchantPage> => {
     if (isTauri()) return invoke("list_merchants_page", { filter });
-    return paginateDemo(demoMerchants, filter.limit, filter.offset);
+    const search = filter.search?.trim().toLocaleLowerCase("pt-BR");
+    const filtered = demoMerchants
+      .filter(
+        (merchant) =>
+          !search ||
+          merchant.originalName.toLocaleLowerCase("pt-BR").includes(search) ||
+          merchant.alias?.toLocaleLowerCase("pt-BR").includes(search),
+      )
+      .sort((left, right) => {
+        if (filter.sort === "name")
+          return (left.alias ?? left.originalName).localeCompare(right.alias ?? right.originalName, "pt-BR");
+        if (filter.sort === "amount") return right.amountInCents - left.amountInCents;
+        return (
+          right.transactionCount - left.transactionCount ||
+          (left.alias ?? left.originalName).localeCompare(right.alias ?? right.originalName, "pt-BR")
+        );
+      });
+    return paginateDemo(filtered, filter.limit, filter.offset);
   },
   saveRule: (input: RuleInput): Promise<string> => invoke("save_rule", { input }),
   archiveRule: (id: string): Promise<void> => invoke("archive_rule", { id }),
@@ -567,8 +586,20 @@ export const api = {
         },
       ],
       merchants: [
-        { merchant: "SUPERMERCADOS BH", merchantKey: "SUPERMERCADOS BH", amountInCents: 92300, transactionCount: 4 },
-        { merchant: "MERCADOLIVRE", merchantKey: "MERCADOLIVRE", amountInCents: 79139, transactionCount: 2 },
+        {
+          merchant: "SUPERMERCADOS BH",
+          merchantKey: "SUPERMERCADOS BH",
+          originalName: "SUPERMERCADOS BH",
+          amountInCents: 92300,
+          transactionCount: 4,
+        },
+        {
+          merchant: "MERCADOLIVRE",
+          merchantKey: "MERCADOLIVRE",
+          originalName: "MERCADOLIVRE",
+          amountInCents: 79139,
+          transactionCount: 2,
+        },
       ],
       daily: [
         { date: "2026-06-05", amountInCents: 68000, cumulativeInCents: 68000 },
@@ -617,10 +648,35 @@ export const api = {
   archiveRecurringTransaction: (id: string): Promise<void> => invoke("archive_recurring_transaction", { id }),
   syncRecurringTransactions: (): Promise<number> =>
     isTauri() ? invoke("sync_recurring_transactions") : Promise.resolve(0),
-  merchantAliases: (): Promise<MerchantAlias[]> => (isTauri() ? invoke("list_merchant_aliases") : Promise.resolve([])),
-  saveMerchantAlias: (merchantKey: string, displayName: string): Promise<string> =>
-    invoke("save_merchant_alias", { input: { merchantKey, displayName } }),
-  deleteMerchantAlias: (id: string): Promise<void> => invoke("delete_merchant_alias", { id }),
+  merchantAliases: (): Promise<MerchantAlias[]> =>
+    isTauri()
+      ? invoke("list_merchant_aliases")
+      : Promise.resolve(
+          demoMerchants
+            .filter((merchant) => merchant.alias)
+            .map((merchant) => ({
+              id: `demo-${merchant.merchantKey}`,
+              merchantKey: merchant.merchantKey,
+              displayName: merchant.alias!,
+            })),
+        ),
+  saveMerchantAlias: async (merchantKey: string, displayName: string): Promise<string> => {
+    if (isTauri()) return invoke("save_merchant_alias", { input: { merchantKey, displayName } });
+    const merchant = demoMerchants.find((item) => item.merchantKey === merchantKey);
+    if (merchant) {
+      merchant.alias = displayName;
+      merchant.merchant = displayName;
+    }
+    return `demo-${merchantKey}`;
+  },
+  deleteMerchantAlias: async (id: string): Promise<void> => {
+    if (isTauri()) return invoke("delete_merchant_alias", { id });
+    const merchant = demoMerchants.find((item) => `demo-${item.merchantKey}` === id);
+    if (merchant) {
+      merchant.alias = undefined;
+      merchant.merchant = merchant.originalName;
+    }
+  },
   netWorthHistory: async (months = 12): Promise<NetWorthPoint[]> => {
     if (isTauri()) return invoke("net_worth_history", { months });
     const base = 300000;

@@ -55,6 +55,7 @@ export type TransactionFilter = {
   movementType?: "income" | "expense" | "transfer" | "investment";
   minAbsAmountInCents?: number;
   maxAbsAmountInCents?: number;
+  merchantKey?: string;
 };
 export type Page<T> = { items: T[]; totalCount: number };
 export type TransactionPage = Page<Transaction>;
@@ -317,12 +318,20 @@ export type KindBreakdown = {
   categories: CategoryReport[];
 };
 export type MerchantReport = {
+  /** Nome exibido; mantido para os rankings de relatórios. */
   merchant: string;
-  merchantKey?: string;
+  merchantKey: string;
+  originalName: string;
+  alias?: string;
   amountInCents: number;
   transactionCount: number;
 };
-export type MerchantPageFilter = ReportFilter & { limit?: number; offset?: number };
+export type MerchantPageFilter = {
+  search?: string;
+  sort?: "transaction_count" | "name" | "amount";
+  limit?: number;
+  offset?: number;
+};
 export type MerchantPage = Page<MerchantReport>;
 export type MerchantAlias = { id: string; merchantKey: string; displayName: string };
 export type DailyReportPoint = { date: string; amountInCents: number; cumulativeInCents: number };

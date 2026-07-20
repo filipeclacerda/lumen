@@ -153,6 +153,7 @@ pub struct TransactionFilter {
     source: Option<String>,
     account_id: Option<String>,
     category_id: Option<String>,
+    merchant_key: Option<String>,
     uncategorized: Option<bool>,
     search: Option<String>,
     status: Option<String>,
@@ -924,6 +925,7 @@ const TRANSACTION_FILTER_WHERE: &str = "
     )
     AND (?13 IS NULL OR ABS(t.amount_cents) >= ?13)
     AND (?14 IS NULL OR ABS(t.amount_cents) <= ?14)
+    AND (?15 IS NULL OR t.merchant_key = ?15)
 ";
 
 fn bind_transaction_filter<'q>(
@@ -951,7 +953,8 @@ fn bind_transaction_filter<'q>(
         .bind(&filter.status)
         .bind(&filter.movement_type)
         .bind(filter.min_abs_amount_in_cents)
-        .bind(filter.max_abs_amount_in_cents);
+        .bind(filter.max_abs_amount_in_cents)
+        .bind(&filter.merchant_key);
     query
 }
 
@@ -987,7 +990,7 @@ async fn query_transactions_page(
          LEFT JOIN categories c ON c.id=t.category_id
          WHERE {TRANSACTION_FILTER_WHERE}
          ORDER BY t.date DESC, t.id DESC
-         LIMIT ?15 OFFSET ?16"
+         LIMIT ?16 OFFSET ?17"
     );
     let items_query = bind_transaction_filter(sqlx::query(&items_sql), filter, &search_like)
         .bind(limit)
@@ -2997,6 +3000,21 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(ranged.total_count, 5);
+
+        // Merchant key is an exact, server-side filter (not a text search).
+        let exact_key = merchant_key(&normalize_description("Outra loja"));
+        let merchant_page = query_transactions_page(
+            &db,
+            &TransactionFilter {
+                merchant_key: Some(exact_key),
+                limit: Some(50),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(merchant_page.total_count, 1);
+        assert_eq!(merchant_page.items[0].description, "Outra loja");
     }
 
     #[tokio::test]

@@ -581,22 +581,38 @@ function CategoriesTab({ report, filter }: { report: FinancialReport; filter: Re
         ))}
       </div>
       <div className="category-breakdown">
-        <CategoryDonut
-          categories={categories}
-          selectedCategoryKey={selectedCategoryKey}
-          onSelect={setSelectedCategoryKey}
-        />
-        <CategoryBarsChart
-          categories={categories}
-          selectedCategoryKey={selectedCategoryKey}
-          onSelect={setSelectedCategoryKey}
-          getCategoryKey={categoryKey}
-          valueLabel={categoryValueLabels[kind]}
-        />
+        <section className="category-breakdown-card category-distribution-card">
+          <div className="category-breakdown-heading">
+            <div>
+              <h3>Distribuição</h3>
+              <small>Selecione uma categoria para ver sua tendência</small>
+            </div>
+          </div>
+          <CategoryDonut
+            categories={categories}
+            totalInCents={total}
+            kindLabel={categoryKindLabels[kind]}
+            selectedCategoryKey={selectedCategoryKey}
+            onSelect={setSelectedCategoryKey}
+          />
+        </section>
+        <section className="category-breakdown-card category-comparison-card">
+          <div className="category-breakdown-heading">
+            <div>
+              <h3>Comparação por categoria</h3>
+              <small>Valores ordenados do maior para o menor</small>
+            </div>
+            <strong>{money(total)}</strong>
+          </div>
+          <CategoryBarsChart
+            categories={categories}
+            selectedCategoryKey={selectedCategoryKey}
+            onSelect={setSelectedCategoryKey}
+            getCategoryKey={categoryKey}
+            valueLabel={categoryValueLabels[kind]}
+          />
+        </section>
       </div>
-      <p className="muted category-total">
-        Total em {categoryKindLabels[kind].toLowerCase()}: <b>{money(total)}</b>
-      </p>
       {selectedCategoryKey && (
         <CategoryTrendPanel
           categoryKey={selectedCategoryKey}

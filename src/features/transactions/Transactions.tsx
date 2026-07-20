@@ -1,7 +1,7 @@
 import { PageHeader } from "../../shared/ui/PageHeader";
 import { Modal } from "../../shared/ui/Modal";
 import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/AsyncState";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -47,6 +47,7 @@ const FILTER_KEYS = [
   "movementType",
   "minAmount",
   "maxAmount",
+  "merchantKey",
 ] as const;
 
 type QuickFilter = "all" | "month" | "uncategorized" | "expense" | "income" | "pending";
@@ -113,6 +114,7 @@ export function Transactions() {
   const minAmountFilter = centsParam(searchParams.get("minAmount"));
   const maxAmountFilter = centsParam(searchParams.get("maxAmount"));
   const qParam = searchParams.get("q") ?? "";
+  const merchantKeyFilter = searchParams.get("merchantKey") ?? "";
   const [search, setSearch] = useState(qParam);
   const [debouncedSearch, setDebouncedSearch] = useState(qParam);
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -169,6 +171,7 @@ export function Transactions() {
     accountFilter,
     minAmountFilter,
     maxAmountFilter,
+    merchantKeyFilter,
   ]);
 
   const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: () => api.categories() });
@@ -201,12 +204,14 @@ export function Transactions() {
     movementType: movementFilter || undefined,
     minAbsAmountInCents: minAmountFilter,
     maxAbsAmountInCents: maxAmountFilter,
+    merchantKey: merchantKeyFilter || undefined,
     limit: pageSize,
     offset: page * pageSize,
   };
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["transactions", filter],
     queryFn: () => api.listTransactions(filter),
+    placeholderData: keepPreviousData,
   });
   const items = data?.items ?? [];
   const totalCount = data?.totalCount ?? 0;
@@ -230,7 +235,8 @@ export function Transactions() {
     statusFilter ||
     movementFilter ||
     minAmountFilter ||
-    maxAmountFilter,
+    maxAmountFilter ||
+    merchantKeyFilter,
   );
   const quickActive: QuickFilter | "" = !hasActiveFilters
     ? "all"
@@ -246,6 +252,7 @@ export function Transactions() {
         !accountFilter &&
         !minAmountFilter &&
         !maxAmountFilter &&
+        !merchantKeyFilter &&
         !search
       ? "month"
       : uncategorizedFilter && !statusFilter && !movementFilter
@@ -279,6 +286,7 @@ export function Transactions() {
     movementFilter && { key: "movementType", label: movementLabels[movementFilter] },
     minAmountFilter && { key: "minAmount", label: `Mín. ${money(minAmountFilter)}` },
     maxAmountFilter && { key: "maxAmount", label: `Máx. ${money(maxAmountFilter)}` },
+    merchantKeyFilter && { key: "merchantKey", label: `Estabelecimento: ${merchantKeyFilter}` },
   ].filter(Boolean) as { key: string; label: string }[];
 
   function updateParams(mutator: (next: URLSearchParams) => void) {
@@ -364,6 +372,7 @@ export function Transactions() {
     movementType: filter.movementType,
     minAbsAmountInCents: filter.minAbsAmountInCents,
     maxAbsAmountInCents: filter.maxAbsAmountInCents,
+    merchantKey: filter.merchantKey,
   };
   async function exportFile(kind: "csv" | "ofx" | "pdf") {
     if (!("__TAURI_INTERNALS__" in window)) {
