@@ -1,6 +1,8 @@
 import { PageHeader } from "../../shared/ui/PageHeader";
 import { Modal } from "../../shared/ui/Modal";
 import { useState } from "react";
+import { useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Wallet } from "lucide-react";
 import { api } from "../../shared/api";
@@ -21,10 +23,24 @@ const statusLabel: Record<BudgetCategory["status"], string> = {
 };
 
 export function BudgetPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [month, setMonth] = useState(currentMonth);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<BudgetCategory>();
   const client = useQueryClient();
+
+  useEffect(() => {
+    if (searchParams.get("action") !== "add") return;
+    setAdding(true);
+    setSearchParams(
+      (params) => {
+        const next = new URLSearchParams(params);
+        next.delete("action");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [searchParams, setSearchParams]);
 
   const {
     data: categories = [],

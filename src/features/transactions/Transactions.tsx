@@ -32,7 +32,7 @@ import { Pagination, type PaginationSize } from "../../shared/ui/Pagination";
 import { Select } from "../../shared/ui/Select";
 import { useToast } from "../../shared/ui/toast";
 import type { Account, ReportSource, Transaction, TransactionFilter } from "../../shared/types";
-import { TransactionForm } from "./TransactionForm";
+import { TransactionForm, type TransactionEntryType } from "./TransactionForm";
 
 const FILTER_KEYS = [
   "category",
@@ -123,6 +123,7 @@ export function Transactions() {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<PaginationSize>(25);
   const [showNew, setShowNew] = useState(false);
+  const [newTransactionType, setNewTransactionType] = useState<TransactionEntryType>("expense");
   const [editing, setEditing] = useState<Transaction>();
   const [learning, setLearning] = useState<{ transaction: Transaction; categoryId: string; pattern: string }>();
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -133,6 +134,26 @@ export function Transactions() {
   >();
   const [notice, setNotice] = useState("");
   const client = useQueryClient();
+
+  useEffect(() => {
+    if (searchParams.get("action") !== "new") return;
+    const requestedType = searchParams.get("type");
+    setNewTransactionType(
+      requestedType === "income" || requestedType === "transfer" || requestedType === "expense"
+        ? requestedType
+        : "expense",
+    );
+    setShowNew(true);
+    setSearchParams(
+      (params) => {
+        const next = new URLSearchParams(params);
+        next.delete("action");
+        next.delete("type");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     const timeout = setTimeout(() => setDebouncedSearch(search), 300);
@@ -530,12 +551,17 @@ export function Transactions() {
               <Download size={14} /> PDF
             </button>
           </div>
-          <button onClick={() => setShowNew(true)}>
+          <button
+            onClick={() => {
+              setNewTransactionType("expense");
+              setShowNew(true);
+            }}
+          >
             <Plus size={17} /> Nova transação
           </button>
         </div>
       </PageHeader>
-      {showNew && <TransactionForm onClose={() => setShowNew(false)} />}
+      {showNew && <TransactionForm initialType={newTransactionType} onClose={() => setShowNew(false)} />}
       {editing && <TransactionForm existing={editing} onClose={() => setEditing(undefined)} />}
       {notice && (
         <div className="notice notice-action">

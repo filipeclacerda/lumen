@@ -2,7 +2,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CreditCardInvoicePage, TransactionPage } from "../shared/types";
 import { AccountsCards } from "./accounts/AccountsCards";
@@ -27,11 +27,19 @@ vi.mock("../shared/api", () => ({
 vi.mock("../shared/ui/toast", () => ({ useToast: () => mocks.toast }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn() }));
 
-function renderScreen(component: React.ReactNode) {
+function LocationProbe() {
+  const location = useLocation();
+  return <output aria-label="Localização atual">{`${location.pathname}${location.search}`}</output>;
+}
+
+function renderScreen(component: React.ReactNode, initialEntry = "/") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <MemoryRouter>
-      <QueryClientProvider client={client}>{component}</QueryClientProvider>
+    <MemoryRouter initialEntries={[initialEntry]}>
+      <QueryClientProvider client={client}>
+        {component}
+        <LocationProbe />
+      </QueryClientProvider>
     </MemoryRouter>,
   );
 }
@@ -41,9 +49,26 @@ describe("paginated screens", () => {
     vi.clearAllMocks();
     mocks.accounts.mockResolvedValue([]);
     mocks.categories.mockResolvedValue([]);
+    mocks.creditCardInvoicesPage.mockResolvedValue({ items: [], totalCount: 0 });
+    mocks.listTransactions.mockResolvedValue({ items: [], totalCount: 0 });
   });
 
   afterEach(cleanup);
+
+  it("consumes the new-income intent and opens the matching transaction form", async () => {
+    renderScreen(<Transactions />, "/transactions?action=new&type=income");
+
+    const dialog = await screen.findByRole("dialog", { name: "Nova transação" });
+    expect(dialog.querySelector("button.active")?.textContent).toBe("Receita");
+    await waitFor(() => expect(screen.getByLabelText("Localização atual").textContent).toBe("/transactions"));
+  });
+
+  it("consumes the new-account intent before opening the account dialog", async () => {
+    renderScreen(<AccountsCards />, "/accounts?action=new");
+
+    expect(await screen.findByRole("dialog", { name: "Nova conta" })).toBeTruthy();
+    await waitFor(() => expect(screen.getByLabelText("Localização atual").textContent).toBe("/accounts"));
+  });
 
   it("keeps the transaction page and rows visible while the next page loads", async () => {
     let resolveSecondPage!: (page: TransactionPage) => void;

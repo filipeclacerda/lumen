@@ -10,10 +10,10 @@ import { todayIso } from "../../shared/format";
 import type { Transaction } from "../../shared/types";
 import { Select } from "../../shared/ui/Select";
 
-type Props = { onClose: () => void; existing?: Transaction };
-type EntryType = "expense" | "income" | "transfer";
+export type TransactionEntryType = "expense" | "income" | "transfer";
+type Props = { onClose: () => void; existing?: Transaction; initialType?: TransactionEntryType };
 
-export function TransactionForm({ onClose, existing }: Props) {
+export function TransactionForm({ onClose, existing, initialType = "expense" }: Props) {
   const client = useQueryClient();
   const toast = useToast();
   const { data: accounts = [] } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
@@ -22,7 +22,9 @@ export function TransactionForm({ onClose, existing }: Props) {
   const isTransferLeg = Boolean(existing?.isTransferLeg);
   const [accountId, setAccountId] = useState(existing?.accountId ?? "");
   const [toAccountId, setToAccountId] = useState("");
-  const [type, setType] = useState<EntryType>(existing && existing.amountInCents > 0 ? "income" : "expense");
+  const [type, setType] = useState<TransactionEntryType>(
+    existing ? (existing.amountInCents > 0 ? "income" : "expense") : initialType,
+  );
   const [cents, setCents] = useState<number | null>(existing ? Math.abs(existing.amountInCents) : null);
   const [date, setDate] = useState(existing?.date ?? todayIso());
   const [description, setDescription] = useState(existing?.description ?? "");

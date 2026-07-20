@@ -14,6 +14,7 @@ import {
   Unlink,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../../shared/api";
 import { money, shortDate } from "../../shared/format";
 import { Modal } from "../../shared/ui/Modal";
@@ -24,6 +25,7 @@ import { Select } from "../../shared/ui/Select";
 import type { Account, AccountType, CreditCardInvoice, PaymentMatchCandidate } from "../../shared/types";
 
 export function AccountsCards() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const client = useQueryClient();
   const toast = useToast();
   const [accountModal, setAccountModal] = useState<{ mode: "new" | "edit"; account?: Account }>();
@@ -40,6 +42,7 @@ export function AccountsCards() {
   const [notice, setNotice] = useState("");
   const [invoicePage, setInvoicePage] = useState(0);
   const [invoicePageSize, setInvoicePageSize] = useState<PaginationSize>(10);
+  const accountQuery = searchParams.get("q") ?? "";
   const {
     data: accounts = [],
     isLoading: accountsLoading,
@@ -57,6 +60,26 @@ export function AccountsCards() {
     placeholderData: keepPreviousData,
   });
   const invoices = invoicePageData?.items ?? [];
+  useEffect(() => {
+    if (searchParams.get("action") !== "new") return;
+    setAccountModal({ mode: "new" });
+    setSearchParams(
+      (params) => {
+        const next = new URLSearchParams(params);
+        next.delete("action");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (!accountQuery || accounts.length === 0) return;
+    const match = accounts.find(
+      (account) => account.name.toLocaleLowerCase("pt-BR") === accountQuery.toLocaleLowerCase("pt-BR"),
+    );
+    document.getElementById(match ? `account-${match.id}` : "")?.scrollIntoView?.({ block: "center" });
+  }, [accountQuery, accounts]);
   useEffect(() => {
     if (!invoicePageData) return;
     setInvoicePage((page) => Math.min(page, Math.max(0, Math.ceil(invoicePageData.totalCount / invoicePageSize) - 1)));
@@ -177,7 +200,11 @@ export function AccountsCards() {
       {!accountsLoading && !accountsError && accounts.length > 0 && (
         <div className="account-grid">
           {accounts.map((account) => (
-            <article className="account-card" key={account.id}>
+            <article
+              id={`account-${account.id}`}
+              className={`account-card${accountQuery && account.name.toLocaleLowerCase("pt-BR") === accountQuery.toLocaleLowerCase("pt-BR") ? " command-target" : ""}`}
+              key={account.id}
+            >
               <div className={`metric-icon ${account.kind === "credit_card" ? "red" : "green"}`}>
                 {account.kind === "credit_card" ? <CreditCard /> : <Landmark />}
               </div>

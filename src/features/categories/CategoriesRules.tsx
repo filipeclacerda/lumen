@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState, useEffect } from "react";
 import type { ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../../shared/api";
 import type {
   Category,
@@ -33,7 +33,7 @@ import type {
   RuleInput,
   RuleOperator,
 } from "../../shared/types";
-import { shortDate, money } from "../../shared/format";
+import { shortDate, money, normalizeText } from "../../shared/format";
 import { CategoryIcon, CategorySelect } from "../../shared/ui/CategorySelect";
 import { MoneyInput } from "../../shared/ui/MoneyInput";
 import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/AsyncState";
@@ -54,6 +54,7 @@ const emptyRule: RuleInput = {
 };
 
 export function CategoriesRules() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const client = useQueryClient();
   const {
     data: categories = [],
@@ -68,7 +69,11 @@ export function CategoriesRules() {
     refetch: refetchRules,
   } = useQuery({ queryKey: ["rules"], queryFn: api.rules });
   const { data: accounts = [] } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
-  const [tab, setTab] = useState<"rules" | "categories" | "merchants">("rules");
+  const requestedTab = searchParams.get("tab");
+  const [tab, setTab] = useState<"rules" | "categories" | "merchants">(
+    requestedTab === "categories" || requestedTab === "merchants" ? requestedTab : "rules",
+  );
+  const searchQuery = normalizeText(searchParams.get("q") ?? "");
   const [categoryKindFilter, setCategoryKindFilter] = useState<"all" | CategoryKind>("all");
   const [rulesPage, setRulesPage] = useState(0);
   const [rulesPageSize, setRulesPageSize] = useState<PaginationSize>(10);
@@ -94,11 +99,23 @@ export function CategoriesRules() {
     }),
     [categories],
   );
-  const visibleRules = rules.slice(rulesPage * rulesPageSize, (rulesPage + 1) * rulesPageSize);
+  const matchingRules = searchQuery
+    ? rules.filter((item) =>
+        normalizeText(`${item.name} ${item.pattern} ${item.categoryName ?? ""}`).includes(searchQuery),
+      )
+    : rules;
+  const matchingCategories = searchQuery
+    ? categories.filter((item) => normalizeText(item.name).includes(searchQuery))
+    : categories;
+  const visibleRules = matchingRules.slice(rulesPage * rulesPageSize, (rulesPage + 1) * rulesPageSize);
 
   useEffect(() => {
-    setRulesPage((page) => Math.min(page, Math.max(0, Math.ceil(rules.length / rulesPageSize) - 1)));
-  }, [rules.length, rulesPageSize]);
+    if (requestedTab === "rules" || requestedTab === "categories" || requestedTab === "merchants") setTab(requestedTab);
+  }, [requestedTab]);
+
+  useEffect(() => {
+    setRulesPage((page) => Math.min(page, Math.max(0, Math.ceil(matchingRules.length / rulesPageSize) - 1)));
+  }, [matchingRules.length, rulesPageSize]);
 
   // Herdar kind/color do pai quando parentId muda
   useEffect(() => {
@@ -260,7 +277,19 @@ export function CategoriesRules() {
       )}
       <Tabs
         value={tab}
-        onChange={(value) => setTab(value as typeof tab)}
+        onChange={(value) => {
+          const nextTab = value as typeof tab;
+          setTab(nextTab);
+          setSearchParams(
+            (params) => {
+              const next = new URLSearchParams(params);
+              next.set("tab", nextTab);
+              next.delete("q");
+              return next;
+            },
+            { replace: true },
+          );
+        }}
         hidePanel
         tabs={[
           { id: "rules", label: `Regras (${rules.length})` },
@@ -268,6 +297,31 @@ export function CategoriesRules() {
           { id: "merchants", label: "Estabelecimentos" },
         ]}
       />
+      {searchQuery && (
+        <div className="command-search-context">
+          <Search size={15} aria-hidden="true" />
+          <span>
+            Exibindo {tab === "categories" ? matchingCategories.length : matchingRules.length} resultado(s) para “
+            {searchParams.get("q")}”
+          </span>
+          <button
+            type="button"
+            className="text-button"
+            onClick={() =>
+              setSearchParams(
+                (params) => {
+                  const next = new URLSearchParams(params);
+                  next.delete("q");
+                  return next;
+                },
+                { replace: true },
+              )
+            }
+          >
+            Limpar
+          </button>
+        </div>
+      )}
       {message && <p className="notice">{message}</p>}
 
       {tab === "rules" && (
@@ -427,8 +481,8 @@ export function CategoriesRules() {
               <span>A primeira correspondência vence</span>
             </div>
             <div className="rule-list">
-              {visibleRules.map((r, pageIndex) => {
-                const index = rulesPage * rulesPageSize + pageIndex;
+              {visibleRules.map((r) => {
+                const index = rules.findIndex((item) => item.id === r.id);
                 return (
                   <div className={`rule-item rule-priority-item ${!r.enabled ? "disabled" : ""}`} key={r.id}>
                     <span
@@ -456,7 +510,7 @@ export function CategoriesRules() {
                       className="icon-button rule-order-button"
                       title="Subir"
                       aria-label={`Subir ${r.name}`}
-                      disabled={index === 0}
+                      disabled={Boolean(searchQuery) || index === 0}
                       onClick={() => moveRule(index, -1)}
                     >
                       <ArrowUp size={14} />
@@ -465,7 +519,7 @@ export function CategoriesRules() {
                       className="icon-button rule-order-button"
                       title="Descer"
                       aria-label={`Descer ${r.name}`}
-                      disabled={index === rules.length - 1}
+                      disabled={Boolean(searchQuery) || index === rules.length - 1}
                       onClick={() => moveRule(index, 1)}
                     >
                       <ArrowDown size={14} />
@@ -485,7 +539,7 @@ export function CategoriesRules() {
             <Pagination
               page={rulesPage}
               pageSize={rulesPageSize}
-              totalCount={rules.length}
+              totalCount={matchingRules.length}
               onPageChange={setRulesPage}
               onPageSizeChange={(size) => {
                 setRulesPageSize(size);
@@ -642,7 +696,10 @@ export function CategoriesRules() {
                     ["transfer", "Transferências"],
                   ] as const
                 ).map(([value, label]) => {
-                  const count = value === "all" ? categories.length : categories.filter((c) => c.kind === value).length;
+                  const count =
+                    value === "all"
+                      ? matchingCategories.length
+                      : matchingCategories.filter((c) => c.kind === value).length;
                   return (
                     <button
                       key={value}
@@ -667,7 +724,7 @@ export function CategoriesRules() {
                 };
                 const visibleKinds = categoryKindFilter === "all" ? kinds : [categoryKindFilter];
                 const groups = visibleKinds.map((kind) => {
-                  const items = categories
+                  const items = matchingCategories
                     .filter((c) => c.kind === kind)
                     .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
                   if (items.length === 0) return null;

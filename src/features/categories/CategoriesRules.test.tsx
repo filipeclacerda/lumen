@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CategoriesRules } from "./CategoriesRules";
+import { api } from "../../shared/api";
 
 const mocks = vi.hoisted(() => ({
   listMerchantsPage: vi.fn(),
@@ -27,10 +28,10 @@ vi.mock("../../shared/api", () => ({
 }));
 vi.mock("../../shared/ui/toast", () => ({ useToast: () => mocks.toast }));
 
-function renderPage() {
+function renderPage(initialEntry = "/categories") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <QueryClientProvider client={client}>
         <CategoriesRules />
       </QueryClientProvider>
@@ -62,6 +63,30 @@ describe("CategoriesRules merchants", () => {
   });
 
   afterEach(cleanup);
+
+  it("opens and filters the category tab from a command-palette destination", async () => {
+    vi.mocked(api.categories).mockResolvedValueOnce([
+      {
+        id: "category-1",
+        name: "Mercado",
+        kind: "expense",
+        sortOrder: 0,
+        isSystem: false,
+      },
+      {
+        id: "category-2",
+        name: "Moradia",
+        kind: "expense",
+        sortOrder: 10,
+        isSystem: false,
+      },
+    ]);
+    renderPage("/categories?tab=categories&q=Mercado");
+
+    expect((await screen.findByRole("tab", { name: "Categorias (2)" })).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByText(/Exibindo 1 resultado\(s\) para/)).toBeTruthy();
+    expect(document.querySelectorAll(".category-tree-node")).toHaveLength(1);
+  });
 
   async function openMerchants() {
     renderPage();

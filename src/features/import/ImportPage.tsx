@@ -1,5 +1,6 @@
 import { PageHeader } from "../../shared/ui/PageHeader";
 import { type DragEvent, useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -75,6 +76,7 @@ const cardRoles: { value: CsvColumnRole; label: string }[] = [
 ];
 
 export function ImportPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const client = useQueryClient();
   const [bankPreview, setBankPreview] = useState<ImportPreview>();
   const [cardPreview, setCardPreview] = useState<CreditCardImportPreview>();
@@ -109,6 +111,20 @@ export function ImportPage() {
   const [openUpwards, setOpenUpwards] = useState(false);
   const troubleMenuRef = useRef<HTMLDivElement>(null);
   const troubleMenuTriggerRef = useRef<HTMLButtonElement>(null);
+  const chooseFileRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (searchParams.get("action") !== "choose") return;
+    requestAnimationFrame(() => chooseFileRef.current?.focus());
+    setSearchParams(
+      (params) => {
+        const next = new URLSearchParams(params);
+        next.delete("action");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [searchParams, setSearchParams]);
 
   function closeTroubleMenu(returnFocus = false) {
     setShowTroubleMenu(false);
@@ -598,7 +614,7 @@ export function ImportPage() {
             Arraste um CSV, OFX ou PDF para esta área. O aplicativo reconhece automaticamente extratos e faturas; para
             outros CSVs, você pode mapear as colunas e salvar o layout.
           </p>
-          <button onClick={choose} disabled={isReadingFile}>
+          <button ref={chooseFileRef} onClick={choose} disabled={isReadingFile}>
             {isReadingFile ? "Lendo arquivo..." : "Escolher arquivo"}
           </button>
           <div className="import-trouble-menu">
