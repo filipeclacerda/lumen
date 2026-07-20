@@ -19,6 +19,8 @@ const emptyTransactions: Transaction[] = [];
 const emptyCategories: Category[] = [];
 const emptyRules: CategorizationRule[] = [];
 
+export const OPEN_COMMAND_PALETTE_EVENT = "lumen:open-command-palette";
+
 type Entry =
   | { kind: "route"; to: string; label: string; icon: ComponentType<{ size?: number }> }
   | { kind: "transaction"; transaction: Transaction }
@@ -38,8 +40,13 @@ export function CommandPalette() {
         setOpen((v) => !v);
       }
     };
+    const openPalette = () => setOpen(true);
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener(OPEN_COMMAND_PALETTE_EVENT, openPalette);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener(OPEN_COMMAND_PALETTE_EVENT, openPalette);
+    };
   }, []);
   useEffect(() => {
     if (open) {

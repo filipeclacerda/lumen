@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CommandPalette } from "./CommandPalette";
+import { CommandPalette, OPEN_COMMAND_PALETTE_EVENT } from "./CommandPalette";
 
 vi.mock("../api", () => ({
   api: {
@@ -41,5 +41,20 @@ describe("CommandPalette", () => {
 
     await Promise.resolve();
     expect(screen.getByRole("option", { name: "Transações" }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("opens from the titlebar search event", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <CommandPalette />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    window.dispatchEvent(new Event(OPEN_COMMAND_PALETTE_EVENT));
+
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Buscar ou navegar" })).toBeTruthy());
   });
 });

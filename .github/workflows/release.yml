@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 permissions:
   contents: write
@@ -11,13 +11,28 @@ permissions:
 jobs:
   release:
     strategy:
+      fail-fast: false
       matrix:
-        platform: [windows-latest] # Apenas Windows para começar, já que estamos no Windows
+        include:
+          - platform: windows-latest
+            args: ""
+          - platform: ubuntu-22.04
+            args: "--bundles deb,appimage"
+          - platform: macos-latest
+            args: "--target aarch64-apple-darwin --bundles dmg"
+          - platform: macos-latest
+            args: "--target x86_64-apple-darwin --bundles dmg"
     runs-on: ${{ matrix.platform }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -27,12 +42,14 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ startsWith(matrix.platform, 'macos-') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: './src-tauri -> target'
-          shared-key: 'lumen-build'
+          workspaces: "./src-tauri -> target"
+          shared-key: "lumen-build"
           cache-on-failure: true
 
       - name: Install dependencies
@@ -44,9 +61,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.platform, 'macos-') && '-' || '' }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: 'Lumen v__VERSION__'
-          releaseBody: 'Nova versão disponível para download!'
+          releaseName: "Lumen v__VERSION__"
+          releaseBody: "Nova versão disponível para download!"
           releaseDraft: true
           prerelease: false
+          args: ${{ matrix.args }}

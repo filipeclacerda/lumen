@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Copy, Minus, Square, X } from "lucide-react";
+import { Copy, Minus, Search, Square, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isMacOsRuntime, isTauriRuntime } from "../runtime";
 import { BrandLogo } from "./BrandLogo";
+import { OPEN_COMMAND_PALETTE_EVENT } from "./CommandPalette";
 
 export function WindowFrame({ children }: { children: ReactNode }) {
   if (!isTauriRuntime()) return children;
@@ -55,6 +56,17 @@ function WindowTitleBar({ macOs }: { macOs: boolean }) {
           <span>Lumen</span>
         </div>
       </div>
+      <button
+        type="button"
+        className="window-titlebar__search"
+        aria-label="Abrir busca rápida"
+        aria-keyshortcuts="Control+K Meta+K"
+        onClick={() => window.dispatchEvent(new Event(OPEN_COMMAND_PALETTE_EVENT))}
+      >
+        <Search size={14} aria-hidden="true" />
+        <span>Buscar</span>
+        <kbd>Ctrl K</kbd>
+      </button>
       {!macOs && (
         <div className="window-titlebar__controls">
           <button type="button" aria-label="Minimizar" title="Minimizar" onClick={() => void appWindow.minimize()}>

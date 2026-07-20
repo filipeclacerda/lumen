@@ -62,6 +62,24 @@ describe("WindowFrame", () => {
     expect(windowMocks.close).toHaveBeenCalledOnce();
   });
 
+  it("exposes the global search from the desktop titlebar", () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: {} });
+    const onOpen = vi.fn();
+    window.addEventListener("lumen:open-command-palette", onOpen);
+
+    render(
+      <WindowFrame>
+        <main>Conteúdo</main>
+      </WindowFrame>,
+    );
+
+    const search = screen.getByRole("button", { name: "Abrir busca rápida" });
+    expect(search.getAttribute("aria-keyshortcuts")).toBe("Control+K Meta+K");
+    fireEvent.click(search);
+    expect(onOpen).toHaveBeenCalledOnce();
+    window.removeEventListener("lumen:open-command-palette", onOpen);
+  });
+
   it("preserves the native traffic-light controls on macOS", () => {
     Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: {} });
     vi.spyOn(window.navigator, "userAgent", "get").mockReturnValue("Macintosh");
@@ -73,6 +91,7 @@ describe("WindowFrame", () => {
     );
 
     expect(screen.getByRole("banner")).toBeTruthy();
-    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Minimizar" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Abrir busca rápida" })).toBeTruthy();
   });
 });
