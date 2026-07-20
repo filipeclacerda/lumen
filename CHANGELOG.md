@@ -5,6 +5,51 @@ Todas as mudanças relevantes deste projeto são documentadas neste arquivo.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o
 projeto adota o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.5.0] - 2026-07-19
+
+Versão de recursos e refinamentos de uso diário: planejamento de recebimento,
+organização de estabelecimentos e uma interface desktop mais coesa.
+
+### Adicionado
+
+- **Regra de recebimento no 5º dia útil**: o perfil e o onboarding agora
+  permitem escolher entre um dia fixo, o último dia do mês ou o 5º dia útil.
+  A regra é persistida e validada pelo aplicativo.
+- **Janela desktop integrada**: o modo Tauri passa a oferecer barra de título
+  própria com ações de minimizar, maximizar/restaurar e fechar, preservando os
+  controles nativos no macOS e o fallback sem moldura no navegador.
+- **Gestão de estabelecimentos ampliada**: busca por nome original ou apelido,
+  ordenação, edição/remoção de apelidos e acesso direto aos lançamentos daquele
+  estabelecimento.
+- **Guia de preparação de releases** com validação de versões sincronizadas,
+  changelog, histórico, artefatos e equivalência com o CI.
+
+### Alterado
+
+- **Categorias e seletores** receberam uma apresentação hierárquica mais clara,
+  com resumo, filtros por tipo, prévia durante a edição e busca por categoria.
+- **Relatórios por categoria** destacam o total e a distribuição, com lista
+  navegável e interação por teclado para detalhar tendências.
+- **Interface e navegação** foram refinadas com logo consistente, sidebar mais
+  compacta, estados de carregamento mais informativos, paleta de comandos mais
+  clara e paginação sem troca brusca de conteúdo.
+- Gráficos, tabelas de transações, exportações e layouts responsivos passam a
+  ter melhor foco, contraste, rolagem e uso em telas menores.
+
+### Corrigido
+
+- Exportações em PDF agora preservam texto em português, incluindo acentos e
+  símbolos compatíveis com a codificação WinAnsi.
+- A lista de estabelecimentos ignora lançamentos excluídos e pernas de
+  transferência, aplica a busca antes da paginação e usa ordenação estável.
+
+### Testes e qualidade
+
+- Adicionados testes para regra de recebimento, gerenciamento de
+  estabelecimentos, paginação, estados assíncronos, paleta de comandos e barra
+  de título desktop.
+- Removido do versionamento o artefato gerado `tsconfig.app.tsbuildinfo`.
+
 ## [0.4.2] - 2026-07-10
 
 Pacote de integridade focado em proteger dados financeiros durante backup,
