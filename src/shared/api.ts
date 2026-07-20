@@ -262,6 +262,7 @@ export const api = {
       displayName: input.displayName,
       monthlyIncomeInCents: input.monthlyIncomeInCents,
       incomeDay: input.incomeDay,
+      incomeDayRule: input.incomeDayRule,
       financialGoal: input.financialGoal,
       onboardingCompletedAt: new Date().toISOString(),
     };

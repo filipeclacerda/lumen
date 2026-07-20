@@ -82,6 +82,7 @@ pub struct UserProfile {
     display_name: String,
     monthly_income_in_cents: Option<i64>,
     income_day: Option<i64>,
+    income_day_rule: Option<String>,
     financial_goal: Option<String>,
     onboarding_completed_at: String,
 }
@@ -92,6 +93,7 @@ pub struct ProfileInput {
     display_name: String,
     monthly_income_in_cents: Option<i64>,
     income_day: Option<i64>,
+    income_day_rule: Option<String>,
     financial_goal: Option<String>,
 }
 
@@ -101,6 +103,7 @@ pub struct OnboardingInput {
     display_name: String,
     monthly_income_in_cents: Option<i64>,
     income_day: Option<i64>,
+    income_day_rule: Option<String>,
     financial_goal: Option<String>,
     account_name: String,
     account_kind: String,
@@ -588,6 +591,7 @@ fn validate_profile(
     display_name: &str,
     monthly_income_in_cents: Option<i64>,
     income_day: Option<i64>,
+    income_day_rule: Option<&str>,
     financial_goal: Option<&str>,
 ) -> Result<(), AppError> {
     let name_length = display_name.trim().chars().count();
@@ -606,6 +610,14 @@ fn validate_profile(
             "O dia de recebimento deve estar entre 1 e 31".into(),
         ));
     }
+    if income_day_rule.is_some_and(|rule| rule != "fifth_business_day") {
+        return Err(AppError::Validation("Regra de recebimento inválida".into()));
+    }
+    if income_day.is_some() && income_day_rule.is_some() {
+        return Err(AppError::Validation(
+            "Escolha um dia fixo ou o 5º dia útil do mês".into(),
+        ));
+    }
     if financial_goal.is_some_and(|goal| {
         !["organize", "emergency_fund", "pay_debt", "save", "invest"].contains(&goal)
     }) {
@@ -619,6 +631,7 @@ fn profile_from_row(row: SqliteRow) -> UserProfile {
         display_name: row.get("display_name"),
         monthly_income_in_cents: row.get("monthly_income_cents"),
         income_day: row.get("income_day"),
+        income_day_rule: row.get("income_day_rule"),
         financial_goal: row.get("financial_goal"),
         onboarding_completed_at: row.get("onboarding_completed_at"),
     }
@@ -626,7 +639,7 @@ fn profile_from_row(row: SqliteRow) -> UserProfile {
 
 async fn load_profile(db: &SqlitePool) -> Result<Option<UserProfile>, AppError> {
     Ok(sqlx::query(
-        "SELECT display_name,monthly_income_cents,income_day,financial_goal,onboarding_completed_at
+        "SELECT display_name,monthly_income_cents,income_day,income_day_rule,financial_goal,onboarding_completed_at
          FROM user_profiles WHERE id='primary'",
     )
     .fetch_optional(db)
@@ -677,15 +690,17 @@ pub async fn save_profile(
         &input.display_name,
         input.monthly_income_in_cents,
         input.income_day,
+        input.income_day_rule.as_deref(),
         input.financial_goal.as_deref(),
     )?;
     let result = sqlx::query(
-        "UPDATE user_profiles SET display_name=?,monthly_income_cents=?,income_day=?,
+        "UPDATE user_profiles SET display_name=?,monthly_income_cents=?,income_day=?,income_day_rule=?,
          financial_goal=?,updated_at=datetime('now') WHERE id='primary'",
     )
     .bind(input.display_name.trim())
     .bind(input.monthly_income_in_cents)
     .bind(input.income_day)
+    .bind(input.income_day_rule)
     .bind(input.financial_goal)
     .execute(&state.db)
     .await?;
@@ -715,6 +730,7 @@ async fn complete_onboarding_impl(
         &input.display_name,
         input.monthly_income_in_cents,
         input.income_day,
+        input.income_day_rule.as_deref(),
         input.financial_goal.as_deref(),
     )?;
     let account_name_length = input.account_name.trim().chars().count();
@@ -743,13 +759,14 @@ async fn complete_onboarding_impl(
 
     let mut tx = db.begin().await?;
     sqlx::query(
-        "INSERT INTO user_profiles(id,display_name,monthly_income_cents,income_day,financial_goal,onboarding_completed_at)
-         VALUES('primary',?,?,?,?,datetime('now'))
+        "INSERT INTO user_profiles(id,display_name,monthly_income_cents,income_day,income_day_rule,financial_goal,onboarding_completed_at)
+         VALUES('primary',?,?,?,?,?,datetime('now'))
          ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,
          monthly_income_cents=excluded.monthly_income_cents,income_day=excluded.income_day,
+         income_day_rule=excluded.income_day_rule,
          financial_goal=excluded.financial_goal,onboarding_completed_at=excluded.onboarding_completed_at,
          updated_at=datetime('now')"
-    ).bind(input.display_name.trim()).bind(input.monthly_income_in_cents).bind(input.income_day)
+    ).bind(input.display_name.trim()).bind(input.monthly_income_in_cents).bind(input.income_day).bind(input.income_day_rule)
         .bind(input.financial_goal).execute(&mut *tx).await?;
 
     let account_id = sqlx::query_scalar::<_, String>(
@@ -2556,11 +2573,27 @@ mod tests {
 
     #[test]
     fn profile_validation_rejects_invalid_values() {
-        assert!(validate_profile("A", None, None, None).is_err());
-        assert!(validate_profile("Nome válido", Some(-1), None, None).is_err());
-        assert!(validate_profile("Nome válido", None, Some(32), None).is_err());
-        assert!(validate_profile("Nome válido", None, None, Some("unknown")).is_err());
-        assert!(validate_profile("Nome válido", Some(500_000), Some(5), Some("organize")).is_ok());
+        assert!(validate_profile("A", None, None, None, None).is_err());
+        assert!(validate_profile("Nome válido", Some(-1), None, None, None).is_err());
+        assert!(validate_profile("Nome válido", None, Some(32), None, None).is_err());
+        assert!(validate_profile("Nome válido", None, None, Some("unknown"), None).is_err());
+        assert!(validate_profile("Nome válido", None, None, None, Some("unknown")).is_err());
+        assert!(validate_profile(
+            "Nome válido",
+            None,
+            Some(5),
+            Some("fifth_business_day"),
+            None
+        )
+        .is_err());
+        assert!(validate_profile(
+            "Nome válido",
+            Some(500_000),
+            None,
+            Some("fifth_business_day"),
+            Some("organize")
+        )
+        .is_ok());
     }
 
     #[tokio::test]
@@ -2573,6 +2606,7 @@ mod tests {
             display_name: "Pessoa Teste".into(),
             monthly_income_in_cents: Some(500_000),
             income_day: Some(5),
+            income_day_rule: None,
             financial_goal: Some("organize".into()),
             account_name: "Minha conta".into(),
             account_kind: "checking".into(),
@@ -2599,6 +2633,7 @@ mod tests {
             display_name: "Pessoa Teste".into(),
             monthly_income_in_cents: None,
             income_day: None,
+            income_day_rule: None,
             financial_goal: None,
             account_name: "Minha conta".into(),
             account_kind: "checking".into(),
@@ -2624,6 +2659,7 @@ mod tests {
             display_name: "Pessoa Teste".into(),
             monthly_income_in_cents: None,
             income_day: None,
+            income_day_rule: None,
             financial_goal: None,
             account_name: "Conta".into(),
             account_kind: "checking".into(),
@@ -2663,6 +2699,7 @@ mod tests {
             display_name: "Pessoa Teste".into(),
             monthly_income_in_cents: None,
             income_day: None,
+            income_day_rule: None,
             financial_goal: None,
             account_name: "Corrente".into(),
             account_kind: "checking".into(),
@@ -2778,6 +2815,7 @@ mod tests {
             display_name: "Pessoa Teste".into(),
             monthly_income_in_cents: None,
             income_day: None,
+            income_day_rule: None,
             financial_goal: None,
             account_name: "Corrente".into(),
             account_kind: "checking".into(),
@@ -2902,6 +2940,7 @@ mod tests {
             display_name: "Pessoa Teste".into(),
             monthly_income_in_cents: None,
             income_day: None,
+            income_day_rule: None,
             financial_goal: None,
             account_name: "Conta".into(),
             account_kind: "checking".into(),
@@ -3028,6 +3067,7 @@ mod tests {
             display_name: "Pessoa Teste".into(),
             monthly_income_in_cents: None,
             income_day: None,
+            income_day_rule: None,
             financial_goal: None,
             account_name: "Conta".into(),
             account_kind: "checking".into(),
@@ -3145,6 +3185,7 @@ mod tests {
             display_name: "Pessoa Teste".into(),
             monthly_income_in_cents: None,
             income_day: None,
+            income_day_rule: None,
             financial_goal: None,
             account_name: "Corrente".into(),
             account_kind: "checking".into(),
@@ -3558,6 +3599,7 @@ mod tests {
             display_name: "Pessoa Teste".into(),
             monthly_income_in_cents: None,
             income_day: None,
+            income_day_rule: None,
             financial_goal: None,
             account_name: "Conta".into(),
             account_kind: "checking".into(),

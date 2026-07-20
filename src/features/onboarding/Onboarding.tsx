@@ -8,6 +8,7 @@ import { Select } from "../../shared/ui/Select";
 import type { AccountType, AppBootstrap, Category, CategoryKind, FinancialGoal } from "../../shared/types";
 import { ErrorState, LoadingState } from "../../shared/ui/AsyncState";
 import { BrandLogo } from "../../shared/ui/BrandLogo";
+import { incomeDayOptions, parseIncomeDaySelection } from "../../shared/incomeDay";
 
 const goals: { value: FinancialGoal; label: string }[] = [
   { value: "organize", label: "Organizar minhas finanças" },
@@ -82,7 +83,7 @@ export function Onboarding({
       await api.completeOnboarding({
         displayName: name.trim(),
         monthlyIncomeInCents: incomeInCents ?? undefined,
-        incomeDay: incomeDay ? Number(incomeDay) : undefined,
+        ...parseIncomeDaySelection(incomeDay),
         financialGoal: goal,
         accountName: accountName.trim(),
         accountKind,
@@ -189,15 +190,7 @@ export function Onboarding({
                 Renda líquida mensal <MoneyInput defaultCents={incomeInCents ?? 0} onChange={setIncomeInCents} />
               </label>
               <label>
-                Dia de recebimento{" "}
-                <input
-                  type="number"
-                  min="1"
-                  max="31"
-                  value={incomeDay}
-                  onChange={(e) => setIncomeDay(e.target.value)}
-                  placeholder="Ex.: 5"
-                />
+                Dia de recebimento <Select value={incomeDay} onChange={setIncomeDay} options={incomeDayOptions} />
               </label>
             </div>
             <label>

@@ -1,10 +1,12 @@
 export type AccountType = "checking" | "savings" | "cash" | "credit_card";
 export type Account = { id: string; name: string; kind: AccountType; balanceInCents: number };
 export type FinancialGoal = "organize" | "emergency_fund" | "pay_debt" | "save" | "invest";
+export type IncomeDayRule = "fifth_business_day";
 export type UserProfile = {
   displayName: string;
   monthlyIncomeInCents?: number;
   incomeDay?: number;
+  incomeDayRule?: IncomeDayRule;
   financialGoal?: FinancialGoal;
   onboardingCompletedAt: string;
 };
@@ -12,6 +14,7 @@ export type OnboardingInput = {
   displayName: string;
   monthlyIncomeInCents?: number;
   incomeDay?: number;
+  incomeDayRule?: IncomeDayRule;
   financialGoal?: FinancialGoal;
   accountName: string;
   accountKind: Exclude<AccountType, "credit_card">;

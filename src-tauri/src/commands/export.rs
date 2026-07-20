@@ -134,10 +134,49 @@ fn build_ofx(rows: &[ExportRow]) -> String {
     out
 }
 
+fn win_ansi_byte(character: char) -> u8 {
+    match character {
+        '\u{0000}'..='\u{007f}' | '\u{00a0}'..='\u{00ff}' => character as u8,
+        '\u{20ac}' => 0x80,
+        '\u{201a}' => 0x82,
+        '\u{0192}' => 0x83,
+        '\u{201e}' => 0x84,
+        '\u{2026}' => 0x85,
+        '\u{2020}' => 0x86,
+        '\u{2021}' => 0x87,
+        '\u{02c6}' => 0x88,
+        '\u{2030}' => 0x89,
+        '\u{0160}' => 0x8a,
+        '\u{2039}' => 0x8b,
+        '\u{0152}' => 0x8c,
+        '\u{017d}' => 0x8e,
+        '\u{2018}' => 0x91,
+        '\u{2019}' => 0x92,
+        '\u{201c}' => 0x93,
+        '\u{201d}' => 0x94,
+        '\u{2022}' => 0x95,
+        '\u{2013}' => 0x96,
+        '\u{2014}' => 0x97,
+        '\u{02dc}' => 0x98,
+        '\u{2122}' => 0x99,
+        '\u{0161}' => 0x9a,
+        '\u{203a}' => 0x9b,
+        '\u{0153}' => 0x9c,
+        '\u{017e}' => 0x9e,
+        '\u{0178}' => 0x9f,
+        _ => b'?',
+    }
+}
+
 fn pdf_hex_text(value: &str) -> String {
-    let mut out = String::from("<FEFF");
-    for unit in value.encode_utf16() {
-        out.push_str(&format!("{:04X}", unit));
+    let mut out = String::from("<");
+    for character in value.chars() {
+        let byte = if character.is_control() {
+            b' '
+        } else {
+            win_ansi_byte(character)
+        };
+        out.push_str(&format!("{byte:02X}"));
     }
     out.push('>');
     out
@@ -203,7 +242,10 @@ fn build_pdf(title: &str, lines: &[String]) -> Vec<u8> {
             content
         ));
     }
-    objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string());
+    objects.push(
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+            .to_string(),
+    );
 
     let mut pdf = b"%PDF-1.4\n".to_vec();
     let mut offsets = Vec::new();
@@ -484,6 +526,22 @@ mod tests {
         // 2 data rows terminated by \r\n, plus the header line.
         assert_eq!(content.matches("\r\n").count(), 3);
         assert!(content.contains("-45,90"));
+    }
+
+    #[test]
+    fn generated_pdf_preserves_portuguese_text() {
+        let pdf = build_pdf(
+            "Relatório financeiro",
+            &[
+                "Período: 2026-06 a 2026-07".into(),
+                "Transações | Alimentação | Cartão de crédito | R$ 1.234,56".into(),
+            ],
+        );
+        let text = pdf_extract::extract_text_from_mem(&pdf).unwrap();
+
+        assert!(text.contains("Relatório financeiro"));
+        assert!(text.contains("Período: 2026-06 a 2026-07"));
+        assert!(text.contains("Transações | Alimentação | Cartão de crédito | R$ 1.234,56"));
     }
 
     #[tokio::test]

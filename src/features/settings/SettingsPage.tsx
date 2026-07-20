@@ -28,6 +28,7 @@ import { Select } from "../../shared/ui/Select";
 import { useToast } from "../../shared/ui/toast";
 import type { FinancialGoal } from "../../shared/types";
 import { ErrorState, LoadingState } from "../../shared/ui/AsyncState";
+import { incomeDayOptions, incomeDaySelection, parseIncomeDaySelection } from "../../shared/incomeDay";
 
 const RESET_CONFIRM_WORD = "APAGAR";
 const RESTORE_CONFIRM_WORD = "RESTAURAR";
@@ -70,7 +71,7 @@ export function SettingsPage() {
       setName(profile.displayName);
       setIncomeInCents(profile.monthlyIncomeInCents ?? null);
       setIncomeInputVersion((version) => version + 1);
-      setDay(profile.incomeDay ? String(profile.incomeDay) : "");
+      setDay(incomeDaySelection(profile.incomeDay, profile.incomeDayRule));
       setGoal(profile.financialGoal);
     }
   }, [profile]);
@@ -80,7 +81,7 @@ export function SettingsPage() {
       await api.saveProfile({
         displayName: name.trim(),
         monthlyIncomeInCents: incomeInCents ?? undefined,
-        incomeDay: day ? Number(day) : undefined,
+        ...parseIncomeDaySelection(day),
         financialGoal: goal,
       });
       await Promise.all([
@@ -238,7 +239,7 @@ export function SettingsPage() {
             </label>
             <label>
               Dia de recebimento
-              <input type="number" min="1" max="31" value={day} onChange={(e) => setDay(e.target.value)} />
+              <Select value={day} onChange={setDay} options={incomeDayOptions} />
             </label>
           </div>
           <label>

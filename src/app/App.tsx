@@ -174,7 +174,6 @@ export function App() {
               end={to === "/"}
               title={label}
               onClick={() => {
-                setCollapsed(false);
                 setDrawerOpen(false);
               }}
             >

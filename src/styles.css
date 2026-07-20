@@ -832,15 +832,15 @@ input:focus-visible,select:focus-visible,textarea:focus-visible{outline:none;bor
 .onboarding-category-badges{display:flex;flex-wrap:wrap;gap:6px}
 
 /* Orçamento por categoria */
-.budget-page{max-width:900px}
-.budget-month-row{margin-bottom:18px}
+.budget-page{width:100%;max-width:1120px;margin-inline:auto}
+.budget-month-row{display:flex;align-items:center;margin-bottom:var(--space-5)}
 .budget-negative{color:var(--danger)!important}
-.budget-totals{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px}
-.budget-totals article{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:19px;box-shadow:var(--shadow-sm)}
-.budget-totals span{display:block;color:var(--text-muted);font-size:12px;margin-bottom:7px}
+.budget-totals{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--space-4);margin-bottom:var(--space-5)}
+.budget-totals article{min-width:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:var(--space-5);box-shadow:var(--shadow-sm)}
+.budget-totals span{display:block;color:var(--text-muted);font-size:var(--text-xs);margin-bottom:var(--space-2)}
 .budget-totals strong{font-size:23px}
-.budget-list{display:flex;flex-direction:column;gap:16px}
-.budget-row{border:1px solid var(--border);border-radius:12px;padding:16px}
+.budget-list{display:flex;flex-direction:column;gap:var(--space-4)}
+.budget-row{border:1px solid var(--border);border-radius:var(--radius-md);padding:var(--space-5)}
 .budget-row-heading{display:flex;align-items:center;gap:14px;margin-bottom:11px}
 .budget-row-heading>div:not(.budget-row-actions){flex:1;min-width:0}
 .budget-row-heading b{display:block}
@@ -869,7 +869,7 @@ input:focus-visible,select:focus-visible,textarea:focus-visible{outline:none;bor
 .dashboard-budget-bar i{display:block;height:100%;border-radius:999px;background:var(--brand);transition:width var(--motion-duration-slow) var(--motion-ease)}
 .dashboard-budget-item.warning .dashboard-budget-bar i{background:var(--warning-bar)}
 .dashboard-budget-item.over .dashboard-budget-bar i{background:var(--danger)}
-@media(max-width:650px){.budget-totals{grid-template-columns:1fr}.budget-row-heading{flex-wrap:wrap}.budget-row-actions{margin-left:auto}}
+@media(max-width:650px){.budget-page{margin-inline:0}.budget-month-row .month-nav{width:100%}.budget-totals{grid-template-columns:1fr;gap:var(--space-3)}.budget-row{padding:var(--space-4)}.budget-row-heading{flex-wrap:wrap}.budget-row-actions{margin-left:auto}}
 
 /* Paleta de comandos (Ctrl+K) */
 .command-palette{padding:0;width:min(600px,calc(100vw - 30px));overflow:hidden;display:flex;flex-direction:column;max-height:min(520px,80vh)}

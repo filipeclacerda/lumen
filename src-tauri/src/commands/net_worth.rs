@@ -126,6 +126,7 @@ mod tests {
             display_name: "Pessoa Teste".into(),
             monthly_income_in_cents: None,
             income_day: None,
+            income_day_rule: None,
             financial_goal: None,
             account_name: "Conta".into(),
             account_kind: "checking".into(),

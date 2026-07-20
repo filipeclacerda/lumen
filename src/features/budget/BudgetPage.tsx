@@ -69,16 +69,16 @@ export function BudgetPage() {
 
   return (
     <section className="budget-page">
-      <PageHeader>
-        <div>
-          <p className="eyebrow">PLANEJAMENTO</p>
-          <h1>Orçamento</h1>
-          <p className="muted">Defina limites mensais por categoria e acompanhe o consumo em tempo real.</p>
-        </div>
-        <button onClick={() => setAdding(true)}>
-          <Plus size={16} /> Adicionar categoria ao orçamento
-        </button>
-      </PageHeader>
+      <PageHeader
+        eyebrow="PLANEJAMENTO"
+        title="Orçamento"
+        description="Defina limites mensais por categoria e acompanhe o consumo em tempo real."
+        actions={
+          <button onClick={() => setAdding(true)}>
+            <Plus size={16} /> Adicionar categoria ao orçamento
+          </button>
+        }
+      />
 
       <div className="budget-month-row">
         <MonthNavigator month={month} onChange={setMonth} />
