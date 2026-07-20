@@ -87,6 +87,7 @@ pub(crate) fn atomic_move(source: &Path, destination: &Path) -> Result<(), AppEr
             .encode_wide()
             .chain(Some(0))
             .collect();
+        let mut last_error = None;
         for _ in 0..10 {
             let ok = unsafe {
                 MoveFileExW(
@@ -98,9 +99,12 @@ pub(crate) fn atomic_move(source: &Path, destination: &Path) -> Result<(), AppEr
             if ok {
                 return Ok(());
             }
+            // Capture GetLastError immediately: later calls (including sleep) may
+            // overwrite the thread-local value and turn a real failure into OS error 0.
+            last_error = Some(std::io::Error::last_os_error());
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        Err(std::io::Error::last_os_error().into())
+        Err(last_error.expect("the retry loop always runs").into())
     }
     #[cfg(not(windows))]
     {
@@ -132,6 +136,7 @@ pub(crate) fn atomic_replace_with_backup(
             .chain(Some(0))
             .collect();
         let backup_w: Vec<u16> = backup.as_os_str().encode_wide().chain(Some(0)).collect();
+        let mut last_error = None;
         for _ in 0..200 {
             let ok = unsafe {
                 if destination.exists() {
@@ -154,9 +159,10 @@ pub(crate) fn atomic_replace_with_backup(
             if ok {
                 return Ok(());
             }
+            last_error = Some(std::io::Error::last_os_error());
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        Err(std::io::Error::last_os_error().into())
+        Err(last_error.expect("the retry loop always runs").into())
     }
     #[cfg(not(windows))]
     {
@@ -186,6 +192,7 @@ pub(crate) fn restore_without_backup(source: &Path, destination: &Path) -> Resul
             .encode_wide()
             .chain(Some(0))
             .collect();
+        let mut last_error = None;
         for _ in 0..1000 {
             let ok = unsafe {
                 if destination.exists() {
@@ -208,9 +215,10 @@ pub(crate) fn restore_without_backup(source: &Path, destination: &Path) -> Resul
             if ok {
                 return Ok(());
             }
+            last_error = Some(std::io::Error::last_os_error());
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        Err(std::io::Error::last_os_error().into())
+        Err(last_error.expect("the retry loop always runs").into())
     }
     #[cfg(not(windows))]
     {

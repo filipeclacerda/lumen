@@ -5,6 +5,33 @@ Todas as mudanças relevantes deste projeto são documentadas neste arquivo.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o
 projeto adota o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.6.0] - 2026-07-20
+
+Busca global mais acessível no aplicativo desktop e distribuição ampliada para
+Windows, Linux e macOS.
+
+### Adicionado
+
+- **Busca rápida na barra de título**: o aplicativo desktop passa a exibir um
+  controle central para abrir a paleta de comandos, com indicação do atalho
+  `Ctrl+K` e suporte equivalente ao atalho no macOS.
+
+### Alterado
+
+- **Releases multiplataforma**: o workflow de publicação passa a gerar builds
+  para Windows, Linux (`deb` e AppImage) e macOS em Apple Silicon e Intel.
+
+### Corrigido
+
+- Operações atômicas de arquivo no Windows agora preservam o erro real de cada
+  tentativa, evitando que uma espera entre tentativas substitua a causa da falha
+  por uma mensagem incorreta de sucesso do sistema operacional.
+
+### Testes e qualidade
+
+- Adicionados testes para a abertura da paleta pela barra de título e para a
+  disponibilidade do controle de busca nas variações desktop.
+
 ## [0.5.0] - 2026-07-19
 
 Versão de recursos e refinamentos de uso diário: planejamento de recebimento,
