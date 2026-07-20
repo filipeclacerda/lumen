@@ -281,7 +281,7 @@ aside {
 .brand-copy {
   min-width: 0;
   color: var(--text);
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 750;
   line-height: 1;
   letter-spacing: -.035em;

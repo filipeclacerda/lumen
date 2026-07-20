@@ -154,7 +154,7 @@ export function App() {
       )}
       <aside ref={drawer} id="main-navigation">
         <div className="brand">
-          <BrandLogo size={39} decorative />
+          <BrandLogo size={32} decorative />
           <div className="brand-copy">Lumen</div>
           <button
             className="sidebar-collapse"

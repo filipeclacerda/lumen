@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Copy, Minus, Search, Square, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, Minus, Search, Square, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { useLocation, useNavigate, useNavigationType } from "react-router-dom";
 import { isMacOsRuntime, isTauriRuntime } from "../runtime";
 import { BrandLogo } from "./BrandLogo";
 import { OPEN_COMMAND_PALETTE_EVENT } from "./CommandPalette";
@@ -19,7 +20,16 @@ export function WindowFrame({ children }: { children: ReactNode }) {
 
 function WindowTitleBar({ macOs }: { macOs: boolean }) {
   const appWindow = useMemo(() => getCurrentWindow(), []);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const navigationType = useNavigationType();
   const [maximized, setMaximized] = useState(false);
+  const historyIndex = Number(window.history.state?.idx ?? 0);
+  const [maxHistoryIndex, setMaxHistoryIndex] = useState(historyIndex);
+
+  useEffect(() => {
+    setMaxHistoryIndex((current) => (navigationType === "PUSH" ? historyIndex : Math.max(current, historyIndex)));
+  }, [historyIndex, location.key, navigationType]);
 
   const refreshMaximized = useCallback(async () => {
     setMaximized(await appWindow.isMaximized());
@@ -51,9 +61,30 @@ function WindowTitleBar({ macOs }: { macOs: boolean }) {
   return (
     <div className={`window-titlebar${macOs ? " window-titlebar--macos" : ""}`} role="banner">
       <div className="window-titlebar__drag" data-tauri-drag-region>
-        <div className="window-titlebar__identity" aria-label="Lumen">
-          <BrandLogo size={18} decorative />
-          <span>Lumen</span>
+        {!macOs && (
+          <div className="window-titlebar__identity" aria-label="Lumen">
+            <BrandLogo size={18} decorative />
+          </div>
+        )}
+        <div className="window-titlebar__navigation" aria-label="Navegação">
+          <button
+            type="button"
+            aria-label="Voltar"
+            title="Voltar"
+            disabled={historyIndex <= 0}
+            onClick={() => navigate(-1)}
+          >
+            <ChevronLeft size={17} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            aria-label="Avançar"
+            title="Avançar"
+            disabled={historyIndex >= maxHistoryIndex}
+            onClick={() => navigate(1)}
+          >
+            <ChevronRight size={17} aria-hidden="true" />
+          </button>
         </div>
       </div>
       <button

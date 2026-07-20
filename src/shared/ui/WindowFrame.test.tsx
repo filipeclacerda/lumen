@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 import { WindowFrame } from "./WindowFrame";
 
 const windowMocks = vi.hoisted(() => ({
@@ -10,6 +11,16 @@ const windowMocks = vi.hoisted(() => ({
   onResized: vi.fn().mockResolvedValue(vi.fn()),
   toggleMaximize: vi.fn().mockResolvedValue(undefined),
 }));
+
+function renderFrame() {
+  return render(
+    <MemoryRouter>
+      <WindowFrame>
+        <main>Conteúdo</main>
+      </WindowFrame>
+    </MemoryRouter>,
+  );
+}
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => windowMocks,
@@ -32,11 +43,7 @@ describe("WindowFrame", () => {
   });
 
   it("keeps the browser fallback free of desktop window chrome", () => {
-    render(
-      <WindowFrame>
-        <main>Conteúdo</main>
-      </WindowFrame>,
-    );
+    renderFrame();
 
     expect(screen.queryByRole("banner")).toBeNull();
     expect(screen.getByText("Conteúdo")).toBeTruthy();
@@ -45,13 +52,11 @@ describe("WindowFrame", () => {
   it("exposes native window actions in the custom desktop titlebar", async () => {
     Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: {} });
     windowMocks.isMaximized.mockResolvedValueOnce(false).mockResolvedValue(true);
-    render(
-      <WindowFrame>
-        <main>Conteúdo</main>
-      </WindowFrame>,
-    );
+    renderFrame();
 
     await waitFor(() => expect(windowMocks.isMaximized).toHaveBeenCalled());
+    expect(screen.getByRole("button", { name: "Voltar" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Avançar" }).hasAttribute("disabled")).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Minimizar" }));
     fireEvent.click(screen.getByRole("button", { name: "Maximizar" }));
     fireEvent.click(screen.getByRole("button", { name: "Fechar" }));
@@ -67,11 +72,7 @@ describe("WindowFrame", () => {
     const onOpen = vi.fn();
     window.addEventListener("lumen:open-command-palette", onOpen);
 
-    render(
-      <WindowFrame>
-        <main>Conteúdo</main>
-      </WindowFrame>,
-    );
+    renderFrame();
 
     const search = screen.getByRole("button", { name: "Abrir busca rápida" });
     expect(search.getAttribute("aria-keyshortcuts")).toBe("Control+K Meta+K");
@@ -84,13 +85,10 @@ describe("WindowFrame", () => {
     Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: {} });
     vi.spyOn(window.navigator, "userAgent", "get").mockReturnValue("Macintosh");
 
-    render(
-      <WindowFrame>
-        <main>Conteúdo</main>
-      </WindowFrame>,
-    );
+    renderFrame();
 
     expect(screen.getByRole("banner")).toBeTruthy();
+    expect(document.querySelector(".window-titlebar__identity")).toBeNull();
     expect(screen.queryByRole("button", { name: "Minimizar" })).toBeNull();
     expect(screen.getByRole("button", { name: "Abrir busca rápida" })).toBeTruthy();
   });
