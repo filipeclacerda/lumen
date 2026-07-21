@@ -1,12 +1,9 @@
-import { ArrowRight, CheckCircle2, Landmark, ShieldCheck, UserRound, WalletCards, X, Tags, Plus } from "lucide-react";
+import { ArrowRight, CheckCircle2, Landmark, ShieldCheck, UserRound, WalletCards } from "lucide-react";
 import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../shared/api";
 import { MoneyInput } from "../../shared/ui/MoneyInput";
-import { Modal } from "../../shared/ui/Modal";
 import { Select } from "../../shared/ui/Select";
-import type { AccountType, AppBootstrap, Category, CategoryKind, FinancialGoal } from "../../shared/types";
-import { ErrorState, LoadingState } from "../../shared/ui/AsyncState";
+import type { AccountType, AppBootstrap, FinancialGoal } from "../../shared/types";
 import { BrandLogo } from "../../shared/ui/BrandLogo";
 import { incomeDayOptions, parseIncomeDaySelection } from "../../shared/incomeDay";
 
@@ -38,27 +35,6 @@ export function Onboarding({
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [completed, setCompleted] = useState(false);
-  const queryClient = useQueryClient();
-  const {
-    data: categories = [],
-    isLoading: categoriesLoading,
-    isError: categoriesError,
-    refetch: refetchCategories,
-  } = useQuery<Category[]>({ queryKey: ["categories"], queryFn: api.categories });
-  const [newCategoryName, setNewCategoryName] = useState("");
-  const [newCategoryKind, setNewCategoryKind] = useState<CategoryKind>("expense");
-  const [categoryToArchive, setCategoryToArchive] = useState<Category>();
-
-  async function archiveCategory() {
-    if (!categoryToArchive) return;
-    try {
-      await api.archiveCategory(categoryToArchive.id);
-      await queryClient.invalidateQueries({ queryKey: ["categories"] });
-      setCategoryToArchive(undefined);
-    } catch (e) {
-      setError(typeof e === "object" && e && "message" in e ? String((e as { message: unknown }).message) : String(e));
-    }
-  }
 
   function nextProfile() {
     if (name.trim().length < 2) {
@@ -68,15 +44,11 @@ export function Onboarding({
     setError("");
     setStep(3);
   }
-  function nextAccount() {
+  async function finish() {
     if (accountName.trim().length < 2) {
       setError("Informe um nome para a conta.");
       return;
     }
-    setError("");
-    setStep(4);
-  }
-  async function finish() {
     setSaving(true);
     setError("");
     try {
@@ -97,16 +69,6 @@ export function Onboarding({
     }
   }
 
-  if (categoriesLoading) return <LoadingState variant="page" label="Preparando categorias…" />;
-  if (categoriesError)
-    return (
-      <ErrorState
-        variant="page"
-        message="Não foi possível carregar as categorias."
-        onRetry={() => void refetchCategories()}
-      />
-    );
-
   if (completed)
     return (
       <div className="onboarding-shell">
@@ -117,6 +79,12 @@ export function Onboarding({
           <p className="eyebrow">TUDO PRONTO</p>
           <h1>Seu espaço financeiro foi criado</h1>
           <p className="muted">Agora você pode importar seu primeiro extrato ou explorar a visão geral.</p>
+          <div className="completion-category-note">
+            <p>Suas categorias padrão já estão prontas. Você pode ajustá-las quando quiser.</p>
+            <button className="text-button" onClick={() => onFinished("/categories?tab=categories")}>
+              Ajustar categorias
+            </button>
+          </div>
           <div className="onboarding-actions">
             <button className="secondary" onClick={() => onFinished("/")}>
               Ir para visão geral
@@ -140,7 +108,6 @@ export function Onboarding({
           <i className={step >= 1 ? "active" : ""} />
           <i className={step >= 2 ? "active" : ""} />
           <i className={step >= 3 ? "active" : ""} />
-          <i className={step >= 4 ? "active" : ""} />
         </div>
         {step === 1 && (
           <div className="onboarding-content welcome">
@@ -256,105 +223,6 @@ export function Onboarding({
               <button className="secondary" onClick={() => setStep(2)}>
                 Voltar
               </button>
-              <button onClick={nextAccount}>
-                Continuar <ArrowRight size={17} />
-              </button>
-            </div>
-          </div>
-        )}
-        {step === 4 && (
-          <div className="onboarding-content">
-            <div className="step-icon">
-              <Tags />
-            </div>
-            <p className="eyebrow">PERSONALIZAÇÃO</p>
-            <h1>Ajuste suas categorias</h1>
-            <p className="muted">
-              Essas são as categorias padrão. Você pode remover as que não usa e adicionar novas para deixar com a sua
-              cara.
-            </p>
-            {(() => {
-              const kinds: { value: CategoryKind; label: string }[] = [
-                { value: "income", label: "Receitas" },
-                { value: "expense", label: "Despesas" },
-                { value: "investment", label: "Investimentos" },
-                { value: "transfer", label: "Transferências" },
-              ];
-              return kinds.map(({ value, label }) => {
-                const items = categories.filter((c) => c.kind === value);
-                if (items.length === 0) return null;
-                return (
-                  <div key={value} className="onboarding-category-group">
-                    <p className="onboarding-category-label">{label}</p>
-                    <div className="onboarding-category-badges">
-                      {items.map((c) => (
-                        <span
-                          key={c.id}
-                          className={`badge kind-badge ${c.kind}`}
-                          style={{ display: "flex", alignItems: "center", gap: "4px" }}
-                        >
-                          {c.name}
-                          <button
-                            type="button"
-                            className="icon-button"
-                            aria-label={`Remover categoria ${c.name}`}
-                            onClick={() => setCategoryToArchive(c)}
-                          >
-                            <X size={13} />
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                );
-              });
-            })()}
-            <div className="inline-create" style={{ marginTop: 16 }}>
-              <label>
-                Nova categoria:{" "}
-                <input
-                  style={{ marginLeft: "8px" }}
-                  value={newCategoryName}
-                  onChange={(e) => setNewCategoryName(e.target.value)}
-                  placeholder="Ex.: Lazer"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && newCategoryName.trim()) {
-                      api.saveCategory({ name: newCategoryName.trim(), kind: newCategoryKind }).then(() => {
-                        setNewCategoryName("");
-                        queryClient.invalidateQueries({ queryKey: ["categories"] });
-                      });
-                    }
-                  }}
-                />
-              </label>
-              <Select
-                value={newCategoryKind}
-                onChange={(value) => setNewCategoryKind(value as CategoryKind)}
-                ariaLabel="Tipo da nova categoria"
-                options={[
-                  { value: "expense", label: "Despesa" },
-                  { value: "income", label: "Receita" },
-                  { value: "investment", label: "Investimento" },
-                  { value: "transfer", label: "Transferência" },
-                ]}
-              />
-              <button
-                className="secondary"
-                onClick={async () => {
-                  if (!newCategoryName.trim()) return;
-                  await api.saveCategory({ name: newCategoryName.trim(), kind: newCategoryKind });
-                  setNewCategoryName("");
-                  queryClient.invalidateQueries({ queryKey: ["categories"] });
-                }}
-              >
-                <Plus size={16} /> Adicionar
-              </button>
-            </div>
-            {error && <p className="form-error">{error}</p>}
-            <div className="onboarding-actions" style={{ marginTop: "32px" }}>
-              <button className="secondary" onClick={() => setStep(3)}>
-                Voltar
-              </button>
               <button disabled={saving} onClick={finish}>
                 {saving ? "Salvando…" : "Concluir cadastro"} <CheckCircle2 size={17} />
               </button>
@@ -362,24 +230,6 @@ export function Onboarding({
           </div>
         )}
       </div>
-      {categoryToArchive && (
-        <Modal title="Remover categoria?" onClose={() => setCategoryToArchive(undefined)}>
-          <div className="modal-form">
-            <p className="muted">
-              A categoria “{categoryToArchive.name}” deixará de aparecer nas novas classificações. Esta ação pode ser
-              desfeita nas configurações de categorias.
-            </p>
-            <div className="editor-actions">
-              <button className="secondary" onClick={() => setCategoryToArchive(undefined)}>
-                Cancelar
-              </button>
-              <button className="danger" onClick={archiveCategory}>
-                Remover categoria
-              </button>
-            </div>
-          </div>
-        </Modal>
-      )}
     </div>
   );
 }

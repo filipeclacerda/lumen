@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   AlertTriangle,
   Check,
@@ -54,6 +55,7 @@ import { useMaintenanceRestart } from "../../shared/maintenanceRestart";
 
 const RESET_CONFIRM_WORD = "APAGAR";
 const RESTORE_CONFIRM_WORD = "RESTAURAR";
+const LUMEN_GITHUB_URL = "https://github.com/filipeclacerda/lumen";
 
 type ProfileDraft = {
   name: string;
@@ -1011,7 +1013,15 @@ function AboutSection({
             <strong>Projeto aberto</strong>
             <small>Licença MIT e código disponível para auditoria e contribuição.</small>
           </div>
-          <a className="secondary" href="https://github.com/filipeclacerda/lumen" target="_blank" rel="noreferrer">
+          <a
+            className="secondary"
+            href={LUMEN_GITHUB_URL}
+            onClick={(event) => {
+              if (!isTauriRuntime()) return;
+              event.preventDefault();
+              void openUrl(LUMEN_GITHUB_URL);
+            }}
+          >
             Ver no GitHub <ExternalLink size={15} />
           </a>
         </div>
@@ -1019,7 +1029,10 @@ function AboutSection({
           <Keyboard size={18} aria-hidden="true" />
           <div>
             <strong>Atalhos úteis</strong>
-            <small>Ctrl+K abre a busca. Ctrl/Cmd + ou − ajusta o zoom; Ctrl/Cmd 0 restaura 100%.</small>
+            <small>
+              <kbd>⌘K</kbd> (ou <kbd>Ctrl+K</kbd>) abre a busca. <kbd>⌘+</kbd>/<kbd>⌘−</kbd> (ou <kbd>Ctrl+</kbd>/
+              <kbd>Ctrl−</kbd>) ajusta o zoom; <kbd>⌘0</kbd> (ou <kbd>Ctrl+0</kbd>) restaura 100%.
+            </small>
           </div>
         </div>
       </article>

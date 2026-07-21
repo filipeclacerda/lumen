@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   saveProfile: vi.fn(),
   restoreDatabase: vi.fn(),
   resetDatabase: vi.fn(),
+  openUrl: vi.fn(),
   toast: vi.fn(),
 }));
 
@@ -29,6 +30,7 @@ vi.mock("../../shared/api", () => ({
   },
 }));
 vi.mock("../../shared/ui/toast", () => ({ useToast: () => mocks.toast }));
+vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: mocks.openUrl }));
 vi.mock("../../shared/updater", () => ({
   isTauriRuntime: () => true,
   canCheckForUpdates: () => false,
@@ -97,6 +99,12 @@ describe("SettingsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: /Aparência/ }));
     expect(await screen.findByRole("heading", { name: "Aparência e acessibilidade" })).toBeTruthy();
     expect(screen.getByTestId("location").textContent).toBe("?section=appearance");
+  });
+
+  it("opens the project page in the default browser from the desktop app", async () => {
+    renderPage("/settings?section=about");
+    fireEvent.click(await screen.findByRole("link", { name: /Ver no GitHub/ }));
+    expect(mocks.openUrl).toHaveBeenCalledWith("https://github.com/filipeclacerda/lumen");
   });
 
   it("saves a profile only after edits and allows discarding the draft", async () => {

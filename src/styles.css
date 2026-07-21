@@ -716,10 +716,11 @@ input:focus-visible,select:focus-visible,textarea:focus-visible{outline:none;bor
 .kind-badge.transfer{background:var(--surface-2);color:var(--text-soft)}
 .category-row .kind-badge{font-size:9px;padding:1px 5px}
 
-/* Onboarding category groups */
-.onboarding-category-group{margin-bottom:14px}
-.onboarding-category-label{font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin:0 0 6px}
-.onboarding-category-badges{display:flex;flex-wrap:wrap;gap:6px}
+/* Onboarding completion */
+.completion-category-note{width:100%;padding:var(--space-3);border:1px solid var(--border-soft);border-radius:var(--radius-md);background:var(--surface-2);display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);text-align:left}
+.completion-category-note p{margin:0;color:var(--text-muted);font-size:var(--text-sm);line-height:1.45}
+.completion-category-note .text-button{flex:none}
+@media(max-width:750px){.completion-category-note{align-items:flex-start;flex-direction:column}}
 
 /* Orçamento por categoria */
 .budget-page{width:100%;max-width:1120px;margin-inline:auto}

@@ -1581,6 +1581,22 @@
     color: var(--text-soft);
     font-size: var(--text-xs);
   }
+  .settings-shortcuts small {
+    line-height:1.8;
+  }
+  .settings-shortcuts kbd {
+    display:inline-flex;
+    align-items:center;
+    min-height:22px;
+    padding:0 var(--space-1);
+    border:1px solid var(--border);
+    border-radius:var(--radius-sm);
+    background:var(--surface-2);
+    color:var(--text-muted);
+    font:600 var(--text-xs)/1 var(--font-sans);
+    vertical-align:middle;
+    white-space:nowrap;
+  }
   .settings-shortcuts {
     justify-content: flex-start;
     border-bottom: 0;
