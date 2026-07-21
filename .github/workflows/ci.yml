@@ -20,11 +20,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.97.1
+        with:
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
-          shared-key: "lumen-build"
+          shared-key: "lumen-debug-windows-x64"
           cache-on-failure: true
       - run: npm ci
       - run: npm run lint

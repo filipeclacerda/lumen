@@ -1,4 +1,4 @@
 interface:
   display_name: "Gerar release do Lumen"
-  short_description: "Prepara e valida uma nova versao do Lumen"
-  default_prompt: "Use $generate-lumen-release para preparar e validar a proxima versao do Lumen."
+  short_description: "Prepara, publica e verifica releases do Lumen"
+  default_prompt: "Use $generate-lumen-release para preparar, publicar e verificar a proxima versao do Lumen."
