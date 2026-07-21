@@ -5,6 +5,31 @@ Todas as mudanças relevantes deste projeto são documentadas neste arquivo.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o
 projeto adota o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.8.1] - 2026-07-21
+
+Correções de usabilidade nos seletores de categoria e refinamentos na janela
+desktop, com um fluxo de publicação mais verificável.
+
+### Alterado
+
+- A janela inicial do Lumen agora abre em 1280 × 800 px, preservando os limites
+  mínimos já definidos para a aplicação.
+
+### Corrigido
+
+- O seletor de categorias passa a abrir acima de contêineres com recorte,
+  reposiciona-se dentro da área visível e continua acessível durante a seleção.
+
+### Testes e qualidade
+
+- Adicionado teste de interação do seletor de categorias renderizado no portal.
+
+### Projeto
+
+- O fluxo de release agora valida o draft e suas notas antes dos builds, gera
+  artefatos a partir da tag versionada e conta com uma verificação posterior da
+  release publicada, instaladores, assinaturas e manifesto do updater.
+
 ## [0.8.0] - 2026-07-21
 
 Versão de onboarding e acabamento da experiência desktop, com orientação para
