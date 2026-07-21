@@ -1,4 +1,5 @@
-import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowLeftRight,
   ArrowUpRight,
@@ -221,13 +222,19 @@ function CategoryDropdown({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listboxId = useId();
+  const [panelStyle, setPanelStyle] = useState<CSSProperties>();
 
   useEffect(() => {
     if (!open) return;
     function onDoc(e: MouseEvent) {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+      if (
+        rootRef.current &&
+        !rootRef.current.contains(e.target as Node) &&
+        !panelRef.current?.contains(e.target as Node)
+      ) {
         setOpen(false);
         setQuery("");
       }
@@ -248,6 +255,52 @@ function CategoryDropdown({
 
   useEffect(() => {
     if (open) inputRef.current?.focus();
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setPanelStyle(undefined);
+      return;
+    }
+
+    const updatePosition = () => {
+      const trigger = rootRef.current?.getBoundingClientRect();
+      if (!trigger) return;
+
+      const edge = 12;
+      const gap = 6;
+      const preferredHeight = 360;
+      const viewportWidth = document.documentElement.clientWidth || window.innerWidth;
+      const viewportHeight = document.documentElement.clientHeight || window.innerHeight;
+      const width = Math.min(Math.max(trigger.width, 280), viewportWidth - edge * 2);
+      const left = Math.max(edge, Math.min(trigger.left, viewportWidth - width - edge));
+      const spaceBelow = viewportHeight - trigger.bottom - gap - edge;
+      const spaceAbove = trigger.top - gap - edge;
+      const placeAbove = spaceBelow < 240 && spaceAbove > spaceBelow;
+      const availableHeight = Math.max(120, Math.min(preferredHeight, placeAbove ? spaceAbove : spaceBelow));
+
+      setPanelStyle({
+        position: "fixed",
+        top: placeAbove ? "auto" : trigger.bottom + gap,
+        bottom: placeAbove ? viewportHeight - trigger.top + gap : "auto",
+        left,
+        right: "auto",
+        width,
+        maxHeight: availableHeight,
+      });
+    };
+
+    const resizeObserver = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(updatePosition);
+    if (rootRef.current) resizeObserver?.observe(rootRef.current);
+    document.addEventListener("scroll", updatePosition, true);
+    window.addEventListener("resize", updatePosition);
+    updatePosition();
+
+    return () => {
+      resizeObserver?.disconnect();
+      document.removeEventListener("scroll", updatePosition, true);
+      window.removeEventListener("resize", updatePosition);
+    };
   }, [open]);
 
   const normalizedQuery = query.trim().toLowerCase();
@@ -299,97 +352,99 @@ function CategoryDropdown({
         </span>
       </button>
 
-      {open && (
-        <div className="category-dropdown-panel">
-          <div className="category-dropdown-search">
-            <input
-              ref={inputRef}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Buscar categoria…"
-              aria-label="Buscar categoria"
-            />
-          </div>
-          <div className="category-dropdown-list" id={listboxId} role="listbox" aria-label={ariaLabel}>
-            {allowEmpty && totalItems >= 0 && (
-              <button
-                type="button"
-                className={"category-dropdown-option" + (!value ? " selected" : "")}
-                onClick={() => select(undefined)}
-                role="option"
-                aria-selected={!value}
-              >
-                <span className="category-dropdown-icon category-dropdown-icon-muted">
-                  <Tag size={14} strokeWidth={2} aria-hidden />
-                </span>
-                <span className="category-dropdown-placeholder">{emptyLabel}</span>
-              </button>
-            )}
-            {totalItems === 0 && allowEmpty === false && (
-              <p className="category-dropdown-empty">Nenhuma categoria encontrada.</p>
-            )}
-            {groups.map((g) => {
-              const visible = g.items.filter(matches);
-              if (visible.length === 0) return null;
-              const groupLabelId = `${listboxId}-${g.kind}`;
-              return (
-                <div
-                  key={g.kind}
-                  className={`category-dropdown-group category-dropdown-group--${g.kind}`}
-                  data-kind={g.kind}
-                  role="group"
-                  aria-labelledby={groupLabelId}
+      {open &&
+        createPortal(
+          <div className="category-dropdown-panel category-dropdown-panel--portal" ref={panelRef} style={panelStyle}>
+            <div className="category-dropdown-search">
+              <input
+                ref={inputRef}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Buscar categoria…"
+                aria-label="Buscar categoria"
+              />
+            </div>
+            <div className="category-dropdown-list" id={listboxId} role="listbox" aria-label={ariaLabel}>
+              {allowEmpty && totalItems >= 0 && (
+                <button
+                  type="button"
+                  className={"category-dropdown-option" + (!value ? " selected" : "")}
+                  onClick={() => select(undefined)}
+                  role="option"
+                  aria-selected={!value}
                 >
-                  <div id={groupLabelId} className="category-dropdown-group-label">
-                    {KIND_LABEL[g.kind]}
-                  </div>
-                  {visible.map((c) => {
-                    const d = depth(categories, c.id);
-                    const parent = c.parentId ? categories.find((category) => category.id === c.parentId) : undefined;
-                    const isSelected = c.id === value;
-                    return (
-                      <button
-                        key={c.id}
-                        type="button"
-                        className={`category-dropdown-option category-dropdown-option--${c.kind}${
-                          c.parentId ? " category-dropdown-option--child" : ""
-                        }${isSelected ? " selected" : ""}`}
-                        data-kind={c.kind}
-                        data-depth={d}
-                        style={{ "--category-depth": d } as CSSProperties}
-                        onClick={() => select(c.id)}
-                        title={parent ? `${c.name} · Subcategoria de ${parent.name}` : c.name}
-                        role="option"
-                        aria-selected={isSelected}
-                      >
-                        <span
-                          className="category-dropdown-swatch"
+                  <span className="category-dropdown-icon category-dropdown-icon-muted">
+                    <Tag size={14} strokeWidth={2} aria-hidden />
+                  </span>
+                  <span className="category-dropdown-placeholder">{emptyLabel}</span>
+                </button>
+              )}
+              {totalItems === 0 && allowEmpty === false && (
+                <p className="category-dropdown-empty">Nenhuma categoria encontrada.</p>
+              )}
+              {groups.map((g) => {
+                const visible = g.items.filter(matches);
+                if (visible.length === 0) return null;
+                const groupLabelId = `${listboxId}-${g.kind}`;
+                return (
+                  <div
+                    key={g.kind}
+                    className={`category-dropdown-group category-dropdown-group--${g.kind}`}
+                    data-kind={g.kind}
+                    role="group"
+                    aria-labelledby={groupLabelId}
+                  >
+                    <div id={groupLabelId} className="category-dropdown-group-label">
+                      {KIND_LABEL[g.kind]}
+                    </div>
+                    {visible.map((c) => {
+                      const d = depth(categories, c.id);
+                      const parent = c.parentId ? categories.find((category) => category.id === c.parentId) : undefined;
+                      const isSelected = c.id === value;
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          className={`category-dropdown-option category-dropdown-option--${c.kind}${
+                            c.parentId ? " category-dropdown-option--child" : ""
+                          }${isSelected ? " selected" : ""}`}
                           data-kind={c.kind}
-                          style={c.color ? { background: c.color } : undefined}
-                          aria-hidden
-                        />
-                        {c.parentId && (
-                          <span className="category-dropdown-branch" aria-hidden>
-                            <span className="category-dropdown-branch-line" />
-                            <span className="category-dropdown-branch-corner" />
+                          data-depth={d}
+                          style={{ "--category-depth": d } as CSSProperties}
+                          onClick={() => select(c.id)}
+                          title={parent ? `${c.name} · Subcategoria de ${parent.name}` : c.name}
+                          role="option"
+                          aria-selected={isSelected}
+                        >
+                          <span
+                            className="category-dropdown-swatch"
+                            data-kind={c.kind}
+                            style={c.color ? { background: c.color } : undefined}
+                            aria-hidden
+                          />
+                          {c.parentId && (
+                            <span className="category-dropdown-branch" aria-hidden>
+                              <span className="category-dropdown-branch-line" />
+                              <span className="category-dropdown-branch-corner" />
+                            </span>
+                          )}
+                          <span className="category-dropdown-icon" data-kind={c.kind} aria-hidden>
+                            <CategoryIcon name={c.icon} kind={c.kind} />
                           </span>
-                        )}
-                        <span className="category-dropdown-icon" data-kind={c.kind} aria-hidden>
-                          <CategoryIcon name={c.icon} kind={c.kind} />
-                        </span>
-                        <span className="category-dropdown-option-copy">
-                          <span className="category-dropdown-name">{c.name}</span>
-                          {parent && <small className="category-dropdown-parent-label">em {parent.name}</small>}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+                          <span className="category-dropdown-option-copy">
+                            <span className="category-dropdown-name">{c.name}</span>
+                            {parent && <small className="category-dropdown-parent-label">em {parent.name}</small>}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
