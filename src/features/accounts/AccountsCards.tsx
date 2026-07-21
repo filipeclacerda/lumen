@@ -169,7 +169,7 @@ export function AccountsCards() {
   }
 
   return (
-    <section>
+    <section className="accounts-page">
       <PageHeader>
         <div>
           <p className="eyebrow">PATRIMÔNIO E CRÉDITO</p>
@@ -242,7 +242,7 @@ export function AccountsCards() {
         <ErrorState message="Não foi possível carregar as faturas." onRetry={() => void refetchInvoices()} />
       )}
       {!invoicesLoading && !invoicesError && (
-        <article className="panel">
+        <article className="panel invoice-panel">
           <div className="panel-title">
             <h2>Faturas importadas</h2>
             <span>
@@ -301,7 +301,9 @@ export function AccountsCards() {
                       <strong>{money(invoice.totalInCents)}</strong>
                     </div>
                     <div className="invoice-status">
-                      <span className={`badge ${invoice.status === "paid" ? "success-badge" : ""}`}>
+                      <span
+                        className={`badge invoice-status-badge ${invoice.status === "paid" ? "success-badge" : ""}`}
+                      >
                         {invoice.status === "paid" ? "Paga" : "Aberta"}
                       </span>
                     </div>
