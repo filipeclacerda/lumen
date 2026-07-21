@@ -15,6 +15,16 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // WebView2 paints its own white surface before the document is available.
+        // Keep the native window hidden until index.html's initial loader has loaded,
+        // so the first visible frame belongs to Lumen rather than the WebView default.
+        .on_page_load(|webview, payload| {
+            if webview.label() == "main"
+                && payload.event() == tauri::webview::PageLoadEvent::Finished
+            {
+                let _ = webview.window().show();
+            }
+        })
         .setup(|app| {
             let data_dir = app.path().app_data_dir().expect("diretório de dados");
             std::fs::create_dir_all(&data_dir)?;

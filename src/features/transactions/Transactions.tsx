@@ -894,7 +894,6 @@ export function Transactions() {
                       categories={categories}
                       allowEmpty
                       emptyLabel="Sem categoria"
-                      className="category-select"
                     />
                     {t.categorySource && (
                       <small className="source-label" style={{ marginTop: "6px" }}>
