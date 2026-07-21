@@ -5,6 +5,44 @@ Todas as mudanças relevantes deste projeto são documentadas neste arquivo.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o
 projeto adota o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.8.0] - 2026-07-21
+
+Versão de onboarding e acabamento da experiência desktop, com orientação para
+quem está começando e melhorias na distribuição do aplicativo.
+
+### Adicionado
+
+- **Guia rápido após o onboarding**: um tour interativo em sete etapas apresenta
+  importação, transações, filtros, visão geral, relatórios e categorias, com
+  opção de avançar, voltar, pular ou fechar e possibilidade de reinício nas
+  configurações.
+- **Abertura de links no navegador padrão**: atalhos e links externos das
+  configurações agora usam o navegador do sistema.
+
+### Alterado
+
+- **Onboarding simplificado**: o cadastro inicial ficou mais direto, deixando a
+  personalização detalhada de categorias para o uso normal do aplicativo.
+- Controles, paginação, seletores, sidebar e barra de título receberam ajustes
+  de estados visuais, contraste e acessibilidade.
+- Contas e cartões ganharam uma composição visual mais consistente, e os ícones
+  do aplicativo foram atualizados para as plataformas suportadas.
+
+### Corrigido
+
+- A janela desktop permanece oculta até o primeiro carregamento da interface,
+  evitando exibir a superfície branca do WebView antes do Lumen.
+
+### Testes e qualidade
+
+- Adicionados testes para o fluxo revisado de onboarding e para o estado,
+  persistência e interação do guia rápido.
+
+### Projeto
+
+- O workflow de release passou a incluir bundles `.app` do macOS e a validar a
+  presença dos manifests e assets assinados do updater em todas as plataformas.
+
 ## [0.7.0] - 2026-07-20
 
 Foco em tornar a manutenção dos dados locais mais preventiva e deixar a
