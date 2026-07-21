@@ -45,11 +45,14 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const { data: release } = await github.rest.repos.getReleaseByTag({
+            const { data: releases } = await github.rest.repos.listReleases({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              tag: process.env.RELEASE_TAG,
+              per_page: 100,
             });
+            const release = releases.find((candidate) => candidate.tag_name === process.env.RELEASE_TAG);
+
+            if (!release) throw new Error('Crie o draft da release para a tag antes de iniciar o build.');
 
             if (!release.draft) throw new Error('A release precisa permanecer em draft durante o build.');
             if (release.prerelease) throw new Error('O fluxo atual aceita apenas releases estaveis.');
