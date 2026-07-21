@@ -3,7 +3,7 @@
   .page-header h1 { margin:0; }
   .page-header__actions { display:flex; flex-wrap:wrap; gap:var(--space-2); }
   .async-state { display:grid; place-items:center; min-height:120px; padding:var(--space-6); text-align:center; color:var(--text-muted); }
-  .async-state--page { min-height:40vh; } .async-state--table-row { display:table-cell; }
+  .async-state--page { min-height:40vh; } .async-state--table-row { display:grid; width:100%; }
   .async-state__brand { display:flex; flex-direction:column; align-items:center; gap:var(--space-4); font-weight:600; }
   .async-state__brand .brand-logo { animation:lumen-logo-pulse calc(var(--motion-duration-slow) * 4) var(--motion-ease) infinite alternate; }
   @keyframes lumen-logo-pulse { from { opacity:.62; transform:scale(.96); } to { opacity:1; transform:scale(1); } }

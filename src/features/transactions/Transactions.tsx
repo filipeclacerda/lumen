@@ -521,7 +521,7 @@ export function Transactions() {
             {totalCount === 0 ? "0 lançamentos" : `${rangeStart}–${rangeEnd} de ${totalCount} lançamentos`}
           </p>
         </div>
-        <div className="transaction-header-actions">
+        <div className="transaction-header-actions" data-quick-guide="transactions">
           <div className="export-actions" role="group" aria-label="Exportar transações">
             <button
               className="secondary"
@@ -583,7 +583,7 @@ export function Transactions() {
             {totalCount} {totalCount === 1 ? "resultado" : "resultados"}
           </span>
         </div>
-        <div className="transactions-toolbar">
+        <div className="transactions-toolbar" data-quick-guide="transactions-filters">
           <div className="toolbar">
             <Search size={18} />
             <input

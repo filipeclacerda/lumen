@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   AlertTriangle,
+  BookOpen,
   Check,
   ChevronDown,
   Database,
@@ -52,6 +53,7 @@ import { Select } from "../../shared/ui/Select";
 import { useToast } from "../../shared/ui/toast";
 import { parseSettingsSection, settingsSections, type SettingsSection } from "./settingsNavigation";
 import { useMaintenanceRestart } from "../../shared/maintenanceRestart";
+import { restartQuickStartGuide } from "../../shared/quickStartGuide";
 
 const RESET_CONFIRM_WORD = "APAGAR";
 const RESTORE_CONFIRM_WORD = "RESTAURAR";
@@ -1024,6 +1026,15 @@ function AboutSection({
           >
             Ver no GitHub <ExternalLink size={15} />
           </a>
+        </div>
+        <div className="settings-about-row">
+          <div>
+            <strong>Guia rápido</strong>
+            <small>Reveja os passos essenciais para adicionar, organizar e acompanhar seu dinheiro.</small>
+          </div>
+          <button className="secondary" type="button" onClick={restartQuickStartGuide}>
+            <BookOpen size={16} /> Refazer guia
+          </button>
         </div>
         <div className="settings-shortcuts">
           <Keyboard size={18} aria-hidden="true" />

@@ -134,7 +134,7 @@ export function Dashboard() {
         </div>
       )}
       {showForm && <TransactionForm onClose={() => setShowForm(false)} />}
-      <div className="cards">
+      <div className="cards" data-quick-guide="overview">
         <article>
           <div className="metric-icon green">
             <ArrowUpRight />

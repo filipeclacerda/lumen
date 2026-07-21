@@ -23,6 +23,7 @@ import { BrandLogo } from "../shared/ui/BrandLogo";
 import { useMaintenanceRestart } from "../shared/maintenanceRestart";
 import { MaintenanceRestartNotice } from "../shared/ui/MaintenanceRestartNotice";
 import { BackupReminderNotice } from "../shared/ui/BackupReminderNotice";
+import { QuickStartGuide } from "../shared/ui/QuickStartGuide";
 
 export function App() {
   const client = useQueryClient();
@@ -243,6 +244,7 @@ export function App() {
           </Routes>
         </div>
       </main>
+      <QuickStartGuide />
       <MaintenanceRestartNotice />
     </div>
   );

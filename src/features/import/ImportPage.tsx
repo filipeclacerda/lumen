@@ -614,7 +614,7 @@ export function ImportPage() {
             Arraste um CSV, OFX ou PDF para esta área. O aplicativo reconhece automaticamente extratos e faturas; para
             outros CSVs, você pode mapear as colunas e salvar o layout.
           </p>
-          <button ref={chooseFileRef} onClick={choose} disabled={isReadingFile}>
+          <button ref={chooseFileRef} data-quick-guide="import" onClick={choose} disabled={isReadingFile}>
             {isReadingFile ? "Lendo arquivo..." : "Escolher arquivo"}
           </button>
           <div className="import-trouble-menu">

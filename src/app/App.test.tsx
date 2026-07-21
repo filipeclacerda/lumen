@@ -22,6 +22,7 @@ vi.mock("../features/dashboard/Dashboard", () => ({ Dashboard: () => <div>Dashbo
 vi.mock("../shared/ui/CommandPalette", () => ({ CommandPalette: () => null }));
 vi.mock("../shared/ui/UpdateNotice", () => ({ UpdateNotice: () => null }));
 vi.mock("../shared/ui/BackupReminderNotice", () => ({ BackupReminderNotice: () => null }));
+vi.mock("../shared/ui/QuickStartGuide", () => ({ QuickStartGuide: () => null }));
 
 function renderApp() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

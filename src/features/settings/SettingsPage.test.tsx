@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   restoreDatabase: vi.fn(),
   resetDatabase: vi.fn(),
   openUrl: vi.fn(),
+  restartGuide: vi.fn(),
   toast: vi.fn(),
 }));
 
@@ -30,6 +31,7 @@ vi.mock("../../shared/api", () => ({
   },
 }));
 vi.mock("../../shared/ui/toast", () => ({ useToast: () => mocks.toast }));
+vi.mock("../../shared/quickStartGuide", () => ({ restartQuickStartGuide: mocks.restartGuide }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: mocks.openUrl }));
 vi.mock("../../shared/updater", () => ({
   isTauriRuntime: () => true,
@@ -105,6 +107,12 @@ describe("SettingsPage", () => {
     renderPage("/settings?section=about");
     fireEvent.click(await screen.findByRole("link", { name: /Ver no GitHub/ }));
     expect(mocks.openUrl).toHaveBeenCalledWith("https://github.com/filipeclacerda/lumen");
+  });
+
+  it("restarts the quick guide from the about section", async () => {
+    renderPage("/settings?section=about");
+    fireEvent.click(await screen.findByRole("button", { name: /Refazer guia/ }));
+    expect(mocks.restartGuide).toHaveBeenCalledOnce();
   });
 
   it("saves a profile only after edits and allows discarding the draft", async () => {

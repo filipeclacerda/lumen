@@ -153,24 +153,26 @@ export function Reports() {
 
   return (
     <section className="reports-page">
-      <PageHeader>
-        <div>
-          <p className="eyebrow">ANÁLISE FINANCEIRA</p>
-          <h1>Relatórios</h1>
-          <p className="muted">Entenda seus hábitos, compare períodos e acompanhe suas metas.</p>
-        </div>
-        <div style={{ display: "flex", gap: "10px" }}>
-          <button className="secondary" disabled={exporting || invalidPeriod || !report} onClick={exportPdf}>
-            <Download size={16} /> {exporting ? "Exportando..." : "PDF"}
-          </button>
-          <button
-            onClick={() => setEditing({ id: "", kind: "category", amountInCents: 0, enabled: true, overrides: [] })}
-          >
-            <Plus size={16} /> Nova meta
-          </button>
-        </div>
-      </PageHeader>
-      <article className="report-filters">
+      <div>
+        <PageHeader>
+          <div>
+            <p className="eyebrow">ANÁLISE FINANCEIRA</p>
+            <h1>Relatórios</h1>
+            <p className="muted">Entenda seus hábitos, compare períodos e acompanhe suas metas.</p>
+          </div>
+          <div style={{ display: "flex", gap: "10px" }}>
+            <button className="secondary" disabled={exporting || invalidPeriod || !report} onClick={exportPdf}>
+              <Download size={16} /> {exporting ? "Exportando..." : "PDF"}
+            </button>
+            <button
+              onClick={() => setEditing({ id: "", kind: "category", amountInCents: 0, enabled: true, overrides: [] })}
+            >
+              <Plus size={16} /> Nova meta
+            </button>
+          </div>
+        </PageHeader>
+      </div>
+      <article className="report-filters" data-quick-guide="reports-filters">
         <div className="filter-presets">
           {[
             ["1", "Mês"],
@@ -338,7 +340,7 @@ function ReportContent({
   ];
   return (
     <>
-      <div className="report-kpis">
+      <div className="report-kpis" data-quick-guide="reports-kpis">
         {cards.map((card) => (
           <article key={card.label}>
             <div className={`report-kpi-icon ${card.tone}`}>{card.icon}</div>
@@ -348,12 +350,14 @@ function ReportContent({
           </article>
         ))}
       </div>
-      <Tabs
-        value={activeTab}
-        onChange={(value) => setActiveTab(value as typeof activeTab)}
-        hidePanel
-        tabs={tabs.map((tab) => ({ id: tab.id, label: tab.label }))}
-      />
+      <div data-quick-guide="reports-categories">
+        <Tabs
+          value={activeTab}
+          onChange={(value) => setActiveTab(value as typeof activeTab)}
+          hidePanel
+          tabs={tabs.map((tab) => ({ id: tab.id, label: tab.label }))}
+        />
+      </div>
       {activeTab === "overview" && (
         <OverviewTab
           report={report}

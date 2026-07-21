@@ -3,6 +3,11 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Onboarding } from "./Onboarding";
+import {
+  resetQuickStartGuideForTests,
+  storedQuickStartGuideStatus,
+  useQuickStartGuide,
+} from "../../shared/quickStartGuide";
 
 const mocks = vi.hoisted(() => ({
   completeOnboarding: vi.fn(),
@@ -39,13 +44,15 @@ async function completeFlow(onFinished = vi.fn().mockResolvedValue(undefined)) {
   renderOnboarding(onFinished);
   reachAccount();
   fireEvent.click(screen.getByRole("button", { name: /Concluir cadastro/i }));
-  await screen.findByRole("heading", { name: "Seu espaço financeiro foi criado" });
+  await screen.findByRole("heading", { name: "Seu espaço financeiro está pronto" });
   return onFinished;
 }
 
 describe("Onboarding", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
+    resetQuickStartGuideForTests();
     mocks.completeOnboarding.mockResolvedValue({ profile: {}, accountId: "account-1" });
   });
 
@@ -94,18 +101,29 @@ describe("Onboarding", () => {
       }),
     );
     expect(await screen.findByText("Não foi possível salvar.")).toBeTruthy();
+    expect(storedQuickStartGuideStatus()).toBeUndefined();
+    expect(useQuickStartGuide.getState().mode).toBe("closed");
   });
 
-  it.each([
-    ["Ir para visão geral", "/"],
-    ["Importar primeiro extrato", "/import"],
-    ["Ajustar categorias", "/categories?tab=categories"],
-  ])("opens %s after completion", async (label, destination) => {
+  it("queues the quick guide only after onboarding is saved", async () => {
+    await completeFlow();
+
+    expect(screen.getByRole("heading", { name: "Conheça o essencial" })).toBeTruthy();
+    expect(screen.getByLabelText("Etapas do guia rápido").children).toHaveLength(7);
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(screen.getByText("Você pode pular ou fechar o guia a qualquer momento.")).toBeTruthy();
+    expect(storedQuickStartGuideStatus()).toBe("pending");
+    expect(useQuickStartGuide.getState().mode).toBe("invitation");
+  });
+
+  it("starts the contextual guide from the completion invitation", async () => {
     const onFinished = vi.fn().mockResolvedValue(undefined);
     await completeFlow(onFinished);
 
-    fireEvent.click(screen.getByRole("button", { name: new RegExp(label, "i") }));
+    fireEvent.click(screen.getByRole("button", { name: /Começar guia/i }));
 
-    expect(onFinished).toHaveBeenCalledWith(destination);
+    await waitFor(() => expect(onFinished).toHaveBeenCalledWith("/import"));
+    expect(storedQuickStartGuideStatus()).toBe("pending");
+    expect(useQuickStartGuide.getState().mode).toBe("tour");
   });
 });
