@@ -125,6 +125,8 @@ pub fn run() {
             commands::list_credit_card_invoices_page,
             commands::set_invoice_status,
             commands::get_credit_card_invoice_items,
+            commands::list_card_payment_reconciliations,
+            commands::reconcile_card_payment,
             commands::find_invoice_payment_matches,
             commands::link_invoice_payment,
             commands::unlink_invoice_payment,

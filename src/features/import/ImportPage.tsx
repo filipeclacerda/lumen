@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -47,7 +47,9 @@ import {
   suggestRulePattern,
 } from "../../shared/format";
 import type {
+  CreditCardImportCommitResult,
   CreditCardImportPreview,
+  CreditCardImportItem,
   Category,
   CategoryKind,
   ImportCandidate,
@@ -78,6 +80,42 @@ type LearningDraft = {
   count: number;
 };
 
+export function cardPaymentReconciliationPath(paymentTransactionId: string) {
+  return `/accounts?reconcile=${encodeURIComponent(paymentTransactionId)}`;
+}
+
+export function CardImportCommitNotice({
+  summary,
+  onReview,
+}: {
+  summary: CreditCardImportCommitResult;
+  onReview: (paymentTransactionId: string) => void;
+}) {
+  if (summary.paymentTransactionIds.length === 0) return null;
+
+  return (
+    <article className="import-payment-summary" aria-live="polite">
+      <div>
+        <CheckCircle2 aria-hidden="true" />
+        <span>
+          <strong>
+            {summary.paymentTransactionIds.length}{" "}
+            {summary.paymentTransactionIds.length === 1
+              ? "pagamento anterior detectado"
+              : "pagamentos anteriores detectados"}
+          </strong>
+          <small>
+            Revise a correspondência com a fatura anterior e com o débito da conta antes de confirmar o vínculo.
+          </small>
+        </span>
+      </div>
+      <button className="secondary" onClick={() => onReview(summary.paymentTransactionIds[0])}>
+        Revisar conciliação
+      </button>
+    </article>
+  );
+}
+
 const bankRoles: { value: CsvColumnRole; label: string }[] = [
   { value: "date", label: "Data" },
   { value: "signed_amount", label: "Valor" },
@@ -101,8 +139,153 @@ const cardRoles: { value: CsvColumnRole; label: string }[] = [
   { value: "external_id", label: "ID externo" },
 ];
 
+export function creditCardCategorizationCandidates(preview?: CreditCardImportPreview) {
+  return preview?.items.filter((item) => !item.isPayment).map((item) => item.candidate) ?? [];
+}
+
+export function CreditCardImportTotals({ preview }: { preview: CreditCardImportPreview }) {
+  const paymentCount = preview.items.filter((item) => item.isPayment && item.included).length;
+
+  return (
+    <>
+      <div className="invoice-totals">
+        <div>
+          <span>Compras</span>
+          <strong>{money(preview.purchasesInCents)}</strong>
+        </div>
+        <div>
+          <span>Créditos e estornos</span>
+          <strong>{money(preview.creditsInCents)}</strong>
+        </div>
+        <div className="invoice-total">
+          <span>Total desta fatura</span>
+          <strong>{money(preview.totalInCents)}</strong>
+        </div>
+      </div>
+      {paymentCount > 0 && (
+        <div className="import-payment-callout" role="status">
+          <ArrowLeftRight aria-hidden="true" />
+          <span>
+            <strong>
+              {paymentCount === 1 ? "Pagamento anterior detectado" : "Pagamentos anteriores detectados"} — não altera
+              esta fatura
+            </strong>
+            <small>
+              {money(preview.paymentsInCents)} será mantido para baixar a dívida do cartão e poderá ser conciliado
+              depois.
+            </small>
+          </span>
+        </div>
+      )}
+    </>
+  );
+}
+
+type CreditCardImportItemsProps = {
+  items: CreditCardImportItem[];
+  paymentsInCents: number;
+  categories: Category[];
+  onUpdate: (sourceRow: number, included: boolean, categoryId?: string) => void;
+};
+
+export function CreditCardImportItems({ items, paymentsInCents, categories, onUpdate }: CreditCardImportItemsProps) {
+  const regularItems = items.filter((item) => !item.isPayment);
+  const paymentItems = items.filter((item) => item.isPayment);
+
+  return (
+    <div className="credit-card-import-items">
+      <CreditCardItemsTable items={regularItems} categories={categories} onUpdate={onUpdate} />
+      {paymentItems.length > 0 && (
+        <details className="import-payment-details">
+          <summary>
+            <span>
+              Pagamentos anteriores ({paymentItems.length}) <strong>{money(paymentsInCents)}</strong>
+            </span>
+            <small>Incluídos por padrão</small>
+          </summary>
+          <p>
+            Estes lançamentos baixam a dívida do cartão, mas não alteram o total desta fatura. Desmarque somente se a
+            detecção estiver incorreta.
+          </p>
+          <CreditCardItemsTable items={paymentItems} categories={categories} onUpdate={onUpdate} payments />
+        </details>
+      )}
+    </div>
+  );
+}
+
+function CreditCardItemsTable({
+  items,
+  categories,
+  onUpdate,
+  payments = false,
+}: Omit<CreditCardImportItemsProps, "paymentsInCents"> & { payments?: boolean }) {
+  if (items.length === 0) return null;
+
+  return (
+    <div className="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Incluir</th>
+            <th>Data</th>
+            <th>Estabelecimento</th>
+            <th>Portador</th>
+            <th>Parcela</th>
+            <th>Categoria</th>
+            <th>Valor</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item) => (
+            <tr key={item.candidate.sourceRow} className={!item.included ? "excluded-row" : ""}>
+              <td>
+                <input
+                  type="checkbox"
+                  checked={item.included}
+                  disabled={item.candidate.duplicateStatus === "exact"}
+                  aria-label={`Incluir ${item.candidate.description}`}
+                  onChange={(event) =>
+                    onUpdate(item.candidate.sourceRow, event.target.checked, item.candidate.suggestedCategoryId)
+                  }
+                />
+              </td>
+              <td>{item.candidate.date}</td>
+              <td>
+                {item.candidate.description}
+                {payments && <small className="source-label">pagamento anterior</small>}
+                {!payments && item.candidate.suggestionSource === "rule" && (
+                  <small className="source-label">por {item.candidate.suggestedRuleName ?? "regra"}</small>
+                )}
+                {!payments && item.candidate.suggestionSource === "history" && (
+                  <small className="source-label history-label">pelo seu histórico</small>
+                )}
+              </td>
+              <td>{item.holder ?? "—"}</td>
+              <td>{item.installment ?? "—"}</td>
+              <td>
+                <CategorySelect
+                  value={item.candidate.suggestedCategoryId}
+                  categories={categories}
+                  kind={compatibleCategoryKinds(item.candidate, categories, true)}
+                  disabled={payments}
+                  onChange={(value) => onUpdate(item.candidate.sourceRow, item.included, value)}
+                />
+              </td>
+              <td className={item.candidate.amountInCents > 0 ? "positive amount" : "amount"}>
+                {money(item.candidate.amountInCents)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function ImportPage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const client = useQueryClient();
   const [bankPreview, setBankPreview] = useState<ImportPreview>();
   const [cardPreview, setCardPreview] = useState<CreditCardImportPreview>();
@@ -121,6 +304,7 @@ export function ImportPage() {
   const [isReadingFile, setIsReadingFile] = useState(false);
   const [transferCandidates, setTransferCandidates] = useState<TransferCandidate[]>([]);
   const [linkingTransfer, setLinkingTransfer] = useState<string>();
+  const [cardCommitSummary, setCardCommitSummary] = useState<CreditCardImportCommitResult>();
 
   useEffect(() => {
     if (pendingCardPath) {
@@ -197,10 +381,7 @@ export function ImportPage() {
   const canStartImport = !bankPreview && !cardPreview && !pendingCardPath && !mappingState;
   const bankSummary = useMemo(() => summarizeSuggestions(bankPreview?.candidates ?? []), [bankPreview?.candidates]);
   const bankGroups = useMemo(() => groupPendingCandidates(bankPreview?.candidates ?? []), [bankPreview?.candidates]);
-  const cardCandidates = useMemo(
-    () => cardPreview?.items.filter((item) => !item.isPayment).map((item) => item.candidate) ?? [],
-    [cardPreview?.items],
-  );
+  const cardCandidates = useMemo(() => creditCardCategorizationCandidates(cardPreview), [cardPreview]);
   const cardSummary = useMemo(() => summarizeSuggestions(cardCandidates), [cardCandidates]);
   const cardGroups = useMemo(() => groupPendingCandidates(cardCandidates), [cardCandidates]);
 
@@ -267,6 +448,7 @@ export function ImportPage() {
       setIsDraggingFile(false);
       resetFlow();
       setMessage("");
+      setCardCommitSummary(undefined);
       try {
         const kind = await api.detectImportKind(path);
         if (kind === "known_credit_card") {
@@ -480,9 +662,14 @@ export function ImportPage() {
       return;
     }
     setPendingCommit(undefined);
-    await api.commitCreditCardImport(cardPreview.sessionId);
+    const result = await api.commitCreditCardImport(cardPreview.sessionId);
     await maybeSaveMappingProfile();
-    setMessage("Fatura importada. As compras já aparecem nas despesas pelas datas originais.");
+    setCardCommitSummary(result);
+    setMessage(
+      result.paymentTransactionIds.length > 0
+        ? "Fatura importada. Os pagamentos anteriores estão prontos para conciliação."
+        : "Fatura importada. As compras já aparecem nas despesas pelas datas originais.",
+    );
     resetFlow();
     await refresh();
   }
@@ -1170,20 +1357,7 @@ export function ImportPage() {
               />
             </label>
           </div>
-          <div className="invoice-totals">
-            <div>
-              <span>Compras</span>
-              <strong>{money(cardPreview.purchasesInCents)}</strong>
-            </div>
-            <div>
-              <span>Créditos e pagamentos</span>
-              <strong>{money(cardPreview.creditsInCents)}</strong>
-            </div>
-            <div className="invoice-total">
-              <span>Saldo da fatura</span>
-              <strong>{money(cardPreview.totalInCents)}</strong>
-            </div>
-          </div>
+          <CreditCardImportTotals preview={cardPreview} />
           <SuggestionSummary summary={cardSummary} />
           {lastChoice?.kind === "card" && (
             <ChoiceNotice choice={lastChoice} onCreateRule={() => setLearning(lastChoice)} />
@@ -1208,66 +1382,13 @@ export function ImportPage() {
               />
             </div>
           ) : (
-            <div className="table-scroll" role="tabpanel" aria-label="Todos os itens da fatura">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Incluir</th>
-                    <th>Data</th>
-                    <th>Estabelecimento</th>
-                    <th>Portador</th>
-                    <th>Parcela</th>
-                    <th>Categoria</th>
-                    <th>Valor</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {cardPreview.items.map((item) => (
-                    <tr key={item.candidate.sourceRow} className={!item.included ? "excluded-row" : ""}>
-                      <td>
-                        <input
-                          type="checkbox"
-                          checked={item.included}
-                          disabled={item.candidate.duplicateStatus === "exact"}
-                          aria-label={`Incluir ${item.candidate.description}`}
-                          onChange={(event) =>
-                            updateCard(
-                              item.candidate.sourceRow,
-                              event.target.checked,
-                              item.candidate.suggestedCategoryId,
-                            )
-                          }
-                        />
-                      </td>
-                      <td>{item.candidate.date}</td>
-                      <td>
-                        {item.candidate.description}
-                        {item.isPayment && <small className="source-label">transferência</small>}
-                        {!item.isPayment && item.candidate.suggestionSource === "rule" && (
-                          <small className="source-label">por {item.candidate.suggestedRuleName ?? "regra"}</small>
-                        )}
-                        {!item.isPayment && item.candidate.suggestionSource === "history" && (
-                          <small className="source-label history-label">pelo seu histórico</small>
-                        )}
-                      </td>
-                      <td>{item.holder ?? "—"}</td>
-                      <td>{item.installment ?? "—"}</td>
-                      <td>
-                        <CategorySelect
-                          value={item.candidate.suggestedCategoryId}
-                          categories={categories}
-                          kind={compatibleCategoryKinds(item.candidate, categories, true)}
-                          disabled={item.isPayment}
-                          onChange={(value) => updateCard(item.candidate.sourceRow, item.included, value)}
-                        />
-                      </td>
-                      <td className={item.candidate.amountInCents > 0 ? "positive amount" : "amount"}>
-                        {money(item.candidate.amountInCents)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div role="tabpanel" aria-label="Todos os itens da fatura">
+              <CreditCardImportItems
+                items={cardPreview.items}
+                paymentsInCents={cardPreview.paymentsInCents}
+                categories={categories}
+                onUpdate={(sourceRow, included, categoryId) => updateCard(sourceRow, included, categoryId)}
+              />
             </div>
           )}
           <div className="editor-actions">
@@ -1279,6 +1400,12 @@ export function ImportPage() {
         </article>
       )}
       {message && <p className="notice">{message}</p>}
+      {cardCommitSummary && (
+        <CardImportCommitNotice
+          summary={cardCommitSummary}
+          onReview={(paymentTransactionId) => navigate(cardPaymentReconciliationPath(paymentTransactionId))}
+        />
+      )}
 
       {transferCandidates.length > 0 && (
         <article className="panel">

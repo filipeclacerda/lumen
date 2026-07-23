@@ -11,6 +11,15 @@ const LIVE_DB: &str = "financa.db";
 const PENDING_RESTORE: &str = "financa.restore";
 const RESTORE_TMP: &str = "financa.restore.tmp";
 const ROLLBACK_DB: &str = "financa.db.pre-restore";
+const PAYMENT_SETTLEMENT_MIGRATION_VERSION: i64 = 19;
+// Development builds could apply the first complete v19 snapshot while `tauri dev` was
+// watching the repository. That snapshot already contains the data transformation and
+// progressive-link schema, but predates the final unique invoice constraint.
+const LEGACY_PAYMENT_SETTLEMENT_CHECKSUM: &[u8; 48] = &[
+    0xC7, 0x34, 0x1F, 0xF4, 0x30, 0x9B, 0x7C, 0x55, 0xDE, 0xD8, 0x48, 0x57, 0x71, 0x72, 0xB7, 0x53,
+    0x90, 0x83, 0x94, 0x92, 0x4B, 0x66, 0x9F, 0xC9, 0xB0, 0x7D, 0xFD, 0x63, 0x97, 0x70, 0xBC, 0xC6,
+    0x0F, 0xDF, 0x2C, 0x46, 0xCE, 0x60, 0xFF, 0x71, 0x91, 0x83, 0x8A, 0x85, 0x50, 0x44, 0x23, 0x98,
+];
 
 pub async fn connect(path: &Path) -> Result<SqlitePool, AppError> {
     let options = SqliteConnectOptions::new()
@@ -31,6 +40,7 @@ async fn initialize_pool(pool: &SqlitePool) -> Result<(), AppError> {
     sqlx::query("PRAGMA journal_mode=WAL").execute(pool).await?;
     sqlx::query("PRAGMA foreign_keys=ON").execute(pool).await?;
     let migrator = sqlx::migrate!("./migrations");
+    repair_payment_settlement_migration(pool, &migrator).await?;
     repair_line_ending_migration_checksums(pool, &migrator).await?;
     migrator.run(pool).await?;
     Ok(())
@@ -629,6 +639,98 @@ async fn repair_line_ending_migration_checksums(
     }
     Ok(())
 }
+
+async fn repair_payment_settlement_migration(
+    pool: &SqlitePool,
+    migrator: &Migrator,
+) -> Result<(), AppError> {
+    let migrations_table_exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='_sqlx_migrations'",
+    )
+    .fetch_one(pool)
+    .await?;
+    if migrations_table_exists == 0 {
+        return Ok(());
+    }
+    let applied: Option<Vec<u8>> = sqlx::query_scalar(
+        "SELECT checksum FROM _sqlx_migrations WHERE version=? AND success=1",
+    )
+    .bind(PAYMENT_SETTLEMENT_MIGRATION_VERSION)
+    .fetch_optional(pool)
+    .await?;
+    if applied.as_deref() != Some(LEGACY_PAYMENT_SETTLEMENT_CHECKSUM.as_slice()) {
+        return Ok(());
+    }
+    let current = migrator
+        .iter()
+        .find(|migration| migration.version == PAYMENT_SETTLEMENT_MIGRATION_VERSION)
+        .ok_or_else(|| AppError::Validation("Migration de pagamentos não encontrada".into()))?;
+
+    for (table, column) in [
+        ("credit_card_invoices", "payments_cents"),
+        ("credit_card_invoice_items", "line_kind"),
+        ("transaction_links", "previous_invoice_status"),
+    ] {
+        let found: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?")
+                .bind(table)
+                .bind(column)
+                .fetch_one(pool)
+                .await?;
+        if found == 0 {
+            return Err(AppError::Validation(
+                "A migration local de pagamentos está incompleta".into(),
+            ));
+        }
+    }
+    let valid_trigger: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master
+         WHERE type='trigger' AND name='update_invoice_totals_on_transaction_update'
+           AND sql LIKE '%line_kind = ''refund''%'
+           AND sql LIKE '%line_kind = ''payment''%'",
+    )
+    .fetch_one(pool)
+    .await?;
+    if valid_trigger == 0 {
+        return Err(AppError::Validation(
+            "A migration local de pagamentos está incompleta".into(),
+        ));
+    }
+    let duplicate_invoices: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM (
+           SELECT invoice_id FROM transaction_links
+           WHERE invoice_id IS NOT NULL
+           GROUP BY invoice_id HAVING COUNT(*) > 1
+         )",
+    )
+    .fetch_one(pool)
+    .await?;
+    if duplicate_invoices > 0 {
+        return Err(AppError::Validation(
+            "Há mais de uma conciliação para a mesma fatura".into(),
+        ));
+    }
+
+    let mut tx = pool.begin().await?;
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS transaction_links_unique_invoice
+         ON transaction_links(invoice_id)",
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "UPDATE _sqlx_migrations SET checksum=?
+         WHERE version=? AND success=1 AND checksum=?",
+    )
+    .bind(current.checksum.as_ref().to_vec())
+    .bind(PAYMENT_SETTLEMENT_MIGRATION_VERSION)
+    .bind(LEGACY_PAYMENT_SETTLEMENT_CHECKSUM.as_slice())
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 fn line_ending_variant_checksum(migration: &Migration) -> Option<Vec<u8>> {
     let sql = migration.sql.as_ref();
     let alternate_sql = if sql.contains("\r\n") {

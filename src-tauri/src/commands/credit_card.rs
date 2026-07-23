@@ -31,8 +31,16 @@ pub struct CreditCardImportPreview {
     due_date: String,
     purchases_in_cents: i64,
     credits_in_cents: i64,
+    payments_in_cents: i64,
     total_in_cents: i64,
     items: Vec<CreditCardImportItem>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreditCardImportCommitResult {
+    invoice_id: String,
+    payment_transaction_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -44,6 +52,7 @@ pub struct CreditCardInvoice {
     due_date: String,
     purchases_in_cents: i64,
     credits_in_cents: i64,
+    payments_in_cents: i64,
     total_in_cents: i64,
     status: String,
     payment_transaction_id: Option<String>,
@@ -82,7 +91,7 @@ pub struct CreditCardInvoiceItem {
     is_linked: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PaymentMatchCandidate {
     transaction_id: String,
@@ -93,11 +102,37 @@ pub struct PaymentMatchCandidate {
     distance_in_days: i64,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InvoicePaymentMatchCandidate {
+    id: String,
+    account_name: String,
+    due_date: String,
+    total_in_cents: i64,
+    distance_in_days: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CardPaymentReconciliation {
+    payment_transaction_id: String,
+    card_account_id: String,
+    card_account_name: String,
+    date: String,
+    description: String,
+    amount_in_cents: i64,
+    invoice_candidates: Vec<InvoicePaymentMatchCandidate>,
+    bank_candidates: Vec<PaymentMatchCandidate>,
+    invoice_id: Option<String>,
+    bank_transaction_id: Option<String>,
+    state: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionLink {
     id: String,
-    debit_transaction_id: String,
+    debit_transaction_id: Option<String>,
     credit_transaction_id: Option<String>,
     invoice_id: Option<String>,
 }
@@ -186,6 +221,7 @@ async fn build_credit_card_preview(
         due_date,
         purchases_in_cents: totals.purchases_in_cents,
         credits_in_cents: totals.credits_in_cents,
+        payments_in_cents: totals.payments_in_cents,
         total_in_cents: totals.total_in_cents,
         items: parsed.items,
     })
@@ -339,6 +375,7 @@ pub async fn update_credit_card_import(
         due_date: session.due_date.clone(),
         purchases_in_cents: totals.purchases_in_cents,
         credits_in_cents: totals.credits_in_cents,
+        payments_in_cents: totals.payments_in_cents,
         total_in_cents: totals.total_in_cents,
         items: session.items.clone(),
     })
@@ -403,6 +440,7 @@ pub async fn update_credit_card_import_categories(
         due_date: session.due_date.clone(),
         purchases_in_cents: totals.purchases_in_cents,
         credits_in_cents: totals.credits_in_cents,
+        payments_in_cents: totals.payments_in_cents,
         total_in_cents: totals.total_in_cents,
         items: session.items.clone(),
     })
@@ -447,7 +485,7 @@ fn update_credit_card_import_categories_impl(
 pub async fn commit_credit_card_import(
     session_id: String,
     state: State<'_, AppState>,
-) -> Result<String, AppError> {
+) -> Result<CreditCardImportCommitResult, AppError> {
     let _commit_guard = state.import_commit.lock().await;
     let session = state
         .credit_card_sessions
@@ -456,15 +494,15 @@ pub async fn commit_credit_card_import(
         .get(&session_id)
         .cloned()
         .ok_or(AppError::SessionExpired)?;
-    let invoice_id = commit_credit_card_import_impl(session, &state.db).await?;
+    let result = commit_credit_card_import_impl(session, &state.db).await?;
     state.credit_card_sessions.lock().await.remove(&session_id);
-    Ok(invoice_id)
+    Ok(result)
 }
 
 pub(crate) async fn commit_credit_card_import_impl(
     session: CreditCardImportSession,
     db: &SqlitePool,
-) -> Result<String, AppError> {
+) -> Result<CreditCardImportCommitResult, AppError> {
     let mut tx = db.begin().await?;
     let mut seen_external = HashSet::new();
     let mut seen_fingerprint = HashSet::new();
@@ -501,12 +539,13 @@ pub(crate) async fn commit_credit_card_import_impl(
         .execute(&mut *tx)
         .await?;
     sqlx::query(
-        "INSERT INTO credit_card_invoices(id,account_id,due_date,purchases_cents,credits_cents,total_cents,status,import_batch_id)
-         VALUES(?,?,?,?,?,?,?,?)"
+        "INSERT INTO credit_card_invoices(id,account_id,due_date,purchases_cents,credits_cents,payments_cents,total_cents,status,import_batch_id)
+         VALUES(?,?,?,?,?,?,?,?,?)"
     ).bind(&invoice_id).bind(&session.account_id).bind(&session.due_date)
-        .bind(totals.purchases_in_cents).bind(totals.credits_in_cents).bind(totals.total_in_cents)
+        .bind(totals.purchases_in_cents).bind(totals.credits_in_cents).bind(totals.payments_in_cents).bind(totals.total_in_cents)
         .bind(if totals.total_in_cents <= 0 { "paid" } else { "open" })
         .bind(&batch_id).execute(&mut *tx).await?;
+    let mut payment_transaction_ids = Vec::new();
     for item in included {
         let transaction_id = Uuid::new_v4().to_string();
         let source = match item.candidate.suggestion_source {
@@ -532,6 +571,9 @@ pub(crate) async fn commit_credit_card_import_impl(
         ).bind(&invoice_id).bind(&transaction_id).bind(&item.holder).bind(&item.installment)
             .bind(item.candidate.source_row as i64).bind(item.raw_amount_in_cents).bind(item.line_kind.as_str())
             .execute(&mut *tx).await?;
+        if item.is_payment {
+            payment_transaction_ids.push(transaction_id.clone());
+        }
         if let Some(rule_id) = item.candidate.suggested_rule_id {
             sqlx::query("UPDATE categorization_rules SET use_count=use_count+1 WHERE id=?")
                 .bind(rule_id)
@@ -540,7 +582,10 @@ pub(crate) async fn commit_credit_card_import_impl(
         }
     }
     tx.commit().await?;
-    Ok(invoice_id)
+    Ok(CreditCardImportCommitResult {
+        invoice_id,
+        payment_transaction_ids,
+    })
 }
 
 #[tauri::command]
@@ -548,7 +593,7 @@ pub async fn list_credit_card_invoices(
     state: State<'_, AppState>,
 ) -> Result<Vec<CreditCardInvoice>, AppError> {
     let rows = sqlx::query(
-        "SELECT i.id,i.account_id,a.name account_name,i.due_date,i.purchases_cents,i.credits_cents,
+        "SELECT i.id,i.account_id,a.name account_name,i.due_date,i.purchases_cents,i.credits_cents,i.payments_cents,
          i.total_cents,i.status,i.payment_transaction_id,t.description payment_description,t.date payment_date
          FROM credit_card_invoices i JOIN accounts a ON a.id=i.account_id
          LEFT JOIN transactions t ON t.id=i.payment_transaction_id
@@ -563,6 +608,7 @@ pub async fn list_credit_card_invoices(
             due_date: r.get("due_date"),
             purchases_in_cents: r.get("purchases_cents"),
             credits_in_cents: r.get("credits_cents"),
+            payments_in_cents: r.get("payments_cents"),
             total_in_cents: r.get("total_cents"),
             status: r.get("status"),
             payment_transaction_id: r.get("payment_transaction_id"),
@@ -584,7 +630,7 @@ pub async fn list_credit_card_invoices_page(
     let limit = filter.limit.unwrap_or(10).clamp(1, 1000);
     let offset = filter.offset.unwrap_or(0).max(0);
     let rows = sqlx::query(
-        "SELECT i.id,i.account_id,a.name account_name,i.due_date,i.purchases_cents,i.credits_cents,
+        "SELECT i.id,i.account_id,a.name account_name,i.due_date,i.purchases_cents,i.credits_cents,i.payments_cents,
          i.total_cents,i.status,i.payment_transaction_id,t.description payment_description,t.date payment_date
          FROM credit_card_invoices i JOIN accounts a ON a.id=i.account_id
          LEFT JOIN transactions t ON t.id=i.payment_transaction_id
@@ -603,6 +649,7 @@ pub async fn list_credit_card_invoices_page(
             due_date: r.get("due_date"),
             purchases_in_cents: r.get("purchases_cents"),
             credits_in_cents: r.get("credits_cents"),
+            payments_in_cents: r.get("payments_cents"),
             total_in_cents: r.get("total_cents"),
             status: r.get("status"),
             payment_transaction_id: r.get("payment_transaction_id"),
@@ -643,6 +690,477 @@ pub async fn get_credit_card_invoice_items(
             is_linked: r.get::<i64, _>("is_linked") != 0,
         })
         .collect())
+}
+
+async fn reconciliation_invoice_candidates(
+    db: &SqlitePool,
+    payment_transaction_id: &str,
+    card_account_id: &str,
+    source_invoice_id: &str,
+    payment_date: &str,
+    amount_in_cents: i64,
+) -> Result<Vec<InvoicePaymentMatchCandidate>, AppError> {
+    let rows = sqlx::query(
+        "SELECT i.id,a.name account_name,i.due_date,i.total_cents,
+         CAST(ABS(julianday(i.due_date)-julianday(?)) AS INTEGER) distance
+         FROM credit_card_invoices i
+         JOIN accounts a ON a.id=i.account_id
+         LEFT JOIN transaction_links l ON l.kind='credit_card_payment' AND l.invoice_id=i.id
+         WHERE i.account_id=? AND i.id!=? AND i.deleted_at IS NULL
+           AND i.total_cents=? AND ABS(julianday(i.due_date)-julianday(?))<=10
+           AND (l.id IS NULL OR l.credit_transaction_id IS NULL OR l.credit_transaction_id=?)
+         ORDER BY distance,i.due_date,i.id",
+    )
+    .bind(payment_date)
+    .bind(card_account_id)
+    .bind(source_invoice_id)
+    .bind(amount_in_cents)
+    .bind(payment_date)
+    .bind(payment_transaction_id)
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| InvoicePaymentMatchCandidate {
+            id: row.get("id"),
+            account_name: row.get("account_name"),
+            due_date: row.get("due_date"),
+            total_in_cents: row.get("total_cents"),
+            distance_in_days: row.get("distance"),
+        })
+        .collect())
+}
+
+async fn reconciliation_bank_candidates(
+    db: &SqlitePool,
+    payment_transaction_id: &str,
+    payment_date: &str,
+    amount_in_cents: i64,
+) -> Result<Vec<PaymentMatchCandidate>, AppError> {
+    let rows = sqlx::query(
+        "SELECT t.id,a.name account_name,t.date,t.description,t.amount_cents,
+         CAST(ABS(julianday(t.date)-julianday(?)) AS INTEGER) distance
+         FROM transactions t
+         JOIN accounts a ON a.id=t.account_id
+         LEFT JOIN transaction_links l ON l.debit_transaction_id=t.id
+         WHERE a.kind!='credit_card' AND a.deleted_at IS NULL
+           AND t.deleted_at IS NULL AND t.amount_cents=?
+           AND ABS(julianday(t.date)-julianday(?))<=10
+           AND (l.id IS NULL OR (
+             l.kind='credit_card_payment'
+             AND (l.credit_transaction_id IS NULL OR l.credit_transaction_id=?)
+           ))
+         ORDER BY distance,t.date,t.id",
+    )
+    .bind(payment_date)
+    .bind(-amount_in_cents)
+    .bind(payment_date)
+    .bind(payment_transaction_id)
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| PaymentMatchCandidate {
+            transaction_id: row.get("id"),
+            account_name: row.get("account_name"),
+            date: row.get("date"),
+            description: row.get("description"),
+            amount_in_cents: row.get("amount_cents"),
+            distance_in_days: row.get("distance"),
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn list_card_payment_reconciliations(
+    state: State<'_, AppState>,
+) -> Result<Vec<CardPaymentReconciliation>, AppError> {
+    list_card_payment_reconciliations_impl(&state.db).await
+}
+
+pub(crate) async fn list_card_payment_reconciliations_impl(
+    db: &SqlitePool,
+) -> Result<Vec<CardPaymentReconciliation>, AppError> {
+    let rows = sqlx::query(
+        "SELECT t.id payment_transaction_id,t.account_id card_account_id,a.name card_account_name,
+         t.date,t.description,t.amount_cents,x.invoice_id source_invoice_id,
+         l.invoice_id,l.debit_transaction_id
+         FROM transactions t
+         JOIN accounts a ON a.id=t.account_id
+         JOIN credit_card_invoice_items x ON x.transaction_id=t.id
+         LEFT JOIN transaction_links l
+           ON l.kind='credit_card_payment' AND l.credit_transaction_id=t.id
+         WHERE a.kind='credit_card' AND a.deleted_at IS NULL
+           AND t.deleted_at IS NULL AND t.amount_cents>0 AND x.line_kind='payment'
+           AND (l.id IS NULL OR l.invoice_id IS NULL OR l.debit_transaction_id IS NULL)
+         ORDER BY t.date DESC,t.id",
+    )
+    .fetch_all(db)
+    .await?;
+    let mut reconciliations = Vec::with_capacity(rows.len());
+    for row in rows {
+        let payment_transaction_id: String = row.get("payment_transaction_id");
+        let card_account_id: String = row.get("card_account_id");
+        let source_invoice_id: String = row.get("source_invoice_id");
+        let date: String = row.get("date");
+        let amount_in_cents: i64 = row.get("amount_cents");
+        let invoice_id: Option<String> = row.get("invoice_id");
+        let bank_transaction_id: Option<String> = row.get("debit_transaction_id");
+        let invoice_candidates = reconciliation_invoice_candidates(
+            db,
+            &payment_transaction_id,
+            &card_account_id,
+            &source_invoice_id,
+            &date,
+            amount_in_cents,
+        )
+        .await?;
+        let bank_candidates =
+            reconciliation_bank_candidates(db, &payment_transaction_id, &date, amount_in_cents)
+                .await?;
+        let reconciliation_state = match (invoice_id.is_some(), bank_transaction_id.is_some()) {
+            (true, true) => "reconciled",
+            (true, false) => "invoice_confirmed",
+            (false, true) => "bank_confirmed",
+            (false, false) => "pending",
+        };
+        reconciliations.push(CardPaymentReconciliation {
+            payment_transaction_id,
+            card_account_id,
+            card_account_name: row.get("card_account_name"),
+            date,
+            description: row.get("description"),
+            amount_in_cents,
+            invoice_candidates,
+            bank_candidates,
+            invoice_id,
+            bank_transaction_id,
+            state: reconciliation_state.into(),
+        });
+    }
+    Ok(reconciliations)
+}
+
+#[derive(Debug)]
+struct ExistingPaymentLink {
+    id: String,
+    debit_transaction_id: Option<String>,
+    credit_transaction_id: Option<String>,
+    invoice_id: Option<String>,
+    previous_category_id: Option<String>,
+    previous_category_source: Option<String>,
+    previous_rule_id: Option<String>,
+    previous_invoice_status: Option<String>,
+}
+
+async fn find_payment_link(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    payment_transaction_id: &str,
+    invoice_id: Option<&str>,
+    bank_transaction_id: Option<&str>,
+) -> Result<Option<ExistingPaymentLink>, AppError> {
+    let mut ids = HashSet::new();
+    if let Some(id) = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM transaction_links
+         WHERE kind='credit_card_payment' AND credit_transaction_id=?",
+    )
+    .bind(payment_transaction_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    {
+        ids.insert(id);
+    }
+    if let Some(invoice_id) = invoice_id {
+        if let Some(id) = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM transaction_links
+             WHERE kind='credit_card_payment' AND invoice_id=?",
+        )
+        .bind(invoice_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        {
+            ids.insert(id);
+        }
+    }
+    if let Some(bank_transaction_id) = bank_transaction_id {
+        if let Some(id) = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM transaction_links
+             WHERE kind='credit_card_payment' AND debit_transaction_id=?",
+        )
+        .bind(bank_transaction_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        {
+            ids.insert(id);
+        }
+    }
+    if ids.len() > 1 {
+        return Err(AppError::Validation(
+            "Os lançamentos selecionados pertencem a conciliações diferentes".into(),
+        ));
+    }
+    let Some(id) = ids.into_iter().next() else {
+        return Ok(None);
+    };
+    let row = sqlx::query(
+        "SELECT id,debit_transaction_id,credit_transaction_id,invoice_id,
+         previous_category_id,previous_category_source,previous_rule_id,previous_invoice_status
+         FROM transaction_links WHERE id=?",
+    )
+    .bind(id)
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(Some(ExistingPaymentLink {
+        id: row.get("id"),
+        debit_transaction_id: row.get("debit_transaction_id"),
+        credit_transaction_id: row.get("credit_transaction_id"),
+        invoice_id: row.get("invoice_id"),
+        previous_category_id: row.get("previous_category_id"),
+        previous_category_source: row.get("previous_category_source"),
+        previous_rule_id: row.get("previous_rule_id"),
+        previous_invoice_status: row.get("previous_invoice_status"),
+    }))
+}
+
+pub(crate) async fn reconcile_card_payment_impl(
+    payment_transaction_id: String,
+    invoice_id: Option<String>,
+    bank_transaction_id: Option<String>,
+    db: &SqlitePool,
+) -> Result<TransactionLink, AppError> {
+    if invoice_id.is_none() && bank_transaction_id.is_none() {
+        return Err(AppError::Validation(
+            "Selecione uma fatura ou um lançamento bancário".into(),
+        ));
+    }
+    let mut tx = db.begin().await?;
+    let payment = sqlx::query(
+        "SELECT t.account_id,t.date,t.amount_cents,x.invoice_id source_invoice_id
+         FROM transactions t
+         JOIN accounts a ON a.id=t.account_id
+         JOIN credit_card_invoice_items x ON x.transaction_id=t.id
+         WHERE t.id=? AND t.deleted_at IS NULL AND a.deleted_at IS NULL
+           AND a.kind='credit_card' AND t.amount_cents>0 AND x.line_kind='payment'",
+    )
+    .bind(&payment_transaction_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::Validation("Pagamento de cartão não encontrado".into()))?;
+    let card_account_id: String = payment.get("account_id");
+    let payment_date: String = payment.get("date");
+    let payment_amount: i64 = payment.get("amount_cents");
+    let source_invoice_id: String = payment.get("source_invoice_id");
+
+    let invoice_status = if let Some(invoice_id) = &invoice_id {
+        if invoice_id == &source_invoice_id {
+            return Err(AppError::Validation(
+                "O pagamento não pertence à fatura em que foi informado".into(),
+            ));
+        }
+        Some(
+            sqlx::query_scalar::<_, String>(
+                "SELECT status FROM credit_card_invoices
+                 WHERE id=? AND account_id=? AND deleted_at IS NULL AND total_cents=?
+                   AND ABS(julianday(due_date)-julianday(?))<=10",
+            )
+            .bind(invoice_id)
+            .bind(&card_account_id)
+            .bind(payment_amount)
+            .bind(&payment_date)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| {
+                AppError::Validation(
+                    "A fatura precisa ser do mesmo cartão, ter o mesmo valor e vencimento próximo"
+                        .into(),
+                )
+            })?,
+        )
+    } else {
+        None
+    };
+    let bank_snapshot = if let Some(bank_transaction_id) = &bank_transaction_id {
+        Some(
+            sqlx::query(
+                "SELECT t.category_id,t.category_source,t.categorization_rule_id
+                 FROM transactions t
+                 JOIN accounts a ON a.id=t.account_id
+                 WHERE t.id=? AND t.deleted_at IS NULL AND a.deleted_at IS NULL
+                   AND a.kind!='credit_card' AND t.amount_cents=?
+                   AND ABS(julianday(t.date)-julianday(?))<=10",
+            )
+            .bind(bank_transaction_id)
+            .bind(-payment_amount)
+            .bind(&payment_date)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| {
+                AppError::Validation(
+                    "O débito bancário precisa ter o mesmo valor e uma data próxima".into(),
+                )
+            })?,
+        )
+    } else {
+        None
+    };
+
+    let existing = find_payment_link(
+        &mut tx,
+        &payment_transaction_id,
+        invoice_id.as_deref(),
+        bank_transaction_id.as_deref(),
+    )
+    .await?;
+    if let Some(link) = &existing {
+        if link
+            .credit_transaction_id
+            .as_deref()
+            .is_some_and(|value| value != payment_transaction_id)
+            || invoice_id
+                .as_deref()
+                .zip(link.invoice_id.as_deref())
+                .is_some_and(|(requested, current)| requested != current)
+            || bank_transaction_id
+                .as_deref()
+                .zip(link.debit_transaction_id.as_deref())
+                .is_some_and(|(requested, current)| requested != current)
+        {
+            return Err(AppError::Validation(
+                "A conciliação existente usa outro lançamento".into(),
+            ));
+        }
+    }
+    let final_invoice_id = invoice_id
+        .clone()
+        .or_else(|| existing.as_ref().and_then(|link| link.invoice_id.clone()));
+    let final_bank_transaction_id = bank_transaction_id.clone().or_else(|| {
+        existing
+            .as_ref()
+            .and_then(|link| link.debit_transaction_id.clone())
+    });
+    let previous_invoice_status = existing
+        .as_ref()
+        .and_then(|link| link.previous_invoice_status.clone())
+        .or(invoice_status);
+    let previous_category_id = existing
+        .as_ref()
+        .and_then(|link| link.previous_category_id.clone())
+        .or_else(|| {
+            bank_snapshot
+                .as_ref()
+                .and_then(|row| row.get::<Option<String>, _>("category_id"))
+        });
+    let previous_category_source = existing
+        .as_ref()
+        .and_then(|link| link.previous_category_source.clone())
+        .or_else(|| {
+            bank_snapshot
+                .as_ref()
+                .and_then(|row| row.get::<Option<String>, _>("category_source"))
+        });
+    let previous_rule_id = existing
+        .as_ref()
+        .and_then(|link| link.previous_rule_id.clone())
+        .or_else(|| {
+            bank_snapshot
+                .as_ref()
+                .and_then(|row| row.get::<Option<String>, _>("categorization_rule_id"))
+        });
+    let link_id = existing
+        .as_ref()
+        .map(|link| link.id.clone())
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    if existing.is_some() {
+        sqlx::query(
+            "UPDATE transaction_links
+             SET debit_transaction_id=?,credit_transaction_id=?,invoice_id=?,
+                 previous_category_id=?,previous_category_source=?,previous_rule_id=?,
+                 previous_invoice_status=?
+             WHERE id=?",
+        )
+        .bind(&final_bank_transaction_id)
+        .bind(&payment_transaction_id)
+        .bind(&final_invoice_id)
+        .bind(&previous_category_id)
+        .bind(&previous_category_source)
+        .bind(&previous_rule_id)
+        .bind(&previous_invoice_status)
+        .bind(&link_id)
+        .execute(&mut *tx)
+        .await?;
+    } else {
+        sqlx::query(
+            "INSERT INTO transaction_links(
+               id,kind,debit_transaction_id,credit_transaction_id,invoice_id,
+               previous_category_id,previous_category_source,previous_rule_id,previous_invoice_status
+             ) VALUES(?,'credit_card_payment',?,?,?,?,?,?,?)",
+        )
+        .bind(&link_id)
+        .bind(&final_bank_transaction_id)
+        .bind(&payment_transaction_id)
+        .bind(&final_invoice_id)
+        .bind(&previous_category_id)
+        .bind(&previous_category_source)
+        .bind(&previous_rule_id)
+        .bind(&previous_invoice_status)
+        .execute(&mut *tx)
+        .await?;
+    }
+    sqlx::query(
+        "UPDATE transactions
+         SET category_id='credit-card-payment',category_source='manual',categorization_rule_id=NULL
+         WHERE id=?",
+    )
+    .bind(&payment_transaction_id)
+    .execute(&mut *tx)
+    .await?;
+    if let Some(bank_transaction_id) = &final_bank_transaction_id {
+        sqlx::query(
+            "UPDATE transactions
+             SET category_id='credit-card-payment',category_source='manual',categorization_rule_id=NULL
+             WHERE id=?",
+        )
+        .bind(bank_transaction_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    if let Some(invoice_id) = &final_invoice_id {
+        sqlx::query(
+            "UPDATE credit_card_invoices
+             SET payment_transaction_id=?,status='paid' WHERE id=?",
+        )
+        .bind(
+            final_bank_transaction_id
+                .as_ref()
+                .unwrap_or(&payment_transaction_id),
+        )
+        .bind(invoice_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(TransactionLink {
+        id: link_id,
+        debit_transaction_id: final_bank_transaction_id,
+        credit_transaction_id: Some(payment_transaction_id),
+        invoice_id: final_invoice_id,
+    })
+}
+
+#[tauri::command]
+pub async fn reconcile_card_payment(
+    payment_transaction_id: String,
+    invoice_id: Option<String>,
+    bank_transaction_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<TransactionLink, AppError> {
+    reconcile_card_payment_impl(
+        payment_transaction_id,
+        invoice_id,
+        bank_transaction_id,
+        &state.db,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -695,7 +1213,7 @@ pub async fn link_invoice_payment(
     state: State<'_, AppState>,
 ) -> Result<TransactionLink, AppError> {
     let mut tx = state.db.begin().await?;
-    let invoice = sqlx::query("SELECT total_cents,payment_transaction_id FROM credit_card_invoices WHERE id=? AND deleted_at IS NULL")
+    let invoice = sqlx::query("SELECT total_cents,status,payment_transaction_id FROM credit_card_invoices WHERE id=? AND deleted_at IS NULL")
         .bind(&invoice_id).fetch_optional(&mut *tx).await?
         .ok_or_else(|| AppError::Validation("Fatura não encontrada".into()))?;
     if invoice
@@ -722,12 +1240,13 @@ pub async fn link_invoice_payment(
     }
     let link_id = Uuid::new_v4().to_string();
     sqlx::query(
-        "INSERT INTO transaction_links(id,kind,debit_transaction_id,invoice_id,previous_category_id,previous_category_source,previous_rule_id)
-         VALUES(?,'credit_card_payment',?,?,?,?,?)"
+        "INSERT INTO transaction_links(id,kind,debit_transaction_id,invoice_id,previous_category_id,previous_category_source,previous_rule_id,previous_invoice_status)
+         VALUES(?,'credit_card_payment',?,?,?,?,?,?)"
     ).bind(&link_id).bind(&bank_transaction_id).bind(&invoice_id)
         .bind(bank.get::<Option<String>,_>("category_id"))
         .bind(bank.get::<Option<String>,_>("category_source"))
         .bind(bank.get::<Option<String>,_>("categorization_rule_id"))
+        .bind(invoice.get::<String,_>("status"))
         .execute(&mut *tx).await?;
     sqlx::query(
         "UPDATE credit_card_invoices SET payment_transaction_id=?,status='paid' WHERE id=?",
@@ -741,7 +1260,7 @@ pub async fn link_invoice_payment(
     tx.commit().await?;
     Ok(TransactionLink {
         id: link_id,
-        debit_transaction_id: bank_transaction_id,
+        debit_transaction_id: Some(bank_transaction_id),
         credit_transaction_id: None,
         invoice_id: Some(invoice_id),
     })
@@ -754,24 +1273,58 @@ pub async fn unlink_invoice_payment(
 ) -> Result<(), AppError> {
     let mut tx = state.db.begin().await?;
     let link = sqlx::query(
-        "SELECT debit_transaction_id,previous_category_id,previous_category_source,previous_rule_id
+        "SELECT id,debit_transaction_id,credit_transaction_id,
+         previous_category_id,previous_category_source,previous_rule_id,previous_invoice_status
          FROM transaction_links WHERE invoice_id=?",
     )
     .bind(&invoice_id)
     .fetch_optional(&mut *tx)
     .await?;
-    sqlx::query("DELETE FROM transaction_links WHERE invoice_id=?")
+    if let Some(link) = link {
+        let debit_transaction_id: Option<String> = link.get("debit_transaction_id");
+        let credit_transaction_id: Option<String> = link.get("credit_transaction_id");
+        let keeps_transfer_pair = debit_transaction_id.is_some() && credit_transaction_id.is_some();
+        if keeps_transfer_pair {
+            sqlx::query(
+                "UPDATE transaction_links
+                 SET invoice_id=NULL,previous_invoice_status=NULL WHERE id=?",
+            )
+            .bind(link.get::<String, _>("id"))
+            .execute(&mut *tx)
+            .await?;
+        } else {
+            sqlx::query("DELETE FROM transaction_links WHERE id=?")
+                .bind(link.get::<String, _>("id"))
+                .execute(&mut *tx)
+                .await?;
+            if let Some(debit_transaction_id) = debit_transaction_id {
+                sqlx::query("UPDATE transactions SET category_id=?,category_source=?,categorization_rule_id=? WHERE id=?")
+                    .bind(link.get::<Option<String>,_>("previous_category_id"))
+                    .bind(link.get::<Option<String>,_>("previous_category_source"))
+                    .bind(link.get::<Option<String>,_>("previous_rule_id"))
+                    .bind(debit_transaction_id).execute(&mut *tx).await?;
+            }
+        }
+        sqlx::query(
+            "UPDATE credit_card_invoices
+             SET payment_transaction_id=NULL,
+                 status=COALESCE(?,CASE WHEN total_cents<=0 THEN 'paid' ELSE 'open' END)
+             WHERE id=?",
+        )
+        .bind(link.get::<Option<String>, _>("previous_invoice_status"))
         .bind(&invoice_id)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("UPDATE credit_card_invoices SET payment_transaction_id=NULL,status=CASE WHEN total_cents<=0 THEN 'paid' ELSE 'open' END WHERE id=?")
-        .bind(&invoice_id).execute(&mut *tx).await?;
-    if let Some(link) = link {
-        sqlx::query("UPDATE transactions SET category_id=?,category_source=?,categorization_rule_id=? WHERE id=?")
-            .bind(link.get::<Option<String>,_>("previous_category_id"))
-            .bind(link.get::<Option<String>,_>("previous_category_source"))
-            .bind(link.get::<Option<String>,_>("previous_rule_id"))
-            .bind(link.get::<String,_>("debit_transaction_id")).execute(&mut *tx).await?;
+    } else {
+        sqlx::query(
+            "UPDATE credit_card_invoices
+             SET payment_transaction_id=NULL,
+                 status=CASE WHEN total_cents<=0 THEN 'paid' ELSE 'open' END
+             WHERE id=?",
+        )
+        .bind(&invoice_id)
+        .execute(&mut *tx)
+        .await?;
     }
     tx.commit().await?;
     Ok(())
@@ -844,51 +1397,13 @@ pub async fn link_card_payment(
     bank_transaction_id: String,
     state: State<'_, AppState>,
 ) -> Result<TransactionLink, AppError> {
-    let mut tx = state.db.begin().await?;
-    let credit = sqlx::query_scalar::<_, i64>(
-        "SELECT t.amount_cents FROM transactions t JOIN accounts a ON a.id=t.account_id
-         JOIN credit_card_invoice_items x ON x.transaction_id=t.id
-         WHERE t.id=? AND t.deleted_at IS NULL AND a.kind='credit_card'
-         AND t.amount_cents>0 AND x.line_kind='payment'",
+    reconcile_card_payment_impl(
+        credit_transaction_id,
+        None,
+        Some(bank_transaction_id),
+        &state.db,
     )
-    .bind(&credit_transaction_id)
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or_else(|| AppError::Validation("Crédito de pagamento não encontrado".into()))?;
-    let bank = sqlx::query(
-        "SELECT t.amount_cents,t.category_id,t.category_source,t.categorization_rule_id
-         FROM transactions t JOIN accounts a ON a.id=t.account_id
-         WHERE t.id=? AND t.deleted_at IS NULL AND a.kind!='credit_card'",
-    )
-    .bind(&bank_transaction_id)
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or_else(|| AppError::Validation("Débito bancário não encontrado".into()))?;
-    if bank.get::<i64, _>("amount_cents") != -credit {
-        return Err(AppError::Validation(
-            "Os dois lados do pagamento precisam ter o mesmo valor".into(),
-        ));
-    }
-    let id = Uuid::new_v4().to_string();
-    sqlx::query(
-        "INSERT INTO transaction_links(id,kind,debit_transaction_id,credit_transaction_id,previous_category_id,previous_category_source,previous_rule_id)
-         VALUES(?,'credit_card_payment',?,?,?,?,?)"
-    ).bind(&id).bind(&bank_transaction_id).bind(&credit_transaction_id)
-        .bind(bank.get::<Option<String>,_>("category_id"))
-        .bind(bank.get::<Option<String>,_>("category_source"))
-        .bind(bank.get::<Option<String>,_>("categorization_rule_id"))
-        .execute(&mut *tx).await?;
-    for transaction_id in [&bank_transaction_id, &credit_transaction_id] {
-        sqlx::query("UPDATE transactions SET category_id='credit-card-payment',category_source='manual',categorization_rule_id=NULL WHERE id=?")
-            .bind(transaction_id).execute(&mut *tx).await?;
-    }
-    tx.commit().await?;
-    Ok(TransactionLink {
-        id,
-        debit_transaction_id: bank_transaction_id,
-        credit_transaction_id: Some(credit_transaction_id),
-        invoice_id: None,
-    })
+    .await
 }
 
 #[tauri::command]
@@ -898,22 +1413,64 @@ pub async fn unlink_card_payment(
 ) -> Result<(), AppError> {
     let mut tx = state.db.begin().await?;
     let link = sqlx::query(
-        "SELECT debit_transaction_id,previous_category_id,previous_category_source,previous_rule_id
+        "SELECT id,debit_transaction_id,invoice_id,
+         previous_category_id,previous_category_source,previous_rule_id,previous_invoice_status
          FROM transaction_links WHERE credit_transaction_id=?",
     )
     .bind(&credit_transaction_id)
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| AppError::Validation("Conciliação não encontrada".into()))?;
-    sqlx::query("DELETE FROM transaction_links WHERE credit_transaction_id=?")
-        .bind(&credit_transaction_id)
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query("UPDATE transactions SET category_id=?,category_source=?,categorization_rule_id=? WHERE id=?")
-        .bind(link.get::<Option<String>,_>("previous_category_id"))
-        .bind(link.get::<Option<String>,_>("previous_category_source"))
-        .bind(link.get::<Option<String>,_>("previous_rule_id"))
-        .bind(link.get::<String,_>("debit_transaction_id")).execute(&mut *tx).await?;
+    let debit_transaction_id: Option<String> = link.get("debit_transaction_id");
+    let invoice_id: Option<String> = link.get("invoice_id");
+    if let Some(debit_transaction_id) = &debit_transaction_id {
+        sqlx::query("UPDATE transactions SET category_id=?,category_source=?,categorization_rule_id=? WHERE id=?")
+            .bind(link.get::<Option<String>,_>("previous_category_id"))
+            .bind(link.get::<Option<String>,_>("previous_category_source"))
+            .bind(link.get::<Option<String>,_>("previous_rule_id"))
+            .bind(debit_transaction_id).execute(&mut *tx).await?;
+    }
+    if let Some(invoice_id) = &invoice_id {
+        if debit_transaction_id.is_some() {
+            sqlx::query(
+                "UPDATE transaction_links
+                 SET debit_transaction_id=NULL,previous_category_id=NULL,
+                     previous_category_source=NULL,previous_rule_id=NULL
+                 WHERE id=?",
+            )
+            .bind(link.get::<String, _>("id"))
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query(
+                "UPDATE credit_card_invoices
+                 SET payment_transaction_id=?,status='paid' WHERE id=?",
+            )
+            .bind(&credit_transaction_id)
+            .bind(invoice_id)
+            .execute(&mut *tx)
+            .await?;
+        } else {
+            sqlx::query("DELETE FROM transaction_links WHERE id=?")
+                .bind(link.get::<String, _>("id"))
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query(
+                "UPDATE credit_card_invoices
+                 SET payment_transaction_id=NULL,
+                     status=COALESCE(?,CASE WHEN total_cents<=0 THEN 'paid' ELSE 'open' END)
+                 WHERE id=?",
+            )
+            .bind(link.get::<Option<String>, _>("previous_invoice_status"))
+            .bind(invoice_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+    } else {
+        sqlx::query("DELETE FROM transaction_links WHERE id=?")
+            .bind(link.get::<String, _>("id"))
+            .execute(&mut *tx)
+            .await?;
+    }
     tx.commit().await?;
     Ok(())
 }
@@ -1007,6 +1564,18 @@ mod tests {
             1000,
             CreditCardLineKind::Purchase,
         )
+    }
+
+    fn payment_item(amount_in_cents: i64) -> CreditCardImportItem {
+        let mut item = card_item("Pagamento de fatura", Some("payment-1"));
+        item.candidate.source_row = 2;
+        item.candidate.amount_in_cents = amount_in_cents;
+        item.candidate.suggested_category_id = Some("credit-card-payment".into());
+        item.candidate.suggested_category_name = Some("Pagamento de fatura".into());
+        item.raw_amount_in_cents = -amount_in_cents;
+        item.line_kind = CreditCardLineKind::Payment;
+        item.is_payment = true;
+        item
     }
 
     #[test]
@@ -1118,7 +1687,7 @@ mod tests {
             .fetch_one(&db)
             .await
             .unwrap();
-        let invoice_id = commit_credit_card_import_impl(session(vec![success]), &db)
+        let commit_result = commit_credit_card_import_impl(session(vec![success]), &db)
             .await
             .unwrap();
         assert_eq!(
@@ -1128,8 +1697,183 @@ mod tests {
                 .await
                 .unwrap()
         );
-        let persisted: Option<String> = sqlx::query_scalar("SELECT external_id FROM transactions WHERE import_batch_id=(SELECT import_batch_id FROM credit_card_invoices WHERE id=? )").bind(invoice_id).fetch_one(&db).await.unwrap();
+        let persisted: Option<String> = sqlx::query_scalar("SELECT external_id FROM transactions WHERE import_batch_id=(SELECT import_batch_id FROM credit_card_invoices WHERE id=? )").bind(commit_result.invoice_id).fetch_one(&db).await.unwrap();
         assert_eq!(persisted.as_deref(), Some("card-new"));
         assert_eq!(1_i64, sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM credit_card_invoice_items WHERE invoice_id=(SELECT id FROM credit_card_invoices ORDER BY rowid DESC LIMIT 1)").fetch_one(&db).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn payment_is_persisted_outside_current_total_and_reconciles_progressively() {
+        let (_directory, db, account_id) = card_test_setup().await;
+        sqlx::query("INSERT INTO accounts(id,name,kind) VALUES('bank','Conta','checking')")
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO accounts(id,name,kind) VALUES('other-card','Outro cartão','credit_card')",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO import_batches(id,file_name,created_at) VALUES
+             ('prior-batch','prior.csv',datetime('now')),
+             ('outside-batch','outside.csv',datetime('now')),
+             ('deleted-batch','deleted.csv',datetime('now')),
+             ('other-card-batch','other.csv',datetime('now'))",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO credit_card_invoices(
+               id,account_id,due_date,purchases_cents,credits_cents,payments_cents,
+               total_cents,status,import_batch_id
+             ) VALUES('prior-invoice',?,'2026-06-02',5000,0,0,5000,'open','prior-batch')",
+        )
+        .bind(&account_id)
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO credit_card_invoices(
+               id,account_id,due_date,purchases_cents,credits_cents,payments_cents,
+               total_cents,status,import_batch_id,deleted_at
+             ) VALUES
+               ('outside-invoice',?,'2026-07-15',5000,0,0,5000,'open','outside-batch',NULL),
+               ('deleted-invoice',?,'2026-06-02',5000,0,0,5000,'open','deleted-batch',datetime('now')),
+               ('other-card-invoice','other-card','2026-06-02',5000,0,0,5000,'open','other-card-batch',NULL)",
+        )
+        .bind(&account_id)
+        .bind(&account_id)
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO transactions(
+               id,account_id,date,description,normalized_description,amount_cents,fingerprint,status
+             ) VALUES('bank-payment','bank','2026-06-01','Pagamento cartão',
+                      'PAGAMENTO CARTAO',-5000,'bank-payment-fp','cleared')",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO transactions(
+               id,account_id,date,description,normalized_description,amount_cents,fingerprint,status,deleted_at
+             ) VALUES
+               ('bank-outside','bank','2026-07-01','Fora da janela','FORA DA JANELA',-5000,'bank-outside-fp','cleared',NULL),
+               ('bank-deleted','bank','2026-06-01','Excluído','EXCLUIDO',-5000,'bank-deleted-fp','cleared',datetime('now'))",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+
+        let result = commit_credit_card_import_impl(
+            CreditCardImportSession {
+                account_id: account_id.clone(),
+                file_name: "current.csv".into(),
+                due_date: "2026-06-10".into(),
+                items: vec![
+                    card_item("Compra atual", Some("purchase-1")),
+                    payment_item(5000),
+                ],
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.payment_transaction_ids.len(), 1);
+        let payment_id = result.payment_transaction_ids[0].clone();
+        let invoice_totals = sqlx::query(
+            "SELECT purchases_cents,credits_cents,payments_cents,total_cents,status
+             FROM credit_card_invoices WHERE id=?",
+        )
+        .bind(&result.invoice_id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(invoice_totals.get::<i64, _>("purchases_cents"), 1000);
+        assert_eq!(invoice_totals.get::<i64, _>("credits_cents"), 0);
+        assert_eq!(invoice_totals.get::<i64, _>("payments_cents"), 5000);
+        assert_eq!(invoice_totals.get::<i64, _>("total_cents"), 1000);
+        assert_eq!(invoice_totals.get::<String, _>("status"), "open");
+        let pending = list_card_payment_reconciliations_impl(&db).await.unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].state, "pending");
+        assert_eq!(pending[0].invoice_candidates.len(), 1);
+        assert_eq!(pending[0].invoice_candidates[0].id, "prior-invoice");
+        assert_eq!(pending[0].bank_candidates.len(), 1);
+        assert_eq!(pending[0].bank_candidates[0].transaction_id, "bank-payment");
+
+        let partial = reconcile_card_payment_impl(
+            payment_id.clone(),
+            Some("prior-invoice".into()),
+            None,
+            &db,
+        )
+        .await
+        .unwrap();
+        assert_eq!(partial.debit_transaction_id, None);
+        assert_eq!(partial.invoice_id.as_deref(), Some("prior-invoice"));
+        let invoice_confirmed = list_card_payment_reconciliations_impl(&db).await.unwrap();
+        assert_eq!(invoice_confirmed[0].state, "invoice_confirmed");
+
+        let linked = reconcile_card_payment_impl(
+            payment_id.clone(),
+            Some("prior-invoice".into()),
+            Some("bank-payment".into()),
+            &db,
+        )
+        .await
+        .unwrap();
+        assert_eq!(linked.debit_transaction_id.as_deref(), Some("bank-payment"));
+        assert_eq!(
+            linked.credit_transaction_id.as_deref(),
+            Some(payment_id.as_str())
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT status FROM credit_card_invoices WHERE id='prior-invoice'",
+            )
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+            "paid"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM transaction_links
+                 WHERE debit_transaction_id='bank-payment'
+                   AND credit_transaction_id=? AND invoice_id='prior-invoice'",
+            )
+            .bind(&payment_id)
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+            1
+        );
+        let net: i64 = sqlx::query_scalar(
+            "SELECT SUM(amount_cents) FROM transactions
+             WHERE id IN ('bank-payment',?) OR import_batch_id=(
+               SELECT import_batch_id FROM credit_card_invoices WHERE id=?
+             )",
+        )
+        .bind(&payment_id)
+        .bind(&result.invoice_id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(net, -1000);
+        let summary = crate::commands::reports::dashboard_summary_data(&db, "2026-06")
+            .await
+            .unwrap();
+        assert_eq!(summary.income_in_cents, 0);
+        assert_eq!(summary.expenses_in_cents, 1000);
+        assert_eq!(summary.balance_in_cents, -1000);
+        assert!(list_card_payment_reconciliations_impl(&db)
+            .await
+            .unwrap()
+            .is_empty());
     }
 }

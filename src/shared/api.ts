@@ -5,10 +5,12 @@ import type {
   AppBootstrap,
   BudgetOverview,
   Category,
+  CardPaymentReconciliation,
   CategorizationRule,
   CategoryTrendFilter,
   CategoryTrendPoint,
   CommitImportResult,
+  CreditCardImportCommitResult,
   CreditCardImportPreview,
   CreditCardInvoice,
   CreditCardInvoicePage,
@@ -443,7 +445,8 @@ export const api = {
     categoryId?: string,
   ): Promise<CreditCardImportPreview> =>
     invoke("update_credit_card_import_categories", { sessionId, sourceRows, categoryId: categoryId || null }),
-  commitCreditCardImport: (sessionId: string): Promise<string> => invoke("commit_credit_card_import", { sessionId }),
+  commitCreditCardImport: (sessionId: string): Promise<CreditCardImportCommitResult> =>
+    invoke("commit_credit_card_import", { sessionId }),
   creditCardInvoices: async (): Promise<CreditCardInvoice[]> => (isTauri() ? invoke("list_credit_card_invoices") : []),
   creditCardInvoicesPage: async (filter: { limit?: number; offset?: number }): Promise<CreditCardInvoicePage> => {
     if (isTauri()) return invoke("list_credit_card_invoices_page", { filter });
@@ -451,6 +454,18 @@ export const api = {
   },
   creditCardInvoiceItems: (invoiceId: string): Promise<CreditCardInvoiceItem[]> =>
     invoke("get_credit_card_invoice_items", { invoiceId }),
+  cardPaymentReconciliations: async (): Promise<CardPaymentReconciliation[]> =>
+    isTauri() ? invoke("list_card_payment_reconciliations") : [],
+  reconcileCardPayment: (
+    paymentTransactionId: string,
+    invoiceId?: string,
+    bankTransactionId?: string,
+  ): Promise<TransactionLink> =>
+    invoke("reconcile_card_payment", {
+      paymentTransactionId,
+      invoiceId: invoiceId || null,
+      bankTransactionId: bankTransactionId || null,
+    }),
   invoicePaymentMatches: (invoiceId: string): Promise<PaymentMatchCandidate[]> =>
     invoke("find_invoice_payment_matches", { invoiceId }),
   cardPaymentMatches: (creditTransactionId: string): Promise<PaymentMatchCandidate[]> =>

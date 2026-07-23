@@ -1,8 +1,17 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Category, ImportCandidate } from "../../shared/types";
-import { groupPendingCandidates, ImportReviewGroups, summarizeSuggestions } from "./ImportPage";
+import type { Category, CreditCardImportPreview, ImportCandidate } from "../../shared/types";
+import {
+  CardImportCommitNotice,
+  cardPaymentReconciliationPath,
+  CreditCardImportItems,
+  CreditCardImportTotals,
+  creditCardCategorizationCandidates,
+  groupPendingCandidates,
+  ImportReviewGroups,
+  summarizeSuggestions,
+} from "./ImportPage";
 
 const categories: Category[] = [
   {
@@ -37,7 +46,114 @@ function candidate(overrides: Partial<ImportCandidate> = {}): ImportCandidate {
   };
 }
 
+function creditCardPreview(): CreditCardImportPreview {
+  return {
+    sessionId: "session-card",
+    fileName: "fatura-sintetica.csv",
+    accountId: "card-1",
+    dueDate: "2026-07-10",
+    purchasesInCents: 10_000,
+    creditsInCents: 2_000,
+    paymentsInCents: 5_000,
+    totalInCents: 8_000,
+    items: [
+      {
+        candidate: candidate({
+          sourceRow: 1,
+          description: "Compra sintetica",
+          amountInCents: -10_000,
+        }),
+        rawAmountInCents: 10_000,
+        lineKind: "purchase",
+        included: true,
+        isPayment: false,
+      },
+      {
+        candidate: candidate({
+          sourceRow: 2,
+          description: "Estorno sintetico",
+          amountInCents: 2_000,
+        }),
+        rawAmountInCents: -2_000,
+        lineKind: "refund",
+        included: true,
+        isPayment: false,
+      },
+      {
+        candidate: candidate({
+          sourceRow: 3,
+          description: "Pagamento de fatura",
+          amountInCents: 5_000,
+        }),
+        rawAmountInCents: -5_000,
+        lineKind: "payment",
+        included: true,
+        isPayment: true,
+      },
+    ],
+  };
+}
+
 afterEach(cleanup);
+
+describe("prévia da fatura", () => {
+  it("separa pagamentos anteriores dos itens que precisam de categoria", () => {
+    const preview = creditCardPreview();
+
+    expect(creditCardCategorizationCandidates(preview).map((item) => item.sourceRow)).toEqual([1, 2]);
+    expect(summarizeSuggestions(creditCardCategorizationCandidates(preview)).pending).toBe(2);
+  });
+
+  it("mostra o total da fatura sem misturar pagamentos anteriores", () => {
+    render(<CreditCardImportTotals preview={creditCardPreview()} />);
+
+    expect(screen.getByText("Compras")).toBeTruthy();
+    expect(screen.getByText("Créditos e estornos")).toBeTruthy();
+    expect(screen.getByText("Total desta fatura")).toBeTruthy();
+    expect(screen.getByText(/Pagamento anterior detectado/)).toBeTruthy();
+    expect(screen.getByText(/não altera esta fatura/)).toBeTruthy();
+  });
+
+  it("mantém pagamentos incluídos em detalhes recolhidos e permite excluí-los", () => {
+    const onUpdate = vi.fn();
+
+    render(
+      <CreditCardImportItems
+        items={creditCardPreview().items}
+        paymentsInCents={5_000}
+        categories={categories}
+        onUpdate={onUpdate}
+      />,
+    );
+
+    const summary = screen.getByText(/Pagamentos anteriores \(1\)/).closest("summary");
+    const details = summary?.closest("details");
+    expect(details?.open).toBe(false);
+    expect(screen.getByRole("checkbox", { name: "Incluir Pagamento de fatura" })).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "Incluir Pagamento de fatura" })).toHaveProperty("checked", true);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Incluir Pagamento de fatura" }));
+
+    expect(onUpdate).toHaveBeenCalledWith(3, false, undefined);
+  });
+
+  it("oferece a conciliação do primeiro pagamento depois do commit", () => {
+    const onReview = vi.fn();
+
+    render(
+      <CardImportCommitNotice
+        summary={{ invoiceId: "invoice-1", paymentTransactionIds: ["payment/1", "payment-2"] }}
+        onReview={onReview}
+      />,
+    );
+
+    expect(screen.getByText("2 pagamentos anteriores detectados")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Revisar conciliação" }));
+
+    expect(onReview).toHaveBeenCalledWith("payment/1");
+    expect(cardPaymentReconciliationPath("payment/1")).toBe("/accounts?reconcile=payment%2F1");
+  });
+});
 
 describe("summarizeSuggestions", () => {
   it("contabiliza regras, historico, escolhas manuais e pendencias elegiveis", () => {

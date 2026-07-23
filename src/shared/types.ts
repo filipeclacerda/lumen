@@ -228,8 +228,13 @@ export type CreditCardImportPreview = {
   dueDate: string;
   purchasesInCents: number;
   creditsInCents: number;
+  paymentsInCents: number;
   totalInCents: number;
   items: CreditCardImportItem[];
+};
+export type CreditCardImportCommitResult = {
+  invoiceId: string;
+  paymentTransactionIds: string[];
 };
 export type CreditCardInvoice = {
   id: string;
@@ -238,6 +243,7 @@ export type CreditCardInvoice = {
   dueDate: string;
   purchasesInCents: number;
   creditsInCents: number;
+  paymentsInCents: number;
   totalInCents: number;
   status: "open" | "paid";
   paymentTransactionId?: string;
@@ -267,9 +273,29 @@ export type PaymentMatchCandidate = {
   amountInCents: number;
   distanceInDays: number;
 };
+export type InvoicePaymentMatchCandidate = {
+  id: string;
+  accountName: string;
+  dueDate: string;
+  totalInCents: number;
+  distanceInDays: number;
+};
+export type CardPaymentReconciliation = {
+  paymentTransactionId: string;
+  cardAccountId: string;
+  cardAccountName: string;
+  date: string;
+  description: string;
+  amountInCents: number;
+  invoiceCandidates: InvoicePaymentMatchCandidate[];
+  bankCandidates: PaymentMatchCandidate[];
+  invoiceId?: string;
+  bankTransactionId?: string;
+  state: "pending" | "invoice_confirmed" | "bank_confirmed" | "reconciled";
+};
 export type TransactionLink = {
   id: string;
-  debitTransactionId: string;
+  debitTransactionId?: string;
   creditTransactionId?: string;
   invoiceId?: string;
 };

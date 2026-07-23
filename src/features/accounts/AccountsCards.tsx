@@ -22,7 +22,13 @@ import { useToast } from "../../shared/ui/toast";
 import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/AsyncState";
 import { Pagination, type PaginationSize } from "../../shared/ui/Pagination";
 import { Select } from "../../shared/ui/Select";
-import type { Account, AccountType, CreditCardInvoice, PaymentMatchCandidate } from "../../shared/types";
+import type {
+  Account,
+  AccountType,
+  CardPaymentReconciliation,
+  CreditCardInvoice,
+  PaymentMatchCandidate,
+} from "../../shared/types";
 
 export function AccountsCards() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -42,6 +48,10 @@ export function AccountsCards() {
   const [notice, setNotice] = useState("");
   const [invoicePage, setInvoicePage] = useState(0);
   const [invoicePageSize, setInvoicePageSize] = useState<PaginationSize>(10);
+  const [activeReconciliationId, setActiveReconciliationId] = useState<string>();
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState("");
+  const [selectedBankTransactionId, setSelectedBankTransactionId] = useState("");
+  const [reconciling, setReconciling] = useState(false);
   const accountQuery = searchParams.get("q") ?? "";
   const {
     data: accounts = [],
@@ -60,6 +70,29 @@ export function AccountsCards() {
     placeholderData: keepPreviousData,
   });
   const invoices = invoicePageData?.items ?? [];
+  const {
+    data: reconciliations = [],
+    isLoading: reconciliationsLoading,
+    isError: reconciliationsError,
+    refetch: refetchReconciliations,
+  } = useQuery({
+    queryKey: ["card-payment-reconciliations"],
+    queryFn: api.cardPaymentReconciliations,
+  });
+  const pendingReconciliations = reconciliations.filter((item) => item.state !== "reconciled");
+
+  function openReconciliation(reconciliation: CardPaymentReconciliation) {
+    setActiveReconciliationId(reconciliation.paymentTransactionId);
+    setSelectedInvoiceId(
+      reconciliation.invoiceId ??
+        (reconciliation.invoiceCandidates.length === 1 ? reconciliation.invoiceCandidates[0].id : ""),
+    );
+    setSelectedBankTransactionId(
+      reconciliation.bankTransactionId ??
+        (reconciliation.bankCandidates.length === 1 ? reconciliation.bankCandidates[0].transactionId : ""),
+    );
+  }
+
   useEffect(() => {
     if (searchParams.get("action") !== "new") return;
     setAccountModal({ mode: "new" });
@@ -81,6 +114,29 @@ export function AccountsCards() {
     document.getElementById(match ? `account-${match.id}` : "")?.scrollIntoView?.({ block: "center" });
   }, [accountQuery, accounts]);
   useEffect(() => {
+    const requestedReconciliation = searchParams.get("reconcile");
+    if (requestedReconciliation === null || reconciliationsLoading || reconciliationsError) return;
+    const reconciliation =
+      pendingReconciliations.find((item) => item.paymentTransactionId === requestedReconciliation) ??
+      (["", "1", "true"].includes(requestedReconciliation) ? pendingReconciliations[0] : undefined);
+    if (reconciliation) {
+      openReconciliation(reconciliation);
+      requestAnimationFrame(() =>
+        document
+          .getElementById(`reconciliation-${reconciliation.paymentTransactionId}`)
+          ?.scrollIntoView?.({ block: "center" }),
+      );
+    }
+    setSearchParams(
+      (params) => {
+        const next = new URLSearchParams(params);
+        next.delete("reconcile");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [pendingReconciliations, reconciliationsError, reconciliationsLoading, searchParams, setSearchParams]);
+  useEffect(() => {
     if (!invoicePageData) return;
     setInvoicePage((page) => Math.min(page, Math.max(0, Math.ceil(invoicePageData.totalCount / invoicePageSize) - 1)));
   }, [invoicePageData, invoicePageSize]);
@@ -97,7 +153,27 @@ export function AccountsCards() {
       client.invalidateQueries({ queryKey: ["transactions"] }),
       client.invalidateQueries({ queryKey: ["summary"] }),
       client.invalidateQueries({ queryKey: ["accounts"] }),
+      client.invalidateQueries({ queryKey: ["financial-report"] }),
+      client.invalidateQueries({ queryKey: ["card-payment-reconciliations"] }),
     ]);
+  }
+  async function confirmReconciliation(reconciliation: CardPaymentReconciliation) {
+    if (!selectedInvoiceId && !selectedBankTransactionId) return;
+    setReconciling(true);
+    try {
+      await api.reconcileCardPayment(
+        reconciliation.paymentTransactionId,
+        selectedInvoiceId || undefined,
+        selectedBankTransactionId || undefined,
+      );
+      setNotice("Conciliação confirmada.");
+      setActiveReconciliationId(undefined);
+      await refresh();
+    } catch (e) {
+      toast((e as { message?: string })?.message ?? "Não foi possível confirmar a conciliação.", "error");
+    } finally {
+      setReconciling(false);
+    }
   }
   async function findPayment(invoice: CreditCardInvoice) {
     setMatching({
@@ -237,6 +313,152 @@ export function AccountsCards() {
           ))}
         </div>
       )}
+      {reconciliationsLoading && <LoadingState variant="panel" label="Carregando conciliações…" />}
+      {reconciliationsError && (
+        <ErrorState
+          message="Não foi possível carregar as conciliações pendentes."
+          onRetry={() => void refetchReconciliations()}
+        />
+      )}
+      {!reconciliationsLoading && !reconciliationsError && (
+        <article className="panel">
+          <div className="panel-title">
+            <div>
+              <h2>Conciliações pendentes</h2>
+              <p className="muted">Confirme a fatura anterior e o débito bancário correspondentes a cada pagamento.</p>
+            </div>
+            <span>
+              {pendingReconciliations.length} pendência{pendingReconciliations.length === 1 ? "" : "s"}
+            </span>
+          </div>
+          {pendingReconciliations.length === 0 ? (
+            <p className="muted">Nenhum pagamento de cartão aguarda conciliação.</p>
+          ) : (
+            <div className="match-list">
+              {pendingReconciliations.map((reconciliation) => {
+                const isActive = activeReconciliationId === reconciliation.paymentTransactionId;
+                const stateLabel = {
+                  pending: "Pendente",
+                  invoice_confirmed: "Fatura confirmada",
+                  bank_confirmed: "Débito confirmado",
+                  reconciled: "Conciliada",
+                }[reconciliation.state];
+                const invoiceOptions = reconciliation.invoiceCandidates.map((candidate) => ({
+                  value: candidate.id,
+                  label: `${candidate.accountName} · vence em ${shortDate(candidate.dueDate)} · ${money(candidate.totalInCents)}`,
+                }));
+                const bankOptions = reconciliation.bankCandidates.map((candidate) => ({
+                  value: candidate.transactionId,
+                  label: `${candidate.accountName} · ${shortDate(candidate.date)} · ${candidate.description}`,
+                }));
+                if (
+                  reconciliation.invoiceId &&
+                  !invoiceOptions.some((option) => option.value === reconciliation.invoiceId)
+                ) {
+                  invoiceOptions.unshift({
+                    value: reconciliation.invoiceId,
+                    label: "Fatura já confirmada",
+                  });
+                }
+                if (
+                  reconciliation.bankTransactionId &&
+                  !bankOptions.some((option) => option.value === reconciliation.bankTransactionId)
+                ) {
+                  bankOptions.unshift({
+                    value: reconciliation.bankTransactionId,
+                    label: "Débito já confirmado",
+                  });
+                }
+                return (
+                  <div
+                    id={`reconciliation-${reconciliation.paymentTransactionId}`}
+                    className="invoice-row-wrap"
+                    key={reconciliation.paymentTransactionId}
+                  >
+                    <button
+                      className="match-row"
+                      aria-expanded={isActive}
+                      aria-controls={`reconciliation-details-${reconciliation.paymentTransactionId}`}
+                      onClick={() =>
+                        isActive ? setActiveReconciliationId(undefined) : openReconciliation(reconciliation)
+                      }
+                    >
+                      <span>
+                        <b>{reconciliation.description}</b>
+                        <small>
+                          {reconciliation.cardAccountName} · {shortDate(reconciliation.date)} · {stateLabel}
+                        </small>
+                      </span>
+                      <strong>{money(reconciliation.amountInCents)}</strong>
+                      <ChevronDown size={17} />
+                    </button>
+                    {isActive && (
+                      <div id={`reconciliation-details-${reconciliation.paymentTransactionId}`} className="impact">
+                        <p className="muted">
+                          As sugestões usam o mesmo valor e até 10 dias de distância. Nenhum vínculo será criado sem sua
+                          confirmação.
+                        </p>
+                        <div className="modal-form">
+                          <label>
+                            Fatura anterior
+                            <Select
+                              value={selectedInvoiceId}
+                              onChange={setSelectedInvoiceId}
+                              ariaLabel={`Fatura anterior para ${reconciliation.description}`}
+                              options={[
+                                ...(reconciliation.invoiceId
+                                  ? []
+                                  : [{ value: "", label: "Não vincular uma fatura agora" }]),
+                                ...invoiceOptions,
+                              ]}
+                            />
+                          </label>
+                          {reconciliation.invoiceCandidates.length === 0 && !reconciliation.invoiceId && (
+                            <small className="muted">Nenhuma fatura compatível encontrada.</small>
+                          )}
+                          <label>
+                            Débito na conta
+                            <Select
+                              value={selectedBankTransactionId}
+                              onChange={setSelectedBankTransactionId}
+                              ariaLabel={`Débito bancário para ${reconciliation.description}`}
+                              options={[
+                                ...(reconciliation.bankTransactionId
+                                  ? []
+                                  : [{ value: "", label: "Não vincular um débito agora" }]),
+                                ...bankOptions,
+                              ]}
+                            />
+                          </label>
+                          {reconciliation.bankCandidates.length === 0 && !reconciliation.bankTransactionId && (
+                            <small className="muted">Nenhum débito bancário compatível encontrado.</small>
+                          )}
+                        </div>
+                        <div className="editor-actions">
+                          <button className="secondary" onClick={() => setActiveReconciliationId(undefined)}>
+                            Fechar
+                          </button>
+                          <button
+                            onClick={() => void confirmReconciliation(reconciliation)}
+                            disabled={
+                              reconciling ||
+                              (!selectedInvoiceId && !selectedBankTransactionId) ||
+                              (selectedInvoiceId === (reconciliation.invoiceId ?? "") &&
+                                selectedBankTransactionId === (reconciliation.bankTransactionId ?? ""))
+                            }
+                          >
+                            {reconciling ? "Confirmando…" : "Confirmar conciliação"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </article>
+      )}
       {invoicesLoading && <LoadingState variant="panel" label="Carregando faturas…" />}
       {invoicesError && (
         <ErrorState message="Não foi possível carregar as faturas." onRetry={() => void refetchInvoices()} />
@@ -293,8 +515,11 @@ export function AccountsCards() {
                       <b>{money(invoice.purchasesInCents)}</b>
                     </div>
                     <div className="invoice-metric">
-                      <small>Créditos e pagamentos</small>
+                      <small>Créditos e estornos</small>
                       <b>{money(invoice.creditsInCents)}</b>
+                      {invoice.paymentsInCents > 0 && (
+                        <small>Pagamentos anteriores: {money(invoice.paymentsInCents)}</small>
+                      )}
                     </div>
                     <div className="invoice-metric invoice-total-value">
                       <small>Total</small>
