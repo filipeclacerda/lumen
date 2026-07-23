@@ -714,7 +714,7 @@ async fn repair_payment_settlement_migration(
 
     let mut tx = pool.begin().await?;
     sqlx::query(
-        "CREATE UNIQUE INDEX IF NOT EXISTS transaction_links_unique_invoice
+        "CREATE UNIQUE INDEX IF NOT EXISTS transaction_links_invoice
          ON transaction_links(invoice_id)",
     )
     .execute(&mut *tx)

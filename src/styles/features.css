@@ -931,7 +931,7 @@
     padding: 0;
     margin: -1px;
     overflow: hidden;
-    clip: rect(0, 0, 0, 0);
+    clip-path: inset(50%);
     white-space: nowrap;
     border: 0;
   }
@@ -1923,7 +1923,7 @@
     .import-review-ready:focus { outline:2px solid var(--focus); outline-offset:2px; }
     .import-review-ready .import-review-undo { flex:none; }
     .import-review-error { margin:0; }
-    .import-review-announcement { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0, 0, 0, 0); white-space:nowrap; border:0; }
+    .import-review-announcement { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; border:0; }
     .import-review-queue { display:flex; width:100%; max-width:980px; flex-direction:column; gap:var(--space-4); margin-inline:auto; }
     .import-review-queue-header { display:flex; align-items:flex-end; justify-content:space-between; gap:var(--space-4); padding:var(--space-3) var(--space-4); border:1px solid var(--border-soft); border-radius:var(--radius-lg); background:var(--surface-2); }
     .import-review-queue-header > div:first-child { display:flex; min-width:0; flex-direction:column; gap:2px; }

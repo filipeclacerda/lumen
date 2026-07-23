@@ -183,7 +183,7 @@ Não é necessário adicionar telemetria ao aplicativo. Os dados podem vir das c
 
 Não investir inicialmente em anúncios pagos. Primeiro validar a conversão da landing page, a instalação e o retorno depois de 14 dias.
 
-Um domínio curto pode aumentar memorização e confiança antes de um lançamento maior, mas não é obrigatório para o piloto. Um domínio `.com.br` custa aproximadamente R$ 40 por ano, com base no valor normal informado pelo Registro.br.
+Um domínio curto pode aumentar memorização e confiança antes de um lançamento maior, mas não é obrigatório para o piloto.
 
 ## Próxima ação concreta
 
@@ -194,4 +194,4 @@ Montar a lista dos primeiros 20 convidados e produzir o vídeo de um minuto. Dep
 - Product Hunt — como publicar um produto: <https://help.producthunt.com/en/articles/479557-how-to-post-a-product>
 - Show HN — regras oficiais: <https://news.ycombinator.com/showhn.html>
 - Reddit — política de spam: <https://support.reddithelp.com/hc/en-us/articles/360043504051-Spam>
-- Registro.br — informações de domínio: <https://registro.br/dominio/processo-de-liberacao/>
+- Registro.br — registro e preços: <https://registro.br/>

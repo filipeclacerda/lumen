@@ -43,7 +43,11 @@ function monthFromDate(date: Date) {
 }
 
 function selectedMonth(value: string, mode: PickerMode) {
-  if (mode === "month" && /^\d{4}-\d{2}$/.test(value)) return value;
+  if (mode === "month" && /^\d{4}-\d{2}$/.test(value)) {
+    const [, monthPart] = value.split("-");
+    const month = Number(monthPart);
+    if (month >= 1 && month <= 12) return value;
+  }
   const date = parseDate(value);
   return date ? monthFromDate(date) : currentMonth();
 }
