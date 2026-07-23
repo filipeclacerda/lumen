@@ -10,6 +10,8 @@ pub struct ImportCandidate {
     pub normalized_description: String,
     #[serde(default)]
     pub is_pix: bool,
+    #[serde(default)]
+    pub is_own_account_pix: bool,
     pub amount_in_cents: i64,
     pub external_id: Option<String>,
     pub suggested_category_id: Option<String>,
@@ -144,6 +146,26 @@ pub fn is_pix_description(value: &str) -> bool {
         .any(|token| token.eq_ignore_ascii_case("pix"))
 }
 
+pub fn is_own_account_pix_description(value: &str) -> bool {
+    if !is_pix_description(value) {
+        return false;
+    }
+    let tokens = value
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(|token| token.to_uppercase())
+        .collect::<Vec<_>>();
+    tokens.windows(2).any(|pair| {
+        matches!(
+            pair,
+            [left, right]
+                if (left == "IF" && right == "MSM")
+                    || (left == "MESMA" && right == "TITULARIDADE")
+                    || (left == "MESMO" && right == "TITULAR")
+        )
+    })
+}
+
 pub fn mapping_signature(
     headers: &[String],
     delimiter: &str,
@@ -199,6 +221,31 @@ mod tests {
             assert!(
                 !is_pix_description(description),
                 "did not expect PIX in {description:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn detects_pix_sent_to_an_account_with_the_same_ownership() {
+        for description in [
+            "PIX.EMIT.OUT IF-MSM",
+            "PIX IF MSM",
+            "Pagamento PIX mesma titularidade",
+            "PIX para mesmo titular",
+        ] {
+            assert!(
+                is_own_account_pix_description(description),
+                "expected an own-account PIX in {description:?}"
+            );
+        }
+        for description in [
+            "PIX EMIT OUTRA IF",
+            "PIX MARIA SILVA",
+            "IF-MSM SEM TRANSFERENCIA",
+        ] {
+            assert!(
+                !is_own_account_pix_description(description),
+                "did not expect an own-account PIX in {description:?}"
             );
         }
     }

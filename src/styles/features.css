@@ -27,9 +27,18 @@
     .quick-start-guide__actions > div { margin-left:auto; }
   .quick-start-guide__actions button { flex:none; min-height:36px; padding:var(--space-2) var(--space-3); white-space:nowrap; }
   .quick-start-guide__highlight { position:fixed; z-index:89; border:2px solid var(--brand); box-shadow:0 0 0 4px var(--brand-soft); pointer-events:none; }
+  .tutorial-host:not(:empty) { position:relative; z-index:6; margin-bottom:var(--space-5); }
+  .tutorial-host .quick-start-guide.is-docked {
+    position:relative!important; inset:auto!important;
+    width:min(100%, 760px); margin-inline:auto;
+    height:auto; min-height:0;
+    transform:none!important;
+    box-shadow:var(--shadow-sm);
+  }
   .completion-choices { display:flex; flex-direction:column; align-items:stretch; gap:var(--space-2); grid-column:1/-1; }
   .completion-choices button { justify-content:center; width:100%; }
     @media (max-width: 850px) {
+      .tutorial-host:not(:empty) { margin-top:44px; }
       .quick-start-guide { top:auto !important; right:var(--space-3) !important; bottom:var(--space-3) !important; left:var(--space-3) !important; width:auto; max-height:calc(100vh - var(--space-6)); overflow-y:auto; } }
     @media (max-width: 430px) {
       .quick-start-guide__actions { align-items:stretch; flex-direction:column-reverse; }
@@ -916,6 +925,12 @@
     .import-review-group-heading p strong { color:var(--text); font-variant-numeric:tabular-nums; }
     .import-review-group-actions { padding-top:var(--space-4); border-top:1px solid var(--border-soft); display:grid; grid-template-columns:minmax(0, 1.4fr) minmax(240px, 0.6fr); align-items:end; gap:var(--space-5); }
     .import-review-group-actions--manual-only { display:block; }
+    .own-account-pix-guidance { display:flex; grid-column:1/-1; align-items:center; justify-content:space-between; gap:var(--space-4); margin-bottom:var(--space-1); padding:var(--space-4); border:1px solid var(--status-info-border); border-radius:var(--radius-md); background:var(--status-info-bg); color:var(--status-info-fg); }
+    .own-account-pix-guidance > div:first-child { display:flex; min-width:0; flex:1; flex-direction:column; gap:var(--space-1); }
+    .own-account-pix-guidance strong { color:var(--text); font-size:var(--text-sm); }
+    .own-account-pix-guidance p { max-width:680px; margin:0; color:var(--text-muted); font-size:var(--text-xs); line-height:1.5; }
+    .own-account-pix-guidance__actions { display:flex; flex:none; flex-wrap:wrap; justify-content:flex-end; gap:var(--space-2); }
+    .own-account-pix-guidance__actions button { min-height:40px; }
     .import-review-quick-actions,
   .import-review-category-picker { display:flex; min-width:0; flex-direction:column; gap:var(--space-1); }
     .import-review-action-label { color:var(--text-muted); font-size:var(--text-xs); font-weight:700; text-transform:uppercase; }
@@ -949,7 +964,10 @@
     .import-review-queue-hint { margin:0; color:var(--text-muted); font-size:var(--text-xs); text-align:center; }
     .import-pending-dialog .editor-actions { flex-wrap:wrap; }
     @media (max-width: 1100px) {
-      .import-review-group-actions { display:flex; align-items:stretch; flex-direction:column; } }
+      .import-review-group-actions { display:flex; align-items:stretch; flex-direction:column; }
+      .own-account-pix-guidance { align-items:stretch; flex-direction:column; }
+      .own-account-pix-guidance__actions { display:grid; grid-template-columns:1fr 1fr; }
+      .own-account-pix-guidance__actions button { justify-content:center; } }
     @media (max-width: 850px) {
       .import-review-queue { max-width:none; }
       .import-review-group-heading { flex-direction:column; gap:var(--space-2); }
@@ -976,6 +994,7 @@
       .import-review-group-heading h3 { font-size:var(--text-md); }
       .import-review-action-heading { align-items:flex-start; flex-direction:column; gap:0; }
       .import-review-group-actions { display:flex; align-items:stretch; flex-direction:column; }
+      .own-account-pix-guidance__actions { grid-template-columns:1fr; }
       .import-suggestion-chips { flex-direction:column; }
       .import-suggestion-chip { width:100%; }
       .import-review-detail-row { grid-template-columns:1fr auto; }

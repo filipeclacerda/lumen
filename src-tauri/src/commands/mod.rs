@@ -32,9 +32,9 @@ use crate::{
             first_match, CategorizationInput, CategorizationRule, MovementType, RuleOperator,
         },
         import::{
-            fingerprint, is_pix_description, mapping_signature, normalize_description,
-            CsvColumnMapping, CsvMappingDraft, CsvMappingProfile, ImportCandidate,
-            ImportSourceKind, SuggestionSource,
+            fingerprint, is_own_account_pix_description, is_pix_description, mapping_signature,
+            normalize_description, CsvColumnMapping, CsvMappingDraft, CsvMappingProfile,
+            ImportCandidate, ImportSourceKind, SuggestionSource,
         },
         merchant::merchant_key,
         suggestion::{
@@ -1559,6 +1559,7 @@ fn manual_fingerprint(
         description: description.to_string(),
         normalized_description: normalized.to_string(),
         is_pix: is_pix_description(description),
+        is_own_account_pix: is_own_account_pix_description(description),
         amount_in_cents,
         external_id: None,
         suggested_category_id: None,
@@ -2022,6 +2023,9 @@ async fn update_transaction_amount_impl(
         description: row.get("description"),
         normalized_description: row.get("normalized_description"),
         is_pix: is_pix_description(row.get::<String, _>("description").as_str()),
+        is_own_account_pix: is_own_account_pix_description(
+            row.get::<String, _>("description").as_str(),
+        ),
         amount_in_cents,
         external_id: row.get("external_id"),
         suggested_category_id: None,
@@ -2555,12 +2559,7 @@ pub async fn set_import_candidates_category(
     if let Some((_, kind)) = &category {
         let incompatible = session.candidates.iter().any(|candidate| {
             rows.contains(&candidate.source_row)
-                && !category_compatible(
-                    kind,
-                    candidate.amount_in_cents,
-                    SuggestionContext::Bank,
-                    is_refund_description(&candidate.normalized_description),
-                )
+                && !explicit_bank_category_compatible(kind, candidate)
         });
         if incompatible {
             return Err(AppError::Validation(
@@ -2579,6 +2578,16 @@ pub async fn set_import_candidates_category(
         file_name: session.file_name.clone(),
         candidates: session.candidates.clone(),
     })
+}
+
+fn explicit_bank_category_compatible(category_kind: &str, candidate: &ImportCandidate) -> bool {
+    category_kind == "transfer"
+        || category_compatible(
+            category_kind,
+            candidate.amount_in_cents,
+            SuggestionContext::Bank,
+            is_refund_description(&candidate.normalized_description),
+        )
 }
 
 fn set_import_candidates_category_impl(
@@ -3819,6 +3828,7 @@ mod tests {
             description: description.into(),
             normalized_description: normalized,
             is_pix: is_pix_description(description),
+            is_own_account_pix: is_own_account_pix_description(description),
             amount_in_cents,
             external_id: None,
             suggested_category_id: None,
@@ -3832,6 +3842,19 @@ mod tests {
             warnings: vec![],
             included: true,
         }
+    }
+
+    #[test]
+    fn explicit_bank_transfer_choice_is_allowed_without_becoming_a_suggestion() {
+        let candidate = candidate("PIX.EMIT.OUT IF-MSM", -410_000);
+
+        assert!(explicit_bank_category_compatible("transfer", &candidate));
+        assert!(!category_compatible(
+            "transfer",
+            candidate.amount_in_cents,
+            SuggestionContext::Bank,
+            false,
+        ));
     }
 
     #[test]

@@ -58,6 +58,7 @@ describe("ImportTutorial", () => {
     useQuickStartGuide.getState().start("import");
     render(
       <MemoryRouter>
+        <div id="tutorial-host" />
         <div data-import-tutorial="choose">Escolha</div>
         <div data-import-tutorial="review">Revisão</div>
         <ImportTutorial />
@@ -65,6 +66,9 @@ describe("ImportTutorial", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Escolha seu arquivo" })).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.getByRole("region", { name: "Escolha seu arquivo" }).closest("#tutorial-host")).toBeTruthy(),
+    );
     useQuickStartGuide.getState().setImportPhase("review");
     await waitFor(() => expect(screen.getByRole("heading", { name: "Revise antes de salvar" })).toBeTruthy());
   });

@@ -30,6 +30,22 @@ const categories: Category[] = [
     sortOrder: 1,
     isSystem: false,
   },
+  {
+    id: "transfers",
+    name: "Transferencias",
+    icon: "arrow-left-right",
+    kind: "transfer",
+    sortOrder: 2,
+    isSystem: true,
+  },
+  {
+    id: "credit-card-payment",
+    name: "Pagamento de fatura",
+    icon: "credit-card",
+    kind: "transfer",
+    sortOrder: 3,
+    isSystem: true,
+  },
 ];
 
 function candidate(overrides: Partial<ImportCandidate> = {}): ImportCandidate {
@@ -284,9 +300,13 @@ describe("ImportReviewGroups", () => {
 
     expect(screen.getByText("Sem sugestão segura — procure na lista completa")).toBeTruthy();
     expect(screen.getByText("Escolha uma categoria")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Escolher categoria para LOJA DESCONHECIDA" })).toBeTruthy();
+    const categoryTrigger = screen.getByRole("button", { name: "Escolher categoria para LOJA DESCONHECIDA" });
+    expect(categoryTrigger).toBeTruthy();
     expect(document.querySelector(".import-review-group-actions--manual-only")).toBeTruthy();
     expect(document.querySelector(".import-review-quick-actions")).toBeNull();
+    fireEvent.click(categoryTrigger);
+    expect(screen.getByRole("option", { name: "Transferencias" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Pagamento de fatura" })).toBeTruthy();
   });
 
   it("identifica PIX na copia e aplica sugestoes somente ao lancamento atual", () => {
@@ -310,6 +330,24 @@ describe("ImportReviewGroups", () => {
     expect(screen.getByText("LANÇAMENTO PIX")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Aplicar Alimentacao/ }));
     expect(onApply).toHaveBeenCalledWith([12], "food", pix);
+  });
+
+  it("orienta PIX para conta propria sem decidir entre transferencia e pagamento de fatura", () => {
+    const pix = candidate({
+      sourceRow: 14,
+      merchantKey: "PIX EMIT OUT IF MSM",
+      description: "PIX.EMIT.OUT IF-MSM",
+      isPix: true,
+      isOwnAccountPix: true,
+    });
+    const onApply = vi.fn().mockResolvedValue(undefined);
+
+    render(<ImportReviewGroups groups={groupPendingCandidates([pix])} categories={categories} onApply={onApply} />);
+
+    expect(screen.getByText("Como você quer representar esse caminho?")).toBeTruthy();
+    expect(screen.getByText(/Se a outra conta também está no Lumen/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Pagamento de fatura" }));
+    expect(onApply).toHaveBeenCalledWith([14], "credit-card-payment", pix);
   });
 
   it("move o foco para o proximo grupo depois de aplicar uma sugestao", async () => {
@@ -347,12 +385,16 @@ describe("ImportReviewGroups", () => {
     const groups = groupPendingCandidates([
       candidate({ sourceRow: 1, merchantKey: "MERCADO TESTE", categorySuggestions: [suggestion] }),
     ]);
-    const onApply = vi.fn().mockRejectedValue(new Error("sessão expirada"));
+    const onApply = vi.fn().mockRejectedValue({
+      code: "VALIDATION",
+      message: "Dados inválidos: categoria incompatível",
+      recoverable: true,
+    });
 
     render(<ImportReviewGroups groups={groups} categories={categories} onApply={onApply} />);
     fireEvent.click(screen.getByRole("button", { name: /Aplicar Alimentacao/ }));
 
-    expect((await screen.findByRole("alert")).textContent).toContain("sessão expirada");
+    expect((await screen.findByRole("alert")).textContent).toContain("Dados inválidos: categoria incompatível");
     expect(screen.getByRole("heading", { name: "MERCADO TESTE" })).toBeTruthy();
   });
 });

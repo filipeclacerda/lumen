@@ -229,6 +229,7 @@ export function App() {
         <UpdateNotice enabled={bootstrap.onboardingCompleted} />
         <BackupReminderNotice enabled={bootstrap.onboardingCompleted} />
         {!maintenanceRestartRequired && <CommandPalette />}
+        <div id="tutorial-host" className="tutorial-host" aria-live="polite" />
         <div className="route-view" key={location.pathname}>
           <Routes>
             <Route path="/" element={<Dashboard />} />

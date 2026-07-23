@@ -169,6 +169,7 @@ mod tests {
                 description: "Teste".into(),
                 normalized_description: "TESTE".into(),
                 is_pix: false,
+                is_own_account_pix: false,
                 amount_in_cents: amount,
                 external_id: None,
                 suggested_category_id: None,

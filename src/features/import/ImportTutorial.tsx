@@ -82,6 +82,11 @@ export function ImportTutorial() {
   const phase = guides.import?.phase ?? "choose";
   const content = phaseContent[phase];
   const [targetRect, setTargetRect] = useState<TargetRect>();
+  const [portalHost, setPortalHost] = useState<HTMLElement | null>(null);
+
+  useLayoutEffect(() => {
+    setPortalHost(document.getElementById("tutorial-host"));
+  }, []);
 
   useEffect(() => {
     if (activeGuide !== "import") return;
@@ -131,16 +136,15 @@ export function ImportTutorial() {
       document.removeEventListener("scroll", update, true);
       window.removeEventListener("resize", update);
     };
-  }, [activeGuide, content.target]);
+  }, [activeGuide, content.target, portalHost]);
 
   if (activeGuide !== "import") return null;
   const Icon = content.icon;
-
   return createPortal(
     <>
       {targetRect && <div className="quick-start-guide__highlight" aria-hidden="true" style={targetRect} />}
       <aside
-        className="quick-start-guide import-tutorial"
+        className={`quick-start-guide import-tutorial${portalHost ? " is-docked" : ""}`}
         role="region"
         aria-live="polite"
         aria-labelledby="import-tutorial-title"
@@ -193,6 +197,6 @@ export function ImportTutorial() {
         </div>
       </aside>
     </>,
-    document.body,
+    portalHost ?? document.body,
   );
 }

@@ -8,9 +8,9 @@ use crate::{
     domain::{
         credit_card::{CreditCardImportItem, CreditCardLineKind, ParsedCreditCardInvoice},
         import::{
-            is_pix_description, normalize_description, CsvColumnMapping, CsvColumnRole,
-            CsvMappingDraft, DuplicateStatus, ImportCandidate, ImportSourceKind,
-            NormalizedImportRow,
+            is_own_account_pix_description, is_pix_description, normalize_description,
+            CsvColumnMapping, CsvColumnRole, CsvMappingDraft, DuplicateStatus, ImportCandidate,
+            ImportSourceKind, NormalizedImportRow,
         },
         money::{parse_brl, parse_money, DecimalSeparator},
     },
@@ -442,6 +442,7 @@ fn parse_csv_legacy(content: &str) -> Result<Vec<ImportCandidate>, AppError> {
                 date: parse_date(record.get(date_i).unwrap_or(""))?,
                 normalized_description: normalize_description(&description),
                 is_pix: is_pix_description(&description),
+                is_own_account_pix: is_own_account_pix_description(&description),
                 description,
                 amount_in_cents: parse_brl(record.get(amount_i).unwrap_or(""))?,
                 external_id: id_i
@@ -529,6 +530,7 @@ fn parse_mapped_bank_rows(
                 )?,
                 normalized_description: normalize_description(&description),
                 is_pix: is_pix_description(&description),
+                is_own_account_pix: is_own_account_pix_description(&description),
                 description,
                 amount_in_cents,
                 external_id: external_i
@@ -643,6 +645,7 @@ fn parse_mapped_credit_card_rows(
                 description: normalized.description.clone(),
                 normalized_description: normalize_description(&normalized.description),
                 is_pix: false,
+                is_own_account_pix: false,
                 amount_in_cents: normalized.amount_in_cents,
                 external_id: normalized.external_id.clone(),
                 suggested_category_id: None,
@@ -730,6 +733,7 @@ fn parse_legacy_credit_card_csv(content: &str) -> Result<ParsedCreditCardInvoice
                 source_row: row + 2,
                 date: parse_date(record.get(0).unwrap_or(""))?,
                 is_pix: false,
+                is_own_account_pix: false,
                 description,
                 normalized_description,
                 amount_in_cents,
@@ -848,6 +852,7 @@ fn parse_sicoob_text(text: &str) -> Result<Vec<ImportCandidate>, AppError> {
             date: date.format("%Y-%m-%d").to_string(),
             normalized_description: normalize_description(&description),
             is_pix: is_pix_description(&description),
+            is_own_account_pix: is_own_account_pix_description(&description),
             description,
             amount_in_cents: if direction == 'D' { -amount } else { amount },
             external_id: None,
@@ -978,6 +983,7 @@ fn parse_ofx(content: &str) -> Result<Vec<ImportCandidate>, AppError> {
                 date: date.format("%Y-%m-%d").to_string(),
                 normalized_description: normalize_description(&description),
                 is_pix: is_pix_description(&description),
+                is_own_account_pix: is_own_account_pix_description(&description),
                 description,
                 amount_in_cents: parse_brl(
                     &tag(block, "TRNAMT")
@@ -1170,17 +1176,21 @@ Recebimento Pix
 CLIENTE EXEMPLO
 ***.178.766-**
 04/05 DEB PACOTE SERVIÇOS 11,45D
+05/05 PIX.EMIT.OUT IF-MSM 4.100,00D
+Pagamento Pix
 04/05 SALDO DO DIA 8.675,15C
 RESUMO
 (+) SALDO EM CONTA: 8.675,15C
 "#;
         let rows = parse_sicoob_text(text).unwrap();
-        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].date, "2026-05-04");
         assert_eq!(rows[0].amount_in_cents, 2050);
         assert!(rows[0].description.contains("CLIENTE EXEMPLO"));
         assert!(!rows[0].description.contains("***"));
         assert_eq!(rows[1].amount_in_cents, -1145);
+        assert!(rows[2].is_pix);
+        assert!(rows[2].is_own_account_pix);
     }
 
     #[test]

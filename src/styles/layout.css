@@ -16,25 +16,25 @@
     .sidebar-collapse { display:none!important; }
     .mobile-menu-trigger { display:grid!important; place-items:center; position:fixed; top:12px; left:12px; z-index:60; width:44px; padding:0; }
     .drawer-backdrop { display:block!important; position:fixed; inset:0; z-index:70; border:0; border-radius:0; background:var(--backdrop); }
-    aside { position:fixed; inset:0 auto 0 0; width:min(290px,86vw); z-index:80; padding:24px 18px; transform:translateX(-105%); transition:transform var(--motion-duration-base) var(--motion-ease); box-shadow:var(--shadow-lg); }
-    .shell.drawer-open aside { transform:translateX(0); pointer-events:auto; }
-    .shell.drawer-open aside .brand div, .shell.drawer-open nav a:not(.active) { font-size:inherit; }
+    .shell > aside { position:fixed; inset:0 auto 0 0; width:min(290px,86vw); z-index:80; padding:24px 18px; transform:translateX(-105%); transition:transform var(--motion-duration-base) var(--motion-ease); box-shadow:var(--shadow-lg); }
+    .shell.drawer-open > aside { transform:translateX(0); pointer-events:auto; }
+    .shell.drawer-open > aside .brand div, .shell.drawer-open nav a:not(.active) { font-size:inherit; }
     .privacy { display:block; }
     main { padding:32px 24px!important; }
     .window-frame .mobile-menu-trigger { top:52px; }
-    .window-frame aside { inset:40px auto 0 0; }
+    .window-frame .shell > aside { inset:40px auto 0 0; }
     .window-frame .drawer-backdrop { inset:40px 0 0; }
   }
   @media(max-width:650px) {
     .shell { display:block!important; }
     .mobile-menu-trigger { display:grid!important; place-items:center; position:fixed; top:12px; left:12px; z-index:60; width:44px; padding:0; }
-    aside { position:fixed; inset:0 auto 0 0; width:min(290px,86vw); z-index:80; padding:24px 18px; transform:translateX(-105%); transition:transform var(--motion-duration-base) var(--motion-ease); box-shadow:var(--shadow-lg); }
-    .shell.drawer-open aside { transform:translateX(0); pointer-events:auto; }
-    .shell.drawer-open aside .brand div, .shell.drawer-open nav a:not(.active) { font-size:inherit; }
+    .shell > aside { position:fixed; inset:0 auto 0 0; width:min(290px,86vw); z-index:80; padding:24px 18px; transform:translateX(-105%); transition:transform var(--motion-duration-base) var(--motion-ease); box-shadow:var(--shadow-lg); }
+    .shell.drawer-open > aside { transform:translateX(0); pointer-events:auto; }
+    .shell.drawer-open > aside .brand div, .shell.drawer-open nav a:not(.active) { font-size:inherit; }
     .drawer-backdrop { display:block!important; position:fixed; inset:0; z-index:70; border:0; border-radius:0; background:var(--backdrop); }
     main { padding:24px 16px!important; }
     .window-frame .mobile-menu-trigger { top:52px; }
-    .window-frame aside { inset:40px auto 0 0; }
+    .window-frame .shell > aside { inset:40px auto 0 0; }
     .window-frame .drawer-backdrop { inset:40px 0 0; }
     .page-header { margin-bottom:var(--space-5); }
     .page-header > div + div { width:100%; }
@@ -48,7 +48,7 @@
     table { min-width:620px; }
     .report-kpis,.cards,.account-grid,.invoice-totals { gap:10px; }
   }
-  @media (prefers-reduced-motion: reduce) { aside { transition:none; } }
+  @media (prefers-reduced-motion: reduce) { .shell > aside { transition:none; } }
 }
 
 @layer utilities {
@@ -92,7 +92,7 @@
   .shell.collapsed .sidebar-local-data, .shell.collapsed .app-version { display:none; }
 
   .window-frame__content .shell { min-height:100%; }
-  .window-frame__content aside { height:calc(100vh / var(--app-zoom, 1) - 40px); }
+  .window-frame__content .shell > aside { height:calc(100vh / var(--app-zoom, 1) - 40px); }
   .window-titlebar { position:sticky; top:0; z-index:100; display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; height:40px; border-bottom:1px solid var(--border-soft); background:var(--surface); color:var(--text-muted); user-select:none; -webkit-user-select:none; touch-action:none; }
   .window-titlebar__drag { min-width:0; height:100%; display:flex; align-items:center; gap:var(--space-2); padding:0 var(--space-3); }
   .window-titlebar__identity { pointer-events:none; display:flex; align-items:center; gap:var(--space-2); min-width:0; color:var(--text); font-size:var(--text-xs); font-weight:700; letter-spacing:-.01em; }

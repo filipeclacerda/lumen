@@ -136,6 +136,7 @@ export type ImportCandidate = {
   amountInCents: number;
   externalId?: string;
   isPix?: boolean;
+  isOwnAccountPix?: boolean;
   suggestedCategoryId?: string;
   suggestedCategoryName?: string;
   suggestedRuleId?: string;

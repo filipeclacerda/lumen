@@ -1630,6 +1630,7 @@ type CandidateGroup = {
   suggestions: ImportCandidate["categorySuggestions"];
   totalInCents: number;
   isPix: boolean;
+  isOwnAccountPix: boolean;
 };
 
 export function summarizeSuggestions(candidates: ImportCandidate[]): SuggestionSummaryData {
@@ -1674,6 +1675,7 @@ export function groupPendingCandidates(candidates: ImportCandidate[]): Candidate
         suggestions,
         totalInCents: items.reduce((total, candidate) => total + candidate.amountInCents, 0),
         isPix: Boolean(items[0].isPix),
+        isOwnAccountPix: Boolean(items[0].isOwnAccountPix),
       };
     })
     .sort(
@@ -1690,7 +1692,7 @@ function compatibleCategoryKinds(
   creditCard: boolean,
 ): CategoryKind[] {
   if (creditCard) return ["expense", "investment"];
-  if (candidate.amountInCents < 0) return ["expense", "investment"];
+  if (candidate.amountInCents < 0) return ["expense", "investment", "transfer"];
   const suggestedKinds = candidate.categorySuggestions
     .map((suggestion) => categories.find((category) => category.id === suggestion.categoryId)?.kind)
     .filter((kind): kind is CategoryKind => Boolean(kind));
@@ -1698,8 +1700,18 @@ function compatibleCategoryKinds(
     candidate.description,
   );
   return looksLikeRefund || suggestedKinds.some((kind) => kind === "expense" || kind === "investment")
-    ? ["income", "expense", "investment"]
-    : ["income"];
+    ? ["income", "expense", "investment", "transfer"]
+    : ["income", "transfer"];
+}
+
+function readableError(reason: unknown): string {
+  if (reason instanceof Error) return reason.message;
+  if (typeof reason === "string") return reason;
+  if (reason && typeof reason === "object" && "message" in reason) {
+    const message = (reason as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+  return "Erro inesperado";
 }
 
 function SuggestionSummary({ summary }: { summary: SuggestionSummaryData }) {
@@ -1788,6 +1800,8 @@ export function ImportReviewGroups({
     groups.findIndex((group) => group.key === activeKey),
   );
   const activeGroup = groups[activeIndex] ?? groups[0];
+  const ownAccountTransferCategory = categories.find((category) => category.id === "transfers");
+  const cardPaymentCategory = categories.find((category) => category.id === "credit-card-payment");
   const queuePosition = Math.max(0, queueKeys.current.indexOf(activeGroup?.key));
   const queueTotal = Math.max(queueKeys.current.length, groups.length);
   const pendingCandidates = groups.reduce((total, group) => total + group.candidates.length, 0);
@@ -1837,7 +1851,7 @@ export function ImportReviewGroups({
       restoreFocus.current = true;
     } catch (reason) {
       nextKeyAfterApply.current = undefined;
-      setError(`Não foi possível aplicar a categoria: ${reason instanceof Error ? reason.message : String(reason)}`);
+      setError(`Não foi possível aplicar a categoria: ${readableError(reason)}`);
     } finally {
       setApplyingKey(undefined);
     }
@@ -1945,6 +1959,47 @@ export function ImportReviewGroups({
                   activeGroup.suggestions.length === 0 ? " import-review-group-actions--manual-only" : ""
                 }`}
               >
+                {activeGroup.isOwnAccountPix && !creditCard && (
+                  <div className="own-account-pix-guidance">
+                    <div>
+                      <span className="import-review-action-label">PIX PARA OUTRA CONTA SUA</span>
+                      <strong>Como você quer representar esse caminho?</strong>
+                      <p>
+                        Se a outra conta também está no Lumen, use Transferência nas duas pontas e vincule-as após a
+                        importação. Se ela foi apenas uma ponte e não será acompanhada, marque este valor como pagamento
+                        de fatura.
+                      </p>
+                    </div>
+                    <div className="own-account-pix-guidance__actions">
+                      {ownAccountTransferCategory && (
+                        <button
+                          type="button"
+                          className="secondary"
+                          disabled={Boolean(applyingKey)}
+                          onClick={() => void apply(activeGroup, ownAccountTransferCategory.id)}
+                        >
+                          <CategoryIcon
+                            name={ownAccountTransferCategory.icon}
+                            kind={ownAccountTransferCategory.kind}
+                            size={16}
+                          />
+                          Transferência entre minhas contas
+                        </button>
+                      )}
+                      {cardPaymentCategory && (
+                        <button
+                          type="button"
+                          className="secondary"
+                          disabled={Boolean(applyingKey)}
+                          onClick={() => void apply(activeGroup, cardPaymentCategory.id)}
+                        >
+                          <CategoryIcon name={cardPaymentCategory.icon} kind={cardPaymentCategory.kind} size={16} />
+                          Pagamento de fatura
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
                 {activeGroup.suggestions.length > 0 && (
                   <div className="import-review-quick-actions">
                     <>

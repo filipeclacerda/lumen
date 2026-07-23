@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   BarChart3,
   Check,
@@ -24,63 +24,63 @@ type TargetRect = { top: number; left: number; width: number; height: number; bo
 const steps = [
   {
     route: "/import",
-    target: '[data-tutorial="import"]',
+    target: '[data-tutorial="import"] h1',
     title: "Importe seu histórico",
     description: "Importe CSV, OFX ou PDF. Você revisa tudo antes de confirmar.",
     icon: FileUp,
   },
   {
     route: "/transactions",
-    target: '[data-tutorial="transactions"]',
+    target: '[data-tutorial="transactions"] h1',
     title: "Organize suas transações",
     description: "Consulte lançamentos, ajuste categorias e registre receitas ou despesas manualmente.",
     icon: CreditCard,
   },
   {
     route: "/accounts",
-    target: '[data-tutorial="accounts"]',
+    target: '[data-tutorial="accounts"] h1',
     title: "Acompanhe contas e cartões",
     description: "Mantenha saldos, limites e faturas organizados em um só lugar.",
     icon: WalletCards,
   },
   {
     route: "/recurring",
-    target: '[data-tutorial="recurring"]',
+    target: '[data-tutorial="recurring"] h1',
     title: "Planeje recorrências",
     description: "Cadastre compromissos frequentes para não perder receitas e despesas futuras.",
     icon: Repeat,
   },
   {
     route: "/budget",
-    target: '[data-tutorial="budget"]',
+    target: '[data-tutorial="budget"] h1',
     title: "Defina seu orçamento",
     description: "Estabeleça limites por categoria e acompanhe o consumo ao longo do mês.",
     icon: Wallet,
   },
   {
     route: "/categories",
-    target: '[data-tutorial="categories"]',
+    target: '[data-tutorial="categories"] h1',
     title: "Personalize categorias e regras",
     description: "Organize seus lançamentos e automatize classificações que se repetem.",
     icon: Tags,
   },
   {
     route: "/",
-    target: '[data-tutorial="overview"]',
+    target: '[data-tutorial="overview"] h1',
     title: "Acompanhe sua visão geral",
     description: "Veja receitas, despesas, saldo e o ritmo financeiro do período.",
     icon: LayoutDashboard,
   },
   {
     route: "/reports",
-    target: '[data-tutorial="reports"]',
+    target: '[data-tutorial="reports"] h1',
     title: "Explore seus relatórios",
     description: "Compare períodos e entenda como seu dinheiro se distribui.",
     icon: BarChart3,
   },
   {
     route: "/settings",
-    target: '[data-tutorial="settings"]',
+    target: '[data-tutorial="settings"] h1',
     title: "Proteja seus dados",
     description: "Em Configurações, crie backups e ajuste o Lumen às suas preferências.",
     icon: Settings,
@@ -105,10 +105,14 @@ export function QuickStartGuide() {
   const { activeGuide, mode, guides, resume, goToStep, pause, dismiss, complete } = useQuickStartGuide();
   const stepIndex = guides.complete.stepIndex;
   const [targetRect, setTargetRect] = useState<TargetRect>();
-  const [cardPosition, setCardPosition] = useState<CSSProperties>();
+  const [portalHost, setPortalHost] = useState<HTMLElement | null>(null);
   const cardRef = useRef<HTMLElement>(null);
   const scrolledStep = useRef<number | undefined>(undefined);
   const step = steps[stepIndex];
+
+  useLayoutEffect(() => {
+    setPortalHost(document.getElementById("tutorial-host"));
+  }, []);
 
   useLayoutEffect(() => {
     document.body.classList.toggle("quick-start-guide-active", mode === "tour");
@@ -135,7 +139,6 @@ export function QuickStartGuide() {
   useLayoutEffect(() => {
     if (mode !== "tour" || activeGuide !== "complete") {
       setTargetRect(undefined);
-      setCardPosition(undefined);
       return;
     }
 
@@ -153,33 +156,14 @@ export function QuickStartGuide() {
         if (target && scrolledStep.current !== stepIndex) {
           scrolledStep.current = stepIndex;
           const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-          target.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+          document.querySelector<HTMLElement>(".window-frame__content")?.scrollTo({
+            top: 0,
+            behavior: reduceMotion ? "auto" : "smooth",
+          });
         }
       }
       const rect = target ? visibleRect(target) : undefined;
       setTargetRect(rect);
-      if (!rect || window.innerWidth <= 850 || !cardRef.current) {
-        setCardPosition(undefined);
-        return;
-      }
-
-      const card = cardRef.current.getBoundingClientRect();
-      const gap = 14;
-      const edge = 16;
-      let left = rect.left + rect.width + gap;
-      let top = rect.top;
-      if (left + card.width > window.innerWidth - edge) left = rect.left - card.width - gap;
-      if (left < edge) {
-        left = Math.min(Math.max(rect.left, edge), window.innerWidth - card.width - edge);
-        top = rect.top + rect.height + gap;
-        if (top + card.height > window.innerHeight - edge) top = rect.top - card.height - gap;
-      }
-      setCardPosition({
-        left: Math.max(edge, Math.min(left, window.innerWidth - card.width - edge)),
-        top: Math.max(edge, Math.min(top, window.innerHeight - card.height - edge)),
-        right: "auto",
-        bottom: "auto",
-      });
     };
 
     const mutationObserver = new MutationObserver(update);
@@ -196,7 +180,7 @@ export function QuickStartGuide() {
       document.removeEventListener("scroll", update, true);
       window.removeEventListener("resize", update);
     };
-  }, [activeGuide, mode, step.target, stepIndex]);
+  }, [activeGuide, mode, portalHost, step.target, stepIndex]);
 
   if (mode === "closed" || (mode === "tour" && activeGuide !== "complete")) return null;
 
@@ -208,7 +192,6 @@ export function QuickStartGuide() {
       ? `Retome o tutorial completo na etapa ${stepIndex + 1} de 9.`
       : "Veja em 9 passos como adicionar, organizar e acompanhar seu dinheiro."
     : step.description;
-
   return createPortal(
     <>
       {!invitation && targetRect && (
@@ -226,8 +209,7 @@ export function QuickStartGuide() {
       )}
       <section
         ref={cardRef}
-        className={`quick-start-guide${invitation ? " is-invitation" : ""}`}
-        style={cardPosition}
+        className={`quick-start-guide${invitation ? " is-invitation" : ""}${portalHost ? " is-docked" : ""}`}
         role="dialog"
         aria-modal="false"
         aria-labelledby="quick-start-guide-title"
@@ -294,6 +276,6 @@ export function QuickStartGuide() {
         </div>
       </section>
     </>,
-    document.body,
+    portalHost ?? document.body,
   );
 }

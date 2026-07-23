@@ -19,6 +19,7 @@ function Location() {
 function renderGuide() {
   return render(
     <MemoryRouter initialEntries={["/settings"]}>
+      <div id="tutorial-host" />
       <Routes>
         <Route path="*" element={<GuideSurface />} />
       </Routes>
@@ -32,15 +33,51 @@ function GuideSurface() {
   return (
     <>
       <Location />
-      {location.pathname === "/import" && <div data-tutorial="import">Import target</div>}
-      {location.pathname === "/transactions" && <div data-tutorial="transactions">Transactions target</div>}
-      {location.pathname === "/accounts" && <div data-tutorial="accounts">Accounts target</div>}
-      {location.pathname === "/recurring" && <div data-tutorial="recurring">Recurring target</div>}
-      {location.pathname === "/budget" && <div data-tutorial="budget">Budget target</div>}
-      {location.pathname === "/categories" && <div data-tutorial="categories">Categories target</div>}
-      {location.pathname === "/" && <div data-tutorial="overview">Overview target</div>}
-      {location.pathname === "/reports" && <div data-tutorial="reports">Reports target</div>}
-      {location.pathname === "/settings" && <div data-tutorial="settings">Settings target</div>}
+      {location.pathname === "/import" && (
+        <div data-tutorial="import">
+          <h1>Import target</h1>
+        </div>
+      )}
+      {location.pathname === "/transactions" && (
+        <div data-tutorial="transactions">
+          <h1>Transactions target</h1>
+        </div>
+      )}
+      {location.pathname === "/accounts" && (
+        <div data-tutorial="accounts">
+          <h1>Accounts target</h1>
+        </div>
+      )}
+      {location.pathname === "/recurring" && (
+        <div data-tutorial="recurring">
+          <h1>Recurring target</h1>
+        </div>
+      )}
+      {location.pathname === "/budget" && (
+        <div data-tutorial="budget">
+          <h1>Budget target</h1>
+        </div>
+      )}
+      {location.pathname === "/categories" && (
+        <div data-tutorial="categories">
+          <h1>Categories target</h1>
+        </div>
+      )}
+      {location.pathname === "/" && (
+        <div data-tutorial="overview">
+          <h1>Overview target</h1>
+        </div>
+      )}
+      {location.pathname === "/reports" && (
+        <div data-tutorial="reports">
+          <h1>Reports target</h1>
+        </div>
+      )}
+      {location.pathname === "/settings" && (
+        <div data-tutorial="settings">
+          <h1>Settings target</h1>
+        </div>
+      )}
     </>
   );
 }
@@ -72,6 +109,7 @@ describe("QuickStartGuide", () => {
 
     const invitation = screen.getByRole("dialog", { name: "Conheça o essencial" });
     expect(invitation.getAttribute("aria-modal")).toBe("false");
+    expect(invitation.closest("#tutorial-host")).toBeTruthy();
     expect(screen.getByTestId("location").textContent).toBe("/settings");
 
     fireEvent.click(screen.getByRole("button", { name: "Ver guia" }));
@@ -125,7 +163,7 @@ describe("QuickStartGuide", () => {
     renderGuide();
     await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/import"));
 
-    const target = document.querySelector('[data-tutorial="import"]') as HTMLElement;
+    const target = document.querySelector('[data-tutorial="import"] h1') as HTMLElement;
     target.style.borderRadius = "9px";
     vi.spyOn(target, "getBoundingClientRect").mockReturnValue({
       top: 24,
