@@ -253,7 +253,7 @@ function CategoryDropdown({
       if (e.key === "Escape") {
         setOpen(false);
         setQuery("");
-        requestAnimationFrame(() => triggerRef.current?.focus());
+        requestAnimationFrame(() => triggerRef.current?.focus({ preventScroll: true }));
       }
     }
     document.addEventListener("mousedown", onDoc);
@@ -265,7 +265,7 @@ function CategoryDropdown({
   }, [open]);
 
   useEffect(() => {
-    if (open) inputRef.current?.focus();
+    if (open) inputRef.current?.focus({ preventScroll: true });
   }, [open]);
 
   useLayoutEffect(() => {
@@ -319,10 +319,10 @@ function CategoryDropdown({
   const totalItems = groups.reduce((n, g) => n + g.items.filter(matches).length, 0);
 
   function select(id?: string) {
-    onChange(id);
     setOpen(false);
     setQuery("");
-    requestAnimationFrame(() => triggerRef.current?.focus());
+    onChange(id);
+    requestAnimationFrame(() => triggerRef.current?.focus({ preventScroll: true }));
   }
 
   function focusListOption(position: "first" | "last" | "next" | "previous", current?: HTMLElement) {
@@ -396,7 +396,11 @@ function CategoryDropdown({
 
       {open &&
         createPortal(
-          <div className="category-dropdown-panel category-dropdown-panel--portal" ref={panelRef} style={panelStyle}>
+          <div
+            className="category-dropdown-panel category-dropdown-panel--portal"
+            ref={panelRef}
+            style={panelStyle ?? { position: "fixed", top: 0, left: 0, visibility: "hidden" }}
+          >
             <div className="category-dropdown-search">
               <input
                 ref={inputRef}

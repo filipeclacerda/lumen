@@ -1,4 +1,7 @@
 @layer layout {
+  html:has(> body > #root > .window-frame) { height:100%; min-height:0; overflow:clip; }
+  body:has(> #root > .window-frame) { height:calc(100% / var(--app-zoom, 1)); min-height:0; overflow:clip; }
+  #root:has(> .window-frame) { height:100%; min-height:0; overflow:clip; }
   .window-frame { height:calc(100vh / var(--app-zoom, 1)); min-height:0; overflow:hidden; display:grid; grid-template-rows:40px minmax(0,1fr); background:var(--surface-bg); }
   .window-frame__content { min-height:0; overflow-y:auto; }
   .window-frame__content > * { min-height:100%; }

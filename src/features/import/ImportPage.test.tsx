@@ -226,7 +226,7 @@ describe("groupPendingCandidates", () => {
 });
 
 describe("ImportReviewGroups", () => {
-  it("mostra um grupo por vez e permite navegar pela fila", async () => {
+  it("mostra somente o grupo atual sem navegacao manual pela fila", () => {
     const groups = groupPendingCandidates([
       candidate({ sourceRow: 1, merchantKey: "A MERCADO", description: "A Mercado" }),
       candidate({ sourceRow: 2, merchantKey: "B PADARIA", description: "B Padaria" }),
@@ -241,13 +241,8 @@ describe("ImportReviewGroups", () => {
     expect(screen.getByRole("progressbar", { name: "Posição na fila de revisão" }).getAttribute("aria-valuenow")).toBe(
       "1",
     );
-
-    fireEvent.click(screen.getByRole("button", { name: "Próximo grupo" }));
-
-    await waitFor(() => expect(screen.getByRole("heading", { name: "B PADARIA" })).toBeTruthy());
-    expect(screen.queryByRole("heading", { name: "A MERCADO" })).toBeNull();
-    expect(screen.getByText("Grupo 2 de 3")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Grupo anterior" }).hasAttribute("disabled")).toBe(false);
+    expect(screen.queryByRole("button", { name: "Grupo anterior" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Próximo grupo" })).toBeNull();
   });
 
   it("aplica uma sugestao a todas as sourceRows do grupo", () => {
@@ -309,6 +304,115 @@ describe("ImportReviewGroups", () => {
     expect(screen.getByRole("option", { name: "Pagamento de fatura" })).toBeTruthy();
   });
 
+  it("volta a ultima escolha pelo card seguinte e regride o progresso", async () => {
+    const first = candidate({ sourceRow: 31, merchantKey: "A MERCADO" });
+    const second = candidate({ sourceRow: 32, merchantKey: "B PADARIA" });
+    const groups = groupPendingCandidates([first, second]);
+    const onApply = vi.fn().mockResolvedValue(undefined);
+    const onUndo = vi.fn().mockResolvedValue(undefined);
+    const view = render(
+      <ImportReviewGroups groups={groups} categories={categories} onApply={onApply} onUndo={onUndo} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Escolher categoria para A MERCADO" }));
+    fireEvent.click(screen.getByRole("option", { name: "Alimentacao" }));
+    await waitFor(() => expect(onApply).toHaveBeenCalledWith([31], "food", first));
+
+    const undoChoice = {
+      kind: "bank" as const,
+      sessionId: "session-bank",
+      groupKey: "A MERCADO::debit",
+      label: "A MERCADO",
+      sourceRows: [31],
+      representative: first,
+    };
+    view.rerender(
+      <ImportReviewGroups
+        groups={groups.slice(1)}
+        categories={categories}
+        onApply={onApply}
+        undoChoice={undoChoice}
+        onUndo={onUndo}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByRole("heading", { name: "B PADARIA" })).toBeTruthy());
+    expect(screen.getByText("Grupo 2 de 2")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Voltar à escolha anterior" }));
+    await waitFor(() => expect(onUndo).toHaveBeenCalledWith(undoChoice));
+
+    view.rerender(<ImportReviewGroups groups={groups} categories={categories} onApply={onApply} onUndo={onUndo} />);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "A MERCADO" })).toBeTruthy());
+    expect(screen.getByText("Grupo 1 de 2")).toBeTruthy();
+    expect(screen.getByRole("progressbar", { name: "Posição na fila de revisão" }).getAttribute("aria-valuenow")).toBe(
+      "1",
+    );
+  });
+
+  it("permite voltar a ultima escolha depois de concluir toda a fila", async () => {
+    const last = candidate({ sourceRow: 41, merchantKey: "ULTIMA LOJA" });
+    const groups = groupPendingCandidates([last]);
+    const onApply = vi.fn().mockResolvedValue(undefined);
+    const onUndo = vi.fn().mockResolvedValue(undefined);
+    const undoChoice = {
+      kind: "card" as const,
+      sessionId: "session-card",
+      groupKey: "ULTIMA LOJA::debit",
+      label: "ULTIMA LOJA",
+      sourceRows: [41],
+      representative: last,
+    };
+    const view = render(
+      <ImportReviewGroups groups={groups} categories={categories} onApply={onApply} onUndo={onUndo} creditCard />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Escolher categoria para ULTIMA LOJA" }));
+    fireEvent.click(screen.getByRole("option", { name: "Alimentacao" }));
+    await waitFor(() => expect(onApply).toHaveBeenCalledOnce());
+    view.rerender(
+      <ImportReviewGroups
+        groups={[]}
+        categories={categories}
+        onApply={onApply}
+        undoChoice={undoChoice}
+        onUndo={onUndo}
+        creditCard
+      />,
+    );
+
+    expect(screen.getByText("Tudo pronto para confirmar")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Voltar à escolha anterior" }));
+    await waitFor(() => expect(onUndo).toHaveBeenCalledWith(undoChoice));
+  });
+
+  it("mantem o botao de voltar quando o desfazer falha", async () => {
+    const previous = candidate({ sourceRow: 51, merchantKey: "LOJA ANTERIOR" });
+    const current = candidate({ sourceRow: 52, merchantKey: "LOJA ATUAL" });
+    const undoChoice = {
+      kind: "bank" as const,
+      sessionId: "session-bank",
+      groupKey: "LOJA ANTERIOR::debit",
+      label: "LOJA ANTERIOR",
+      sourceRows: [51],
+      representative: previous,
+    };
+    const onUndo = vi.fn().mockRejectedValue(new Error("Sessão indisponível"));
+
+    render(
+      <ImportReviewGroups
+        groups={groupPendingCandidates([current])}
+        categories={categories}
+        onApply={vi.fn()}
+        undoChoice={undoChoice}
+        onUndo={onUndo}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Voltar à escolha anterior" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("Sessão indisponível");
+    expect(screen.getByRole("button", { name: "Voltar à escolha anterior" })).toBeTruthy();
+  });
+
   it("identifica PIX na copia e aplica sugestoes somente ao lancamento atual", () => {
     const pix = candidate({
       sourceRow: 12,
@@ -362,17 +466,58 @@ describe("ImportReviewGroups", () => {
       candidate({ sourceRow: 2, merchantKey: "B MERCADO", categorySuggestions: [suggestion] }),
     ]);
     const onApply = vi.fn().mockResolvedValue(undefined);
-    const view = render(<ImportReviewGroups groups={groups} categories={categories} onApply={onApply} />);
+    const view = render(
+      <div className="window-frame__content" data-testid="review-scroll">
+        <ImportReviewGroups groups={groups} categories={categories} onApply={onApply} />
+      </div>,
+    );
+    const scroller = screen.getByTestId("review-scroll");
+    scroller.scrollTop = 420;
 
     fireEvent.click(screen.getAllByRole("button", { name: /Alimentacao/ })[0]);
     await waitFor(() => expect(onApply).toHaveBeenCalledOnce());
-    view.rerender(<ImportReviewGroups groups={groups.slice(1)} categories={categories} onApply={onApply} />);
+    scroller.scrollTop = 0;
+    view.rerender(
+      <div className="window-frame__content" data-testid="review-scroll">
+        <ImportReviewGroups groups={groups.slice(1)} categories={categories} onApply={onApply} />
+      </div>,
+    );
 
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: /Alimentacao/ })));
+    expect(scroller.scrollTop).toBe(420);
     expect(screen.getByText("Grupo 2 de 2")).toBeTruthy();
     expect(screen.getByRole("progressbar", { name: "Posição na fila de revisão" }).getAttribute("aria-valuenow")).toBe(
       "2",
     );
+  });
+
+  it("mantem a posicao da tela ao escolher uma categoria pela lista completa", async () => {
+    const first = candidate({ sourceRow: 61, merchantKey: "A LOJA" });
+    const second = candidate({ sourceRow: 62, merchantKey: "B LOJA" });
+    const groups = groupPendingCandidates([first, second]);
+    const onApply = vi.fn().mockResolvedValue(undefined);
+    const view = render(
+      <div className="window-frame__content" data-testid="manual-review-scroll">
+        <ImportReviewGroups groups={groups} categories={categories} onApply={onApply} />
+      </div>,
+    );
+    const scroller = screen.getByTestId("manual-review-scroll");
+    scroller.scrollTop = 360;
+
+    fireEvent.click(screen.getByRole("button", { name: "Escolher categoria para A LOJA" }));
+    fireEvent.click(screen.getByRole("option", { name: "Alimentacao" }));
+    await waitFor(() => expect(onApply).toHaveBeenCalledWith([61], "food", first));
+    scroller.scrollTop = 0;
+    view.rerender(
+      <div className="window-frame__content" data-testid="manual-review-scroll">
+        <ImportReviewGroups groups={groups.slice(1)} categories={categories} onApply={onApply} />
+      </div>,
+    );
+
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Escolher categoria para B LOJA" })),
+    );
+    expect(scroller.scrollTop).toBe(360);
   });
 
   it("mantem o grupo atual e informa o erro quando a aplicacao falha", async () => {

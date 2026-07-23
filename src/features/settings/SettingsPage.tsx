@@ -63,6 +63,7 @@ const LUMEN_GITHUB_URL = "https://github.com/filipeclacerda/lumen";
 type ProfileDraft = {
   name: string;
   incomeInCents: number | null;
+  targetInCents: number | null;
   day: string;
   goal?: FinancialGoal;
 };
@@ -72,7 +73,7 @@ const goalLabels: Record<FinancialGoal, string> = {
   organize: "Organizar minhas finanças",
   emergency_fund: "Criar reserva de emergência",
   pay_debt: "Quitar dívidas",
-  save: "Economizar para um objetivo",
+  save: "Planejar um objetivo",
   invest: "Investir mais",
 };
 
@@ -86,13 +87,22 @@ function draftFromProfile(profile: UserProfile): ProfileDraft {
   return {
     name: profile.displayName,
     incomeInCents: profile.monthlyIncomeInCents ?? null,
+    targetInCents: profile.monthlyTargetInCents ?? null,
     day: incomeDaySelection(profile.incomeDay, profile.incomeDayRule),
     goal: profile.financialGoal,
   };
 }
 
 function sameProfileDraft(a: ProfileDraft | null, b: ProfileDraft | null) {
-  return !!a && !!b && a.name === b.name && a.incomeInCents === b.incomeInCents && a.day === b.day && a.goal === b.goal;
+  return (
+    !!a &&
+    !!b &&
+    a.name === b.name &&
+    a.incomeInCents === b.incomeInCents &&
+    a.targetInCents === b.targetInCents &&
+    a.day === b.day &&
+    a.goal === b.goal
+  );
 }
 
 function samePreferences(a: EditableUiPreferences, b: EditableUiPreferences) {
@@ -160,6 +170,10 @@ export function SettingsPage() {
     profileDraft?.incomeInCents !== null && (profileDraft?.incomeInCents ?? 0) < 0
       ? "A renda mensal não pode ser negativa."
       : "";
+  const targetError =
+    profileDraft?.targetInCents !== null && (profileDraft?.targetInCents ?? 0) <= 0
+      ? "O valor mensal deve ser maior que zero ou ficar em branco."
+      : "";
   const reminderDirty = reminderDraftDays !== reminderBaseDays;
   const operationInProgress = activeOperation !== null;
 
@@ -215,12 +229,13 @@ export function SettingsPage() {
   }
 
   async function saveProfile() {
-    if (!profileDraft || !profileDirty || nameError || incomeError) return;
+    if (!profileDraft || !profileDirty || nameError || incomeError || targetError) return;
     setProfileSaving(true);
     try {
       const saved = await api.saveProfile({
         displayName: profileDraft.name.trim(),
         monthlyIncomeInCents: profileDraft.incomeInCents ?? undefined,
+        monthlyTargetInCents: profileDraft.targetInCents ?? undefined,
         ...parseIncomeDaySelection(profileDraft.day),
         financialGoal: profileDraft.goal,
       });
@@ -384,10 +399,15 @@ export function SettingsPage() {
         nameError={nameError}
         incomeInputVersion={incomeInputVersion}
         incomeError={incomeError}
+        targetError={targetError}
         backupDate={formatBackupDate(reminder?.lastSuccessfulAt ?? null)}
         onNavigate={goToSection}
         onChange={setProfileDraft}
-        onDiscard={() => profileBase && setProfileDraft(profileBase)}
+        onDiscard={() => {
+          if (!profileBase) return;
+          setProfileDraft(profileBase);
+          setIncomeInputVersion((version) => version + 1);
+        }}
         onSave={() => void saveProfile()}
       />
     );
@@ -592,6 +612,7 @@ function GeneralSection({
   nameError,
   incomeInputVersion,
   incomeError,
+  targetError,
   backupDate,
   onNavigate,
   onChange,
@@ -604,6 +625,7 @@ function GeneralSection({
   nameError: string;
   incomeInputVersion: number;
   incomeError: string;
+  targetError: string;
   backupDate: string;
   onNavigate: (section: SettingsSection) => void;
   onChange: (next: ProfileDraft | null) => void;
@@ -683,26 +705,43 @@ function GeneralSection({
               />
             </label>
           </div>
-          <label>
-            Objetivo principal
-            <Select
-              value={profile?.goal ?? ""}
-              onChange={(value) =>
-                profile && onChange({ ...profile, goal: (value || undefined) as FinancialGoal | undefined })
-              }
-              options={[
-                { value: "", label: "Não definido" },
-                ...Object.entries(goalLabels).map(([value, label]) => ({ value, label })),
-              ]}
-            />
-          </label>
+          <div className="form-row">
+            <label>
+              Objetivo principal
+              <Select
+                value={profile?.goal ?? ""}
+                onChange={(value) =>
+                  profile && onChange({ ...profile, goal: (value || undefined) as FinancialGoal | undefined })
+                }
+                options={[
+                  { value: "", label: "Não definido" },
+                  ...Object.entries(goalLabels).map(([value, label]) => ({ value, label })),
+                ]}
+              />
+            </label>
+            <label>
+              Valor mensal do objetivo
+              <MoneyInput
+                key={`${incomeInputVersion}-target`}
+                id="settings-monthly-target"
+                defaultCents={profile?.targetInCents ?? 0}
+                aria-describedby={targetError ? "settings-target-error" : undefined}
+                onChange={(targetInCents) => profile && onChange({ ...profile, targetInCents })}
+              />
+            </label>
+          </div>
+          {targetError && (
+            <small id="settings-target-error" className="form-error" role="alert">
+              {targetError}
+            </small>
+          )}
         </div>
         {profileDirty && (
           <div className="settings-form-actions">
             <button className="secondary" onClick={onDiscard} disabled={saving}>
               Descartar
             </button>
-            <button onClick={onSave} disabled={saving || !!nameError || !!incomeError}>
+            <button onClick={onSave} disabled={saving || !!nameError || !!incomeError || !!targetError}>
               <Save size={16} /> {saving ? "Salvando…" : "Salvar alterações"}
             </button>
           </div>

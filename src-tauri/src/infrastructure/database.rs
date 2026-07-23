@@ -557,6 +557,8 @@ async fn validate_current_schema(connection: &mut SqliteConnection) -> Result<()
         ("transaction_links", "invoice_id"),
         ("recurring_transactions", "day_of_month"),
         ("user_profiles", "income_day_rule"),
+        ("user_profiles", "monthly_target_cents"),
+        ("user_profiles", "onboarding_start_mode"),
         ("_sqlx_migrations", "checksum"),
     ];
     for (table, column) in critical_columns {

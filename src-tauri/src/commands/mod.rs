@@ -85,9 +85,11 @@ pub struct TransferInput {
 pub struct UserProfile {
     display_name: String,
     monthly_income_in_cents: Option<i64>,
+    monthly_target_in_cents: Option<i64>,
     income_day: Option<i64>,
     income_day_rule: Option<String>,
     financial_goal: Option<String>,
+    onboarding_start_mode: Option<String>,
     onboarding_completed_at: String,
 }
 
@@ -96,6 +98,7 @@ pub struct UserProfile {
 pub struct ProfileInput {
     display_name: String,
     monthly_income_in_cents: Option<i64>,
+    monthly_target_in_cents: Option<i64>,
     income_day: Option<i64>,
     income_day_rule: Option<String>,
     financial_goal: Option<String>,
@@ -105,13 +108,9 @@ pub struct ProfileInput {
 #[serde(rename_all = "camelCase")]
 pub struct OnboardingInput {
     display_name: String,
-    monthly_income_in_cents: Option<i64>,
-    income_day: Option<i64>,
-    income_day_rule: Option<String>,
-    financial_goal: Option<String>,
-    account_name: String,
-    account_kind: String,
-    opening_balance_in_cents: Option<i64>,
+    monthly_target_in_cents: Option<i64>,
+    financial_goal: String,
+    onboarding_start_mode: String,
 }
 
 #[derive(Serialize)]
@@ -683,20 +682,39 @@ fn validate_profile(
     Ok(())
 }
 
+fn validate_monthly_target(monthly_target_in_cents: Option<i64>) -> Result<(), AppError> {
+    if monthly_target_in_cents.is_some_and(|target| target <= 0) {
+        return Err(AppError::Validation(
+            "O valor mensal deve ser maior que zero".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_onboarding_start_mode(mode: &str) -> Result<(), AppError> {
+    if !["import", "manual", "tour"].contains(&mode) {
+        return Err(AppError::Validation("Forma de começar inválida".into()));
+    }
+    Ok(())
+}
+
 fn profile_from_row(row: SqliteRow) -> UserProfile {
     UserProfile {
         display_name: row.get("display_name"),
         monthly_income_in_cents: row.get("monthly_income_cents"),
+        monthly_target_in_cents: row.get("monthly_target_cents"),
         income_day: row.get("income_day"),
         income_day_rule: row.get("income_day_rule"),
         financial_goal: row.get("financial_goal"),
+        onboarding_start_mode: row.get("onboarding_start_mode"),
         onboarding_completed_at: row.get("onboarding_completed_at"),
     }
 }
 
 async fn load_profile(db: &SqlitePool) -> Result<Option<UserProfile>, AppError> {
     Ok(sqlx::query(
-        "SELECT display_name,monthly_income_cents,income_day,income_day_rule,financial_goal,onboarding_completed_at
+        "SELECT display_name,monthly_income_cents,monthly_target_cents,income_day,income_day_rule,
+         financial_goal,onboarding_start_mode,onboarding_completed_at
          FROM user_profiles WHERE id='primary'",
     )
     .fetch_optional(db)
@@ -761,12 +779,14 @@ pub async fn save_profile(
         input.income_day_rule.as_deref(),
         input.financial_goal.as_deref(),
     )?;
+    validate_monthly_target(input.monthly_target_in_cents)?;
     let result = sqlx::query(
-        "UPDATE user_profiles SET display_name=?,monthly_income_cents=?,income_day=?,income_day_rule=?,
-         financial_goal=?,updated_at=datetime('now') WHERE id='primary'",
+        "UPDATE user_profiles SET display_name=?,monthly_income_cents=?,monthly_target_cents=?,
+         income_day=?,income_day_rule=?,financial_goal=?,updated_at=datetime('now') WHERE id='primary'",
     )
     .bind(input.display_name.trim())
     .bind(input.monthly_income_in_cents)
+    .bind(input.monthly_target_in_cents)
     .bind(input.income_day)
     .bind(input.income_day_rule)
     .bind(input.financial_goal)
@@ -796,85 +816,39 @@ async fn complete_onboarding_impl(
 ) -> Result<OnboardingResult, AppError> {
     validate_profile(
         &input.display_name,
-        input.monthly_income_in_cents,
-        input.income_day,
-        input.income_day_rule.as_deref(),
-        input.financial_goal.as_deref(),
+        None,
+        None,
+        None,
+        Some(&input.financial_goal),
     )?;
-    let account_name_length = input.account_name.trim().chars().count();
-    if !(2..=80).contains(&account_name_length) {
-        return Err(AppError::Validation(
-            "O nome da conta deve ter entre 2 e 80 caracteres".into(),
-        ));
-    }
-    if !["checking", "savings", "cash"].contains(&input.account_kind.as_str()) {
-        return Err(AppError::Validation("Tipo de conta inválido".into()));
-    }
-    let has_transactions =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM transactions WHERE deleted_at IS NULL")
-            .fetch_one(db)
-            .await?
-            > 0;
-    if has_transactions
-        && input
-            .opening_balance_in_cents
-            .is_some_and(|value| value != 0)
-    {
-        return Err(AppError::Validation(
-            "O saldo inicial não pode ser aplicado após existirem transações".into(),
-        ));
-    }
+    validate_monthly_target(input.monthly_target_in_cents)?;
+    validate_onboarding_start_mode(&input.onboarding_start_mode)?;
 
     let mut tx = db.begin().await?;
-    sqlx::query(
-        "INSERT INTO user_profiles(id,display_name,monthly_income_cents,income_day,income_day_rule,financial_goal,onboarding_completed_at)
-         VALUES('primary',?,?,?,?,?,datetime('now'))
-         ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,
-         monthly_income_cents=excluded.monthly_income_cents,income_day=excluded.income_day,
-         income_day_rule=excluded.income_day_rule,
-         financial_goal=excluded.financial_goal,onboarding_completed_at=excluded.onboarding_completed_at,
-         updated_at=datetime('now')"
-    ).bind(input.display_name.trim()).bind(input.monthly_income_in_cents).bind(input.income_day).bind(input.income_day_rule)
-        .bind(input.financial_goal).execute(&mut *tx).await?;
-
     let account_id = sqlx::query_scalar::<_, String>(
         "SELECT id FROM accounts WHERE deleted_at IS NULL ORDER BY created_at LIMIT 1",
     )
     .fetch_optional(&mut *tx)
     .await?
-    .unwrap_or_else(|| Uuid::new_v4().to_string());
-    let account_exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM accounts WHERE id=?")
-        .bind(&account_id)
-        .fetch_one(&mut *tx)
-        .await?
-        > 0;
-    if account_exists {
-        sqlx::query("UPDATE accounts SET name=?,kind=? WHERE id=?")
-            .bind(input.account_name.trim())
-            .bind(&input.account_kind)
-            .bind(&account_id)
-            .execute(&mut *tx)
-            .await?;
-    } else {
-        sqlx::query("INSERT INTO accounts(id,name,kind) VALUES(?,?,?)")
-            .bind(&account_id)
-            .bind(input.account_name.trim())
-            .bind(&input.account_kind)
-            .execute(&mut *tx)
-            .await?;
-    }
-    if !has_transactions {
-        if let Some(balance) = input.opening_balance_in_cents.filter(|value| *value != 0) {
-            let transaction_id = Uuid::new_v4().to_string();
-            sqlx::query(
-                "INSERT INTO transactions(id,account_id,date,description,normalized_description,amount_cents,
-                 fingerprint,category_id,category_source,status) VALUES(?,?,?,?,?,?,?,?,?,?)"
-            ).bind(transaction_id).bind(&account_id).bind(chrono::Local::now().format("%Y-%m-%d").to_string())
-                .bind("Saldo inicial").bind("SALDO INICIAL").bind(balance)
-                .bind(format!("onboarding:opening-balance:{account_id}")).bind("opening-balance")
-                .bind("manual").bind("cleared").execute(&mut *tx).await?;
-        }
-    }
+    .ok_or_else(|| AppError::Validation("Nenhuma conta ativa foi encontrada".into()))?;
+    sqlx::query(
+        "INSERT INTO user_profiles(
+           id,display_name,monthly_target_cents,financial_goal,onboarding_start_mode,onboarding_completed_at
+         )
+         VALUES('primary',?,?,?,?,datetime('now'))
+         ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,
+         monthly_target_cents=excluded.monthly_target_cents,
+         financial_goal=excluded.financial_goal,
+         onboarding_start_mode=excluded.onboarding_start_mode,
+         onboarding_completed_at=excluded.onboarding_completed_at,
+         updated_at=datetime('now')"
+    )
+    .bind(input.display_name.trim())
+    .bind(input.monthly_target_in_cents)
+    .bind(input.financial_goal)
+    .bind(input.onboarding_start_mode)
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     let profile = load_profile(db)
         .await?
@@ -2735,6 +2709,15 @@ async fn commit_import_impl(
 mod tests {
     use super::*;
 
+    fn onboarding_input() -> OnboardingInput {
+        OnboardingInput {
+            display_name: "Pessoa Teste".into(),
+            monthly_target_in_cents: None,
+            financial_goal: "organize".into(),
+            onboarding_start_mode: "manual".into(),
+        }
+    }
+
     #[test]
     fn bulk_ids_are_deduplicated_and_bounded() {
         assert_eq!(
@@ -2788,56 +2771,44 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn onboarding_persists_profile_account_and_single_opening_balance() {
+    async fn onboarding_persists_preferences_without_touching_financial_data() {
         let directory = tempfile::tempdir().unwrap();
         let db = crate::infrastructure::database::connect(&directory.path().join("onboarding.db"))
             .await
             .unwrap();
         let input = OnboardingInput {
             display_name: "Pessoa Teste".into(),
-            monthly_income_in_cents: Some(500_000),
-            income_day: Some(5),
-            income_day_rule: None,
-            financial_goal: Some("organize".into()),
-            account_name: "Minha conta".into(),
-            account_kind: "checking".into(),
-            opening_balance_in_cents: Some(123_456),
+            monthly_target_in_cents: Some(50_000),
+            financial_goal: "emergency_fund".into(),
+            onboarding_start_mode: "import".into(),
         };
         let result = complete_onboarding_impl(input, &db).await.unwrap();
         assert_eq!(result.profile.display_name, "Pessoa Teste");
+        assert_eq!(result.profile.monthly_target_in_cents, Some(50_000));
+        assert_eq!(
+            result.profile.financial_goal.as_deref(),
+            Some("emergency_fund")
+        );
+        assert_eq!(
+            result.profile.onboarding_start_mode.as_deref(),
+            Some("import")
+        );
         let account_name: String = sqlx::query_scalar("SELECT name FROM accounts WHERE id=?")
             .bind(result.account_id)
             .fetch_one(&db)
             .await
             .unwrap();
-        assert_eq!(account_name, "Minha conta");
-        let opening_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM transactions t JOIN categories c ON c.id=t.category_id
-             WHERE c.kind='transfer' AND t.normalized_description='SALDO INICIAL'",
-        )
-        .fetch_one(&db)
-        .await
-        .unwrap();
-        assert_eq!(opening_count, 1);
-
-        let duplicate = OnboardingInput {
-            display_name: "Pessoa Teste".into(),
-            monthly_income_in_cents: None,
-            income_day: None,
-            income_day_rule: None,
-            financial_goal: None,
-            account_name: "Minha conta".into(),
-            account_kind: "checking".into(),
-            opening_balance_in_cents: Some(100),
-        };
-        assert!(complete_onboarding_impl(duplicate, &db).await.is_err());
-        let final_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM transactions WHERE normalized_description='SALDO INICIAL'",
-        )
-        .fetch_one(&db)
-        .await
-        .unwrap();
-        assert_eq!(final_count, 1);
+        assert_eq!(account_name, "Conta principal");
+        let transaction_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM transactions")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(transaction_count, 0);
+        let import_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM import_batches")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(import_count, 0);
     }
 
     #[tokio::test]
@@ -2846,16 +2817,7 @@ mod tests {
         let db = crate::infrastructure::database::connect(&directory.path().join("manual.db"))
             .await
             .unwrap();
-        let onboarding = OnboardingInput {
-            display_name: "Pessoa Teste".into(),
-            monthly_income_in_cents: None,
-            income_day: None,
-            income_day_rule: None,
-            financial_goal: None,
-            account_name: "Conta".into(),
-            account_kind: "checking".into(),
-            opening_balance_in_cents: None,
-        };
+        let onboarding = onboarding_input();
         let account_id = complete_onboarding_impl(onboarding, &db)
             .await
             .unwrap()
@@ -2886,16 +2848,7 @@ mod tests {
         let db = crate::infrastructure::database::connect(&directory.path().join("transfer.db"))
             .await
             .unwrap();
-        let onboarding = OnboardingInput {
-            display_name: "Pessoa Teste".into(),
-            monthly_income_in_cents: None,
-            income_day: None,
-            income_day_rule: None,
-            financial_goal: None,
-            account_name: "Corrente".into(),
-            account_kind: "checking".into(),
-            opening_balance_in_cents: None,
-        };
+        let onboarding = onboarding_input();
         let from_account = complete_onboarding_impl(onboarding, &db)
             .await
             .unwrap()
@@ -3002,16 +2955,7 @@ mod tests {
         let db = crate::infrastructure::database::connect(&directory.path().join("detect.db"))
             .await
             .unwrap();
-        let onboarding = OnboardingInput {
-            display_name: "Pessoa Teste".into(),
-            monthly_income_in_cents: None,
-            income_day: None,
-            income_day_rule: None,
-            financial_goal: None,
-            account_name: "Corrente".into(),
-            account_kind: "checking".into(),
-            opening_balance_in_cents: None,
-        };
+        let onboarding = onboarding_input();
         let checking = complete_onboarding_impl(onboarding, &db)
             .await
             .unwrap()
@@ -3127,16 +3071,7 @@ mod tests {
         let db = crate::infrastructure::database::connect(&directory.path().join("filter.db"))
             .await
             .unwrap();
-        let onboarding = OnboardingInput {
-            display_name: "Pessoa Teste".into(),
-            monthly_income_in_cents: None,
-            income_day: None,
-            income_day_rule: None,
-            financial_goal: None,
-            account_name: "Conta".into(),
-            account_kind: "checking".into(),
-            opening_balance_in_cents: None,
-        };
+        let onboarding = onboarding_input();
         let account_id = complete_onboarding_impl(onboarding, &db)
             .await
             .unwrap()
@@ -3254,16 +3189,7 @@ mod tests {
             crate::infrastructure::database::connect(&directory.path().join("advanced-filter.db"))
                 .await
                 .unwrap();
-        let onboarding = OnboardingInput {
-            display_name: "Pessoa Teste".into(),
-            monthly_income_in_cents: None,
-            income_day: None,
-            income_day_rule: None,
-            financial_goal: None,
-            account_name: "Conta".into(),
-            account_kind: "checking".into(),
-            opening_balance_in_cents: None,
-        };
+        let onboarding = onboarding_input();
         let account_id = complete_onboarding_impl(onboarding, &db)
             .await
             .unwrap()
@@ -3372,16 +3298,7 @@ mod tests {
         let db = crate::infrastructure::database::connect(&directory.path().join("linked.db"))
             .await
             .unwrap();
-        let onboarding = OnboardingInput {
-            display_name: "Pessoa Teste".into(),
-            monthly_income_in_cents: None,
-            income_day: None,
-            income_day_rule: None,
-            financial_goal: None,
-            account_name: "Corrente".into(),
-            account_kind: "checking".into(),
-            opening_balance_in_cents: None,
-        };
+        let onboarding = onboarding_input();
         let account_id = complete_onboarding_impl(onboarding, &db)
             .await
             .unwrap()
@@ -3786,16 +3703,7 @@ mod tests {
         let db = crate::infrastructure::database::connect(&directory.path().join("suggestion.db"))
             .await
             .unwrap();
-        let onboarding = OnboardingInput {
-            display_name: "Pessoa Teste".into(),
-            monthly_income_in_cents: None,
-            income_day: None,
-            income_day_rule: None,
-            financial_goal: None,
-            account_name: "Conta".into(),
-            account_kind: "checking".into(),
-            opening_balance_in_cents: None,
-        };
+        let onboarding = onboarding_input();
         let account_id = complete_onboarding_impl(onboarding, &db)
             .await
             .unwrap()

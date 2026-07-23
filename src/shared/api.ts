@@ -29,6 +29,7 @@ import type {
   NetWorthPoint,
   OnboardingInput,
   OnboardingResult,
+  ProfileInput,
   PaymentMatchCandidate,
   RecurringTransaction,
   RecurringTransactionInput,
@@ -263,19 +264,19 @@ export const api = {
     if (isTauri()) return invoke("complete_onboarding", { input });
     const profile: UserProfile = {
       displayName: input.displayName,
-      monthlyIncomeInCents: input.monthlyIncomeInCents,
-      incomeDay: input.incomeDay,
-      incomeDayRule: input.incomeDayRule,
+      monthlyTargetInCents: input.monthlyTargetInCents,
       financialGoal: input.financialGoal,
+      onboardingStartMode: input.onboardingStartMode,
       onboardingCompletedAt: new Date().toISOString(),
     };
     localStorage.setItem("financa-demo-profile", JSON.stringify(profile));
     return { profile, accountId: "demo" };
   },
-  saveProfile: async (input: Omit<UserProfile, "onboardingCompletedAt">): Promise<UserProfile> => {
+  saveProfile: async (input: ProfileInput): Promise<UserProfile> => {
     if (isTauri()) return invoke("save_profile", { input });
     const profile = {
       ...input,
+      onboardingStartMode: demoProfile()?.onboardingStartMode,
       onboardingCompletedAt: demoProfile()?.onboardingCompletedAt ?? new Date().toISOString(),
     };
     localStorage.setItem("financa-demo-profile", JSON.stringify(profile));

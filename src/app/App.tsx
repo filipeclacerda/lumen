@@ -133,7 +133,6 @@ export function App() {
   if (!bootstrap.onboardingCompleted)
     return (
       <Onboarding
-        bootstrap={bootstrap}
         onFinished={async (destination) => {
           await Promise.all([
             client.invalidateQueries({ queryKey: ["bootstrap"] }),

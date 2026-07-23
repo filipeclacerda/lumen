@@ -67,6 +67,21 @@ describe("WindowFrame", () => {
     expect(windowMocks.close).toHaveBeenCalledOnce();
   });
 
+  it("keeps the outer document anchored while the desktop content scrolls internally", () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: {} });
+    document.documentElement.scrollTop = 48;
+    document.body.scrollTop = 48;
+
+    renderFrame();
+
+    expect(document.documentElement.scrollTop).toBe(0);
+    expect(document.body.scrollTop).toBe(0);
+
+    document.documentElement.scrollTop = 32;
+    fireEvent.scroll(document.documentElement);
+    expect(document.documentElement.scrollTop).toBe(0);
+  });
+
   it("exposes the global search from the desktop titlebar", () => {
     Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: {} });
     const onOpen = vi.fn();

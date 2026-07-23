@@ -1,13 +1,5 @@
 import { PageHeader } from "../../shared/ui/PageHeader";
-import {
-  type DragEvent,
-  type KeyboardEvent as ReactKeyboardEvent,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type DragEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -18,7 +10,6 @@ import {
   Check,
   CheckCircle2,
   ChevronLeft,
-  ChevronRight,
   Circle,
   CreditCard,
   Download,
@@ -80,6 +71,15 @@ type LearningDraft = {
   amountInCents: number;
   kind: "bank" | "card";
   count: number;
+};
+
+type ReviewUndoChoice = {
+  kind: "bank" | "card";
+  sessionId: string;
+  groupKey: string;
+  label: string;
+  sourceRows: number[];
+  representative: ImportCandidate;
 };
 
 export function cardPaymentReconciliationPath(paymentTransactionId: string) {
@@ -293,6 +293,7 @@ export function ImportPage() {
   const [cardPreview, setCardPreview] = useState<CreditCardImportPreview>();
   const [learning, setLearning] = useState<LearningDraft>();
   const [lastChoice, setLastChoice] = useState<LearningDraft>();
+  const [lastReviewChoice, setLastReviewChoice] = useState<ReviewUndoChoice>();
   const [previewMode, setPreviewMode] = useState<"review" | "all">("review");
   const [pendingCommit, setPendingCommit] = useState<"bank" | "card">();
   const [mappingState, setMappingState] = useState<MappingState>();
@@ -428,6 +429,7 @@ export function ImportPage() {
   useEffect(() => {
     setPreviewMode("review");
     setLastChoice(undefined);
+    setLastReviewChoice(undefined);
   }, [bankPreview?.sessionId, cardPreview?.sessionId]);
 
   // Keep the selected card valid: a custom select with a value that matches no
@@ -477,6 +479,7 @@ export function ImportPage() {
     setMappingError("");
     setLearning(undefined);
     setLastChoice(undefined);
+    setLastReviewChoice(undefined);
     setPendingCommit(undefined);
     setPreviewMode("review");
   }, []);
@@ -741,11 +744,20 @@ export function ImportPage() {
     useQuickStartGuide.getState().setImportPhase("success");
   }
 
+  function invalidateLastReviewChoice(kind: ReviewUndoChoice["kind"], sourceRows: number[]) {
+    setLastReviewChoice((current) =>
+      current?.kind === kind && current.sourceRows.some((sourceRow) => sourceRows.includes(sourceRow))
+        ? undefined
+        : current,
+    );
+  }
+
   async function changeBankCategory(sourceRow: number, categoryId?: string) {
     if (!bankPreview) return;
     const candidate = bankPreview.candidates.find((c) => c.sourceRow === sourceRow);
     const oldCategoryId = candidate?.suggestedCategoryId;
     await api.setImportCategory(bankPreview.sessionId, sourceRow, categoryId || undefined);
+    invalidateLastReviewChoice("bank", [sourceRow]);
     const category = categories.find((item) => item.id === categoryId);
 
     if (categoryId && oldCategoryId !== categoryId && candidate) {
@@ -757,6 +769,8 @@ export function ImportPage() {
         kind: "bank",
         count: 1,
       });
+    } else if (!categoryId) {
+      setLastChoice(undefined);
     }
 
     setBankPreview({
@@ -776,17 +790,30 @@ export function ImportPage() {
     });
   }
 
-  async function changeBankGroup(rows: number[], categoryId: string, representative: ImportCandidate) {
+  async function changeBankGroup(rows: number[], categoryId: string | undefined, representative: ImportCandidate) {
     if (!bankPreview) return;
     setBankPreview(await api.setImportCategories(bankPreview.sessionId, rows, categoryId));
-    setLastChoice({
-      sourceRow: representative.sourceRow,
-      categoryId,
-      pattern: suggestRulePattern(representative.normalizedDescription || representative.description),
-      amountInCents: representative.amountInCents,
-      kind: "bank",
-      count: rows.length,
-    });
+    if (categoryId) {
+      setLastReviewChoice({
+        kind: "bank",
+        sessionId: bankPreview.sessionId,
+        groupKey: candidateGroupKey(representative),
+        label: representative.merchantKey || representative.description,
+        sourceRows: rows,
+        representative,
+      });
+      setLastChoice({
+        sourceRow: representative.sourceRow,
+        categoryId,
+        pattern: suggestRulePattern(representative.normalizedDescription || representative.description),
+        amountInCents: representative.amountInCents,
+        kind: "bank",
+        count: rows.length,
+      });
+    } else {
+      setLastReviewChoice(undefined);
+      setLastChoice(undefined);
+    }
   }
 
   async function updateBankCandidate(sourceRow: number, amountInCents: number, included: boolean) {
@@ -799,6 +826,7 @@ export function ImportPage() {
           candidate.sourceRow === sourceRow ? updated : candidate,
         ),
       });
+      invalidateLastReviewChoice("bank", [sourceRow]);
     } catch (error: any) {
       setMessage(`Erro ao atualizar lançamento: ${error?.message || error}`);
     }
@@ -809,8 +837,11 @@ export function ImportPage() {
 
     const item = cardPreview.items.find((i) => i.candidate.sourceRow === sourceRow);
     const oldCategoryId = item?.candidate.suggestedCategoryId;
+    const candidateEdited =
+      Boolean(item) && (item?.included !== included || item?.candidate.suggestedCategoryId !== categoryId);
 
     setCardPreview(await api.updateCreditCardImport(cardPreview.sessionId, sourceRow, included, categoryId, dueDate));
+    if (candidateEdited) invalidateLastReviewChoice("card", [sourceRow]);
 
     if (categoryId && oldCategoryId !== categoryId && item) {
       setLastChoice({
@@ -821,20 +852,49 @@ export function ImportPage() {
         kind: "card",
         count: 1,
       });
+    } else if (!categoryId) {
+      setLastChoice(undefined);
     }
   }
 
-  async function changeCardGroup(rows: number[], categoryId: string, representative: ImportCandidate) {
+  async function changeCardGroup(rows: number[], categoryId: string | undefined, representative: ImportCandidate) {
     if (!cardPreview) return;
     setCardPreview(await api.updateCreditCardImportCategories(cardPreview.sessionId, rows, categoryId));
-    setLastChoice({
-      sourceRow: representative.sourceRow,
-      categoryId,
-      pattern: suggestRulePattern(representative.normalizedDescription || representative.description),
-      amountInCents: representative.amountInCents,
-      kind: "card",
-      count: rows.length,
-    });
+    if (categoryId) {
+      setLastReviewChoice({
+        kind: "card",
+        sessionId: cardPreview.sessionId,
+        groupKey: candidateGroupKey(representative),
+        label: representative.merchantKey || representative.description,
+        sourceRows: rows,
+        representative,
+      });
+      setLastChoice({
+        sourceRow: representative.sourceRow,
+        categoryId,
+        pattern: suggestRulePattern(representative.normalizedDescription || representative.description),
+        amountInCents: representative.amountInCents,
+        kind: "card",
+        count: rows.length,
+      });
+    } else {
+      setLastReviewChoice(undefined);
+      setLastChoice(undefined);
+    }
+  }
+
+  async function undoReviewChoice(choice: ReviewUndoChoice) {
+    if (choice.kind === "bank") {
+      if (!bankPreview || choice.sessionId !== bankPreview.sessionId) {
+        throw new Error("A sessão de importação não está mais disponível.");
+      }
+      await changeBankGroup(choice.sourceRows, undefined, choice.representative);
+      return;
+    }
+    if (!cardPreview || choice.sessionId !== cardPreview.sessionId) {
+      throw new Error("A sessão de importação não está mais disponível.");
+    }
+    await changeCardGroup(choice.sourceRows, undefined, choice.representative);
   }
 
   async function createRule() {
@@ -1315,6 +1375,8 @@ export function ImportPage() {
                 groups={bankGroups}
                 categories={categories}
                 onApply={(rows, categoryId, representative) => changeBankGroup(rows, categoryId, representative)}
+                undoChoice={lastReviewChoice?.kind === "bank" ? lastReviewChoice : undefined}
+                onUndo={undoReviewChoice}
               />
             </div>
           ) : (
@@ -1440,6 +1502,8 @@ export function ImportPage() {
                 categories={categories}
                 creditCard
                 onApply={(rows, categoryId, representative) => changeCardGroup(rows, categoryId, representative)}
+                undoChoice={lastReviewChoice?.kind === "card" ? lastReviewChoice : undefined}
+                onUndo={undoReviewChoice}
               />
             </div>
           ) : (
@@ -1649,12 +1713,23 @@ export function summarizeSuggestions(candidates: ImportCandidate[]): SuggestionS
 }
 
 export function groupPendingCandidates(candidates: ImportCandidate[]): CandidateGroup[] {
+  return groupCandidates(candidates, (candidate) => !candidate.suggestedCategoryId);
+}
+
+function candidateGroupKey(candidate: ImportCandidate): string {
+  const direction = candidate.amountInCents >= 0 ? "credit" : "debit";
+  const identity = candidate.merchantKey || candidate.normalizedDescription || candidate.description;
+  return candidate.isPix ? `${identity}::${direction}::pix:${candidate.sourceRow}` : `${identity}::${direction}`;
+}
+
+function groupCandidates(
+  candidates: ImportCandidate[],
+  include: (candidate: ImportCandidate) => boolean,
+): CandidateGroup[] {
   const groups = new Map<string, ImportCandidate[]>();
   for (const candidate of candidates) {
-    if (!candidate.included || candidate.duplicateStatus === "exact" || candidate.suggestedCategoryId) continue;
-    const direction = candidate.amountInCents >= 0 ? "credit" : "debit";
-    const identity = candidate.merchantKey || candidate.normalizedDescription || candidate.description;
-    const key = candidate.isPix ? `${identity}::${direction}::pix:${candidate.sourceRow}` : `${identity}::${direction}`;
+    if (!candidate.included || candidate.duplicateStatus === "exact" || !include(candidate)) continue;
+    const key = candidateGroupKey(candidate);
     groups.set(key, [...(groups.get(key) ?? []), candidate]);
   }
   return [...groups.entries()]
@@ -1753,31 +1828,42 @@ export function ImportReviewGroups({
   categories,
   creditCard = false,
   onApply,
+  undoChoice,
+  onUndo,
 }: {
   groups: CandidateGroup[];
   categories: Category[];
   creditCard?: boolean;
   onApply: (rows: number[], categoryId: string, representative: ImportCandidate) => Promise<void>;
+  undoChoice?: ReviewUndoChoice;
+  onUndo?: (choice: ReviewUndoChoice) => Promise<void>;
 }) {
   const [applyingKey, setApplyingKey] = useState<string>();
+  const [undoing, setUndoing] = useState(false);
   const [activeKey, setActiveKey] = useState<string>();
   const [error, setError] = useState("");
   const [announcement, setAnnouncement] = useState("");
   const restoreFocus = useRef(false);
   const nextKeyAfterApply = useRef<string | undefined>(undefined);
+  const returnKeyAfterUndo = useRef<string | undefined>(undefined);
   const queueKeys = useRef(groups.map((group) => group.key));
   const rootRef = useRef<HTMLDivElement>(null);
+  const preservedScroll = useRef<{ element: HTMLElement; top: number; left: number } | undefined>(undefined);
+  const busy = Boolean(applyingKey) || undoing;
 
   useEffect(() => {
     if (groups.length === 0) {
       setActiveKey(undefined);
-      if (restoreFocus.current) {
-        restoreFocus.current = false;
-        requestAnimationFrame(() => rootRef.current?.querySelector<HTMLElement>(".import-review-ready")?.focus());
-      }
       return;
     }
 
+    if (returnKeyAfterUndo.current && groups.some((group) => group.key === returnKeyAfterUndo.current)) {
+      const returnKey = returnKeyAfterUndo.current;
+      returnKeyAfterUndo.current = undefined;
+      nextKeyAfterApply.current = undefined;
+      setActiveKey(returnKey);
+      return;
+    }
     if (activeKey && groups.some((group) => group.key === activeKey)) return;
     const nextKey =
       (nextKeyAfterApply.current && groups.some((group) => group.key === nextKeyAfterApply.current)
@@ -1787,56 +1873,51 @@ export function ImportReviewGroups({
     setActiveKey(nextKey);
   }, [activeKey, groups]);
 
-  useEffect(() => {
-    if (!restoreFocus.current || !activeKey) return;
-    restoreFocus.current = false;
-    requestAnimationFrame(() => {
-      rootRef.current?.querySelector<HTMLElement>(".import-review-group button")?.focus();
-    });
-  }, [activeKey]);
+  useLayoutEffect(() => {
+    if (!restoreFocus.current) return;
+    const focusTarget = rootRef.current?.querySelector<HTMLElement>(
+      groups.length === 0 ? ".import-review-ready" : ".import-review-group button",
+    );
+    if (!focusTarget) return;
 
-  const activeIndex = Math.max(
-    0,
-    groups.findIndex((group) => group.key === activeKey),
-  );
-  const activeGroup = groups[activeIndex] ?? groups[0];
+    restoreFocus.current = false;
+    const position = preservedScroll.current;
+    preservedScroll.current = undefined;
+    if (position?.element.isConnected) {
+      position.element.scrollTop = position.top;
+      position.element.scrollLeft = position.left;
+    }
+    focusTarget.focus({ preventScroll: true });
+  }, [activeKey, groups.length]);
+
+  const activeGroup = groups.find((group) => group.key === activeKey) ?? groups[0];
   const ownAccountTransferCategory = categories.find((category) => category.id === "transfers");
   const cardPaymentCategory = categories.find((category) => category.id === "credit-card-payment");
   const queuePosition = Math.max(0, queueKeys.current.indexOf(activeGroup?.key));
   const queueTotal = Math.max(queueKeys.current.length, groups.length);
   const pendingCandidates = groups.reduce((total, group) => total + group.candidates.length, 0);
 
-  function navigateTo(index: number) {
-    const group = groups[index];
-    if (!group || applyingKey) return;
-    setActiveKey(group.key);
-    requestAnimationFrame(() => {
-      rootRef.current?.querySelector<HTMLElement>(".import-review-group")?.focus();
-    });
-  }
-
-  function handleQueueKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
-    const target = event.target as HTMLElement;
-    if (target.closest("button, input, select, textarea, [role='combobox'], summary")) return;
-
-    let nextIndex: number | undefined;
-    if (event.key === "ArrowLeft") nextIndex = activeIndex - 1;
-    else if (event.key === "ArrowRight") nextIndex = activeIndex + 1;
-    else if (event.key === "Home") nextIndex = 0;
-    else if (event.key === "End") nextIndex = groups.length - 1;
-    if (nextIndex === undefined) return;
-
-    event.preventDefault();
-    navigateTo(Math.min(Math.max(nextIndex, 0), groups.length - 1));
+  function preserveScrollPosition() {
+    const element =
+      rootRef.current?.closest<HTMLElement>(".window-frame__content") ??
+      (document.scrollingElement as HTMLElement | null);
+    if (!element) return;
+    preservedScroll.current = {
+      element,
+      top: element.scrollTop,
+      left: element.scrollLeft,
+    };
   }
 
   async function apply(group: CandidateGroup, categoryId: string) {
-    if (applyingKey) return;
+    if (busy) return;
+    preserveScrollPosition();
     const currentIndex = groups.findIndex((item) => item.key === group.key);
     const remainingGroups = groups.filter((item) => item.key !== group.key);
     nextKeyAfterApply.current = remainingGroups[Math.min(Math.max(currentIndex, 0), remainingGroups.length - 1)]?.key;
     setApplyingKey(group.key);
     setError("");
+    restoreFocus.current = true;
     try {
       await onApply(
         group.candidates.map((candidate) => candidate.sourceRow),
@@ -1848,17 +1929,38 @@ export function ImportReviewGroups({
           group.candidates.length === 1 ? "lançamento resolvido" : "lançamentos resolvidos"
         }.`,
       );
-      restoreFocus.current = true;
     } catch (reason) {
       nextKeyAfterApply.current = undefined;
+      restoreFocus.current = false;
+      preservedScroll.current = undefined;
       setError(`Não foi possível aplicar a categoria: ${readableError(reason)}`);
     } finally {
       setApplyingKey(undefined);
     }
   }
 
+  async function undoLastChoice() {
+    if (!undoChoice || !onUndo || busy) return;
+    preserveScrollPosition();
+    returnKeyAfterUndo.current = undoChoice.groupKey;
+    setUndoing(true);
+    setError("");
+    restoreFocus.current = true;
+    try {
+      await onUndo(undoChoice);
+      setAnnouncement(`${undoChoice.label} voltou para revisão. Escolha a categoria novamente.`);
+    } catch (reason) {
+      returnKeyAfterUndo.current = undefined;
+      restoreFocus.current = false;
+      preservedScroll.current = undefined;
+      setError(`Não foi possível voltar à escolha anterior: ${readableError(reason)}`);
+    } finally {
+      setUndoing(false);
+    }
+  }
+
   return (
-    <div className="import-review-groups" ref={rootRef} aria-busy={Boolean(applyingKey)}>
+    <div className="import-review-groups" ref={rootRef} aria-busy={busy}>
       {groups.length === 0 ? (
         <div className="import-review-ready" tabIndex={-1}>
           <CheckCircle2 size={24} aria-hidden />
@@ -1866,6 +1968,12 @@ export function ImportReviewGroups({
             <strong>Tudo pronto para confirmar</strong>
             <p>Não há lançamentos incluídos aguardando categoria.</p>
           </div>
+          {undoChoice && onUndo && (
+            <button type="button" className="secondary import-review-undo" disabled={busy} onClick={undoLastChoice}>
+              <ChevronLeft size={17} aria-hidden />
+              {undoing ? "Voltando…" : "Voltar à escolha anterior"}
+            </button>
+          )}
         </div>
       ) : (
         <div className="import-review-intro">
@@ -1889,12 +1997,7 @@ export function ImportReviewGroups({
         {announcement}
       </p>
       {activeGroup && (
-        <div
-          className="import-review-queue"
-          role="region"
-          aria-label="Fila guiada de revisão"
-          onKeyDown={handleQueueKeyDown}
-        >
+        <div className="import-review-queue" role="region" aria-label="Fila guiada de revisão">
           <div className="import-review-queue-header">
             <div>
               <span className="import-review-action-label">Etapa atual</span>
@@ -1905,28 +2008,6 @@ export function ImportReviewGroups({
                 {pendingCandidates} {pendingCandidates === 1 ? "lançamento" : "lançamentos"} pendentes · escolha uma vez
               </small>
             </div>
-            <nav className="import-review-queue-nav" aria-label="Navegar pelos grupos">
-              <button
-                type="button"
-                className="secondary"
-                disabled={activeIndex === 0 || Boolean(applyingKey)}
-                aria-label="Grupo anterior"
-                onClick={() => navigateTo(activeIndex - 1)}
-              >
-                <ChevronLeft size={17} aria-hidden />
-                Anterior
-              </button>
-              <button
-                type="button"
-                className="secondary"
-                disabled={activeIndex === groups.length - 1 || Boolean(applyingKey)}
-                aria-label="Próximo grupo"
-                onClick={() => navigateTo(activeIndex + 1)}
-              >
-                Próximo
-                <ChevronRight size={17} aria-hidden />
-              </button>
-            </nav>
           </div>
           <div
             className="import-review-queue-track"
@@ -1945,6 +2026,14 @@ export function ImportReviewGroups({
             data-group-key={activeGroup.key}
             aria-labelledby="import-review-active-title"
           >
+            {undoChoice && onUndo && (
+              <div className="import-review-undo-row">
+                <button type="button" className="secondary" disabled={busy} onClick={undoLastChoice}>
+                  <ChevronLeft size={17} aria-hidden />
+                  {undoing ? "Voltando…" : "Voltar à escolha anterior"}
+                </button>
+              </div>
+            )}
             <div className="import-review-group-main">
               <div className="import-review-group-heading">
                 <span>{activeGroup.isPix ? "LANÇAMENTO PIX" : "ESTABELECIMENTO"}</span>
@@ -1975,7 +2064,7 @@ export function ImportReviewGroups({
                         <button
                           type="button"
                           className="secondary"
-                          disabled={Boolean(applyingKey)}
+                          disabled={busy}
                           onClick={() => void apply(activeGroup, ownAccountTransferCategory.id)}
                         >
                           <CategoryIcon
@@ -1990,7 +2079,7 @@ export function ImportReviewGroups({
                         <button
                           type="button"
                           className="secondary"
-                          disabled={Boolean(applyingKey)}
+                          disabled={busy}
                           onClick={() => void apply(activeGroup, cardPaymentCategory.id)}
                         >
                           <CategoryIcon name={cardPaymentCategory.icon} kind={cardPaymentCategory.kind} size={16} />
@@ -2019,7 +2108,7 @@ export function ImportReviewGroups({
                               data-kind={category?.kind}
                               key={suggestion.categoryId}
                               title={suggestion.reason}
-                              disabled={Boolean(applyingKey)}
+                              disabled={busy}
                               aria-label={`Aplicar ${suggestion.categoryName} a ${activeGroup.candidates.length} ${
                                 activeGroup.candidates.length === 1 ? "lançamento" : "lançamentos"
                               } de ${activeGroup.label}. ${suggestion.reason}`}
@@ -2065,7 +2154,7 @@ export function ImportReviewGroups({
                     kind={compatibleCategoryKinds(activeGroup.candidates[0], categories, creditCard)}
                     allowEmpty={false}
                     emptyLabel="Escolher categoria"
-                    disabled={Boolean(applyingKey)}
+                    disabled={busy}
                     aria-label={`Escolher categoria para ${activeGroup.label}`}
                     onChange={(categoryId) => categoryId && void apply(activeGroup, categoryId)}
                   />
@@ -2090,8 +2179,8 @@ export function ImportReviewGroups({
             </details>
           </article>
           <p className="import-review-queue-hint">
-            Ao categorizar, o próximo grupo entra em foco automaticamente. Use as setas para navegar ou “Todas” para
-            corrigir um lançamento isolado.
+            Ao categorizar, o próximo grupo entra em foco automaticamente. Use “Voltar à escolha anterior” se precisar
+            corrigir o último grupo ou “Todas” para ajustar um lançamento isolado.
           </p>
         </div>
       )}
