@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight, Copy, Minus, Search, Square, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useLocation, useNavigate, useNavigationType } from "react-router-dom";
@@ -9,7 +9,32 @@ import { OPEN_COMMAND_PALETTE_EVENT } from "./CommandPalette";
 export function WindowFrame({ children }: { children: ReactNode }) {
   if (!isTauriRuntime()) return children;
 
+  return <DesktopWindowFrame>{children}</DesktopWindowFrame>;
+}
+
+function DesktopWindowFrame({ children }: { children: ReactNode }) {
   const macOs = isMacOsRuntime();
+
+  useLayoutEffect(() => {
+    const targets = [document.documentElement, document.body, document.getElementById("root")].filter(
+      (target): target is HTMLElement => target instanceof HTMLElement,
+    );
+    const resetOuterScroll = () => {
+      for (const target of targets) {
+        if (target.scrollTop !== 0) target.scrollTop = 0;
+        if (target.scrollLeft !== 0) target.scrollLeft = 0;
+      }
+    };
+
+    resetOuterScroll();
+    for (const target of targets) target.addEventListener("scroll", resetOuterScroll, { passive: true });
+    window.addEventListener("scroll", resetOuterScroll, { passive: true });
+    return () => {
+      for (const target of targets) target.removeEventListener("scroll", resetOuterScroll);
+      window.removeEventListener("scroll", resetOuterScroll);
+    };
+  }, []);
+
   return (
     <div className="window-frame">
       <WindowTitleBar macOs={macOs} />
@@ -64,6 +89,7 @@ function WindowTitleBar({ macOs }: { macOs: boolean }) {
         {!macOs && (
           <div className="window-titlebar__identity" aria-label="Lumen">
             <BrandLogo size={18} decorative />
+            <span className="window-titlebar__product-name">Lumen</span>
           </div>
         )}
         <div className="window-titlebar__navigation" aria-label="Navegação">
@@ -86,6 +112,10 @@ function WindowTitleBar({ macOs }: { macOs: boolean }) {
             <ChevronRight size={17} aria-hidden="true" />
           </button>
         </div>
+      </div>
+      <div className="window-titlebar__local-status" aria-label="Armazenamento local">
+        <i aria-hidden="true" />
+        Configuração local
       </div>
       <button
         type="button"

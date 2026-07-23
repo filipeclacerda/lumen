@@ -5,10 +5,12 @@ import type {
   AppBootstrap,
   BudgetOverview,
   Category,
+  CardPaymentReconciliation,
   CategorizationRule,
   CategoryTrendFilter,
   CategoryTrendPoint,
   CommitImportResult,
+  CreditCardImportCommitResult,
   CreditCardImportPreview,
   CreditCardInvoice,
   CreditCardInvoicePage,
@@ -27,6 +29,7 @@ import type {
   NetWorthPoint,
   OnboardingInput,
   OnboardingResult,
+  ProfileInput,
   PaymentMatchCandidate,
   RecurringTransaction,
   RecurringTransactionInput,
@@ -253,6 +256,7 @@ export const api = {
       onboardingCompleted: Boolean(profile),
       account: { id: "demo", name: "Conta principal", kind: "checking", balanceInCents: 0 },
       hasTransactions: false,
+      hasImports: false,
     };
   },
   profile: async (): Promise<UserProfile | undefined> => (isTauri() ? invoke("get_profile") : demoProfile()),
@@ -260,19 +264,19 @@ export const api = {
     if (isTauri()) return invoke("complete_onboarding", { input });
     const profile: UserProfile = {
       displayName: input.displayName,
-      monthlyIncomeInCents: input.monthlyIncomeInCents,
-      incomeDay: input.incomeDay,
-      incomeDayRule: input.incomeDayRule,
+      monthlyTargetInCents: input.monthlyTargetInCents,
       financialGoal: input.financialGoal,
+      onboardingStartMode: input.onboardingStartMode,
       onboardingCompletedAt: new Date().toISOString(),
     };
     localStorage.setItem("financa-demo-profile", JSON.stringify(profile));
     return { profile, accountId: "demo" };
   },
-  saveProfile: async (input: Omit<UserProfile, "onboardingCompletedAt">): Promise<UserProfile> => {
+  saveProfile: async (input: ProfileInput): Promise<UserProfile> => {
     if (isTauri()) return invoke("save_profile", { input });
     const profile = {
       ...input,
+      onboardingStartMode: demoProfile()?.onboardingStartMode,
       onboardingCompletedAt: demoProfile()?.onboardingCompletedAt ?? new Date().toISOString(),
     };
     localStorage.setItem("financa-demo-profile", JSON.stringify(profile));
@@ -410,6 +414,8 @@ export const api = {
     invoke("update_import_candidate", { sessionId, sourceRow, amountInCents, included }),
   setImportCategory: (sessionId: string, sourceRow: number, categoryId?: string): Promise<void> =>
     invoke("set_import_candidate_category", { sessionId, sourceRow, categoryId: categoryId || null }),
+  setImportCategories: (sessionId: string, sourceRows: number[], categoryId?: string): Promise<ImportPreview> =>
+    invoke("set_import_candidates_category", { sessionId, sourceRows, categoryId: categoryId || null }),
   commitImport: (sessionId: string): Promise<CommitImportResult> => invoke("commit_import", { sessionId }),
   detectImportKind: (path: string): Promise<"known_bank" | "known_credit_card" | "unknown_csv"> =>
     invoke("detect_import_kind", { path }),
@@ -435,7 +441,14 @@ export const api = {
       categoryId: categoryId || null,
       dueDate: dueDate || null,
     }),
-  commitCreditCardImport: (sessionId: string): Promise<string> => invoke("commit_credit_card_import", { sessionId }),
+  updateCreditCardImportCategories: (
+    sessionId: string,
+    sourceRows: number[],
+    categoryId?: string,
+  ): Promise<CreditCardImportPreview> =>
+    invoke("update_credit_card_import_categories", { sessionId, sourceRows, categoryId: categoryId || null }),
+  commitCreditCardImport: (sessionId: string): Promise<CreditCardImportCommitResult> =>
+    invoke("commit_credit_card_import", { sessionId }),
   creditCardInvoices: async (): Promise<CreditCardInvoice[]> => (isTauri() ? invoke("list_credit_card_invoices") : []),
   creditCardInvoicesPage: async (filter: { limit?: number; offset?: number }): Promise<CreditCardInvoicePage> => {
     if (isTauri()) return invoke("list_credit_card_invoices_page", { filter });
@@ -443,6 +456,18 @@ export const api = {
   },
   creditCardInvoiceItems: (invoiceId: string): Promise<CreditCardInvoiceItem[]> =>
     invoke("get_credit_card_invoice_items", { invoiceId }),
+  cardPaymentReconciliations: async (): Promise<CardPaymentReconciliation[]> =>
+    isTauri() ? invoke("list_card_payment_reconciliations") : [],
+  reconcileCardPayment: (
+    paymentTransactionId: string,
+    invoiceId?: string,
+    bankTransactionId?: string,
+  ): Promise<TransactionLink> =>
+    invoke("reconcile_card_payment", {
+      paymentTransactionId,
+      invoiceId: invoiceId || null,
+      bankTransactionId: bankTransactionId || null,
+    }),
   invoicePaymentMatches: (invoiceId: string): Promise<PaymentMatchCandidate[]> =>
     invoke("find_invoice_payment_matches", { invoiceId }),
   cardPaymentMatches: (creditTransactionId: string): Promise<PaymentMatchCandidate[]> =>

@@ -75,6 +75,10 @@ td,th{border-bottom-color:var(--border)}
 .modal-form{display:flex;flex-direction:column;gap:13px;margin-top:14px}
 .modal-form label{font-size:12px;font-weight:600;color:var(--text-muted);display:flex;flex-direction:column;gap:6px}
 .modal-form input,.modal-form select{border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--surface);padding:10px;font:inherit;color:var(--text)}
+.correction-learning-modal{align-items:center;text-align:center}
+.correction-learning-modal p{margin:0}
+.correction-learning-modal label{width:100%;text-align:left}
+.correction-learning-modal .editor-actions{justify-content:center;flex-wrap:wrap}
 
 @keyframes slideDown {
   from { opacity: 0; transform: translateX(-50%) translateY(-10px); }

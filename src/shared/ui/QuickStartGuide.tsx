@@ -1,14 +1,19 @@
 import { createPortal } from "react-dom";
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   BarChart3,
   Check,
   ChevronLeft,
   ChevronRight,
+  CreditCard,
   FileUp,
   LayoutDashboard,
-  ListChecks,
+  Repeat,
+  Settings,
   Sparkles,
+  Tags,
+  Wallet,
+  WalletCards,
   X,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -19,52 +24,66 @@ type TargetRect = { top: number; left: number; width: number; height: number; bo
 const steps = [
   {
     route: "/import",
-    target: '[data-quick-guide="import"]',
-    title: "Traga seu histórico",
+    target: '[data-tutorial="import"] h1',
+    title: "Importe seu histórico",
     description: "Importe CSV, OFX ou PDF. Você revisa tudo antes de confirmar.",
     icon: FileUp,
   },
   {
     route: "/transactions",
-    target: '[data-quick-guide="transactions"]',
-    title: "Revise e organize",
-    description: "Confira lançamentos, ajuste categorias e use Nova transação para registrar algo manualmente.",
-    icon: ListChecks,
+    target: '[data-tutorial="transactions"] h1',
+    title: "Organize suas transações",
+    description: "Consulte lançamentos, ajuste categorias e registre receitas ou despesas manualmente.",
+    icon: CreditCard,
   },
   {
-    route: "/transactions",
-    target: '[data-quick-guide="transactions-filters"]',
-    title: "Encontre o que precisa",
-    description: "Busque lançamentos e use Filtros para separar períodos, valores, contas e categorias.",
-    icon: ListChecks,
+    route: "/accounts",
+    target: '[data-tutorial="accounts"] h1',
+    title: "Acompanhe contas e cartões",
+    description: "Mantenha saldos, limites e faturas organizados em um só lugar.",
+    icon: WalletCards,
+  },
+  {
+    route: "/recurring",
+    target: '[data-tutorial="recurring"] h1',
+    title: "Planeje recorrências",
+    description: "Cadastre compromissos frequentes para não perder receitas e despesas futuras.",
+    icon: Repeat,
+  },
+  {
+    route: "/budget",
+    target: '[data-tutorial="budget"] h1',
+    title: "Defina seu orçamento",
+    description: "Estabeleça limites por categoria e acompanhe o consumo ao longo do mês.",
+    icon: Wallet,
+  },
+  {
+    route: "/categories",
+    target: '[data-tutorial="categories"] h1',
+    title: "Personalize categorias e regras",
+    description: "Organize seus lançamentos e automatize classificações que se repetem.",
+    icon: Tags,
   },
   {
     route: "/",
-    target: '[data-quick-guide="overview"]',
-    title: "Acompanhe seu mês",
-    description: "A Visão geral reúne receitas, despesas, saldo e o ritmo do período.",
+    target: '[data-tutorial="overview"] h1',
+    title: "Acompanhe sua visão geral",
+    description: "Veja receitas, despesas, saldo e o ritmo financeiro do período.",
     icon: LayoutDashboard,
   },
   {
     route: "/reports",
-    target: '[data-quick-guide="reports-filters"]',
-    title: "Escolha o período",
-    description: "Compare meses, contas e origens para enxergar cada recorte das suas finanças.",
+    target: '[data-tutorial="reports"] h1',
+    title: "Explore seus relatórios",
+    description: "Compare períodos e entenda como seu dinheiro se distribui.",
     icon: BarChart3,
   },
   {
-    route: "/reports",
-    target: '[data-quick-guide="reports-kpis"]',
-    title: "Leia seus indicadores",
-    description: "Os cards resumem ganhos, despesas, maior categoria e o total investido.",
-    icon: BarChart3,
-  },
-  {
-    route: "/reports",
-    target: '[data-quick-guide="reports-categories"]',
-    title: "Explore categorias",
-    description: "Abra Categorias para entender onde seu dinheiro está concentrado e comparar os gastos.",
-    icon: BarChart3,
+    route: "/settings",
+    target: '[data-tutorial="settings"] h1',
+    title: "Proteja seus dados",
+    description: "Em Configurações, crie backups e ajuste o Lumen às suas preferências.",
+    icon: Settings,
   },
 ] as const;
 
@@ -83,12 +102,17 @@ function visibleRect(element: Element): TargetRect | undefined {
 
 export function QuickStartGuide() {
   const navigate = useNavigate();
-  const { mode, stepIndex, start, goToStep, dismiss, complete } = useQuickStartGuide();
+  const { activeGuide, mode, guides, resume, goToStep, pause, dismiss, complete } = useQuickStartGuide();
+  const stepIndex = guides.complete.stepIndex;
   const [targetRect, setTargetRect] = useState<TargetRect>();
-  const [cardPosition, setCardPosition] = useState<CSSProperties>();
+  const [portalHost, setPortalHost] = useState<HTMLElement | null>(null);
   const cardRef = useRef<HTMLElement>(null);
   const scrolledStep = useRef<number | undefined>(undefined);
   const step = steps[stepIndex];
+
+  useLayoutEffect(() => {
+    setPortalHost(document.getElementById("tutorial-host"));
+  }, []);
 
   useLayoutEffect(() => {
     document.body.classList.toggle("quick-start-guide-active", mode === "tour");
@@ -96,26 +120,25 @@ export function QuickStartGuide() {
   }, [mode]);
 
   useEffect(() => {
-    if (mode !== "tour") return;
+    if (mode !== "tour" || activeGuide !== "complete") return;
     navigate(step.route);
-  }, [mode, navigate, step.route]);
+  }, [activeGuide, mode, navigate, step.route]);
 
   useEffect(() => {
-    if (mode === "closed") return;
+    if (mode === "closed" || (mode === "tour" && activeGuide !== "complete")) return;
     cardRef.current?.focus({ preventScroll: true });
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
-      dismiss();
+      pause("complete");
     };
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [dismiss, mode, stepIndex]);
+  }, [activeGuide, mode, pause, stepIndex]);
 
   useLayoutEffect(() => {
-    if (mode !== "tour") {
+    if (mode !== "tour" || activeGuide !== "complete") {
       setTargetRect(undefined);
-      setCardPosition(undefined);
       return;
     }
 
@@ -133,33 +156,14 @@ export function QuickStartGuide() {
         if (target && scrolledStep.current !== stepIndex) {
           scrolledStep.current = stepIndex;
           const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-          target.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+          document.querySelector<HTMLElement>(".window-frame__content")?.scrollTo({
+            top: 0,
+            behavior: reduceMotion ? "auto" : "smooth",
+          });
         }
       }
       const rect = target ? visibleRect(target) : undefined;
       setTargetRect(rect);
-      if (!rect || window.innerWidth <= 850 || !cardRef.current) {
-        setCardPosition(undefined);
-        return;
-      }
-
-      const card = cardRef.current.getBoundingClientRect();
-      const gap = 14;
-      const edge = 16;
-      let left = rect.left + rect.width + gap;
-      let top = rect.top;
-      if (left + card.width > window.innerWidth - edge) left = rect.left - card.width - gap;
-      if (left < edge) {
-        left = Math.min(Math.max(rect.left, edge), window.innerWidth - card.width - edge);
-        top = rect.top + rect.height + gap;
-        if (top + card.height > window.innerHeight - edge) top = rect.top - card.height - gap;
-      }
-      setCardPosition({
-        left: Math.max(edge, Math.min(left, window.innerWidth - card.width - edge)),
-        top: Math.max(edge, Math.min(top, window.innerHeight - card.height - edge)),
-        right: "auto",
-        bottom: "auto",
-      });
     };
 
     const mutationObserver = new MutationObserver(update);
@@ -176,17 +180,18 @@ export function QuickStartGuide() {
       document.removeEventListener("scroll", update, true);
       window.removeEventListener("resize", update);
     };
-  }, [mode, step.target, stepIndex]);
+  }, [activeGuide, mode, portalHost, step.target, stepIndex]);
 
-  if (mode === "closed") return null;
+  if (mode === "closed" || (mode === "tour" && activeGuide !== "complete")) return null;
 
   const invitation = mode === "invitation";
   const Icon = invitation ? Sparkles : step.icon;
-  const title = invitation ? "Conheça o essencial" : step.title;
+  const title = invitation ? (stepIndex > 0 ? "Continue conhecendo o Lumen" : "Conheça o essencial") : step.title;
   const description = invitation
-    ? "Veja em 7 passos como adicionar, organizar e acompanhar seu dinheiro."
+    ? stepIndex > 0
+      ? `Retome o tutorial completo na etapa ${stepIndex + 1} de 9.`
+      : "Veja em 9 passos como adicionar, organizar e acompanhar seu dinheiro."
     : step.description;
-
   return createPortal(
     <>
       {!invitation && targetRect && (
@@ -204,8 +209,7 @@ export function QuickStartGuide() {
       )}
       <section
         ref={cardRef}
-        className={`quick-start-guide${invitation ? " is-invitation" : ""}`}
-        style={cardPosition}
+        className={`quick-start-guide${invitation ? " is-invitation" : ""}${portalHost ? " is-docked" : ""}`}
         role="dialog"
         aria-modal="false"
         aria-labelledby="quick-start-guide-title"
@@ -224,7 +228,7 @@ export function QuickStartGuide() {
             )}
             <h2 id="quick-start-guide-title">{title}</h2>
           </div>
-          <button className="icon-button" type="button" aria-label="Fechar guia" onClick={dismiss}>
+          <button className="icon-button" type="button" aria-label="Pausar guia" onClick={() => pause("complete")}>
             <X size={16} />
           </button>
         </div>
@@ -241,12 +245,12 @@ export function QuickStartGuide() {
           </div>
         )}
         <div className="quick-start-guide__actions">
-          <button className="text-button" type="button" onClick={dismiss}>
+          <button className="text-button" type="button" onClick={() => dismiss("complete")}>
             Pular guia
           </button>
           {invitation ? (
-            <button type="button" onClick={start}>
-              Ver guia <ChevronRight size={16} />
+            <button type="button" onClick={() => resume("complete")}>
+              {stepIndex > 0 ? "Continuar tutorial" : "Ver guia"} <ChevronRight size={16} />
             </button>
           ) : (
             <div>
@@ -259,7 +263,7 @@ export function QuickStartGuide() {
                 <ChevronLeft size={16} /> Voltar
               </button>
               {stepIndex === steps.length - 1 ? (
-                <button type="button" onClick={complete}>
+                <button type="button" onClick={() => complete("complete")}>
                   Concluir <Check size={16} />
                 </button>
               ) : (
@@ -272,6 +276,6 @@ export function QuickStartGuide() {
         </div>
       </section>
     </>,
-    document.body,
+    portalHost ?? document.body,
   );
 }

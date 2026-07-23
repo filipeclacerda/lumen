@@ -111,7 +111,7 @@ export function Dashboard() {
   const goalHighlight = buildGoalHighlight(profile?.financialGoal, { summary, report, transactions });
 
   return (
-    <section>
+    <section data-tutorial="overview">
       <PageHeader>
         <div>
           <div className="dashboard-period-header">

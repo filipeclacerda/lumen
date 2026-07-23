@@ -72,6 +72,7 @@ pub struct ParsedCreditCardInvoice {
 pub struct CreditCardInvoiceTotals {
     pub purchases_in_cents: i64,
     pub credits_in_cents: i64,
+    pub payments_in_cents: i64,
     pub total_in_cents: i64,
 }
 
@@ -80,19 +81,28 @@ pub fn totals(
 ) -> Result<CreditCardInvoiceTotals, crate::error::AppError> {
     let mut purchases = 0i64;
     let mut credits = 0i64;
+    let mut payments = 0i64;
     for item in items.iter().filter(|item| item.included) {
         let amount = item
             .raw_amount_in_cents
             .checked_abs()
             .ok_or_else(|| crate::error::AppError::Validation("Total da fatura inválido".into()))?;
-        if item.line_kind == CreditCardLineKind::Purchase {
-            purchases = purchases.checked_add(amount).ok_or_else(|| {
-                crate::error::AppError::Validation("Total da fatura inválido".into())
-            })?;
-        } else {
-            credits = credits.checked_add(amount).ok_or_else(|| {
-                crate::error::AppError::Validation("Total da fatura inválido".into())
-            })?;
+        match item.line_kind {
+            CreditCardLineKind::Purchase => {
+                purchases = purchases.checked_add(amount).ok_or_else(|| {
+                    crate::error::AppError::Validation("Total da fatura inválido".into())
+                })?;
+            }
+            CreditCardLineKind::Refund => {
+                credits = credits.checked_add(amount).ok_or_else(|| {
+                    crate::error::AppError::Validation("Total da fatura inválido".into())
+                })?;
+            }
+            CreditCardLineKind::Payment => {
+                payments = payments.checked_add(amount).ok_or_else(|| {
+                    crate::error::AppError::Validation("Total da fatura inválido".into())
+                })?;
+            }
         }
     }
     let total = purchases
@@ -101,6 +111,7 @@ pub fn totals(
     Ok(CreditCardInvoiceTotals {
         purchases_in_cents: purchases,
         credits_in_cents: credits,
+        payments_in_cents: payments,
         total_in_cents: total,
     })
 }
@@ -157,6 +168,8 @@ mod tests {
                 date: "2026-06-01".into(),
                 description: "Teste".into(),
                 normalized_description: "TESTE".into(),
+                is_pix: false,
+                is_own_account_pix: false,
                 amount_in_cents: amount,
                 external_id: None,
                 suggested_category_id: None,
@@ -164,6 +177,8 @@ mod tests {
                 suggested_rule_id: None,
                 suggested_rule_name: None,
                 suggestion_source: None,
+                merchant_key: String::new(),
+                category_suggestions: vec![],
                 duplicate_status: DuplicateStatus::New,
                 warnings: vec![],
                 included,
@@ -203,6 +218,11 @@ mod tests {
             item(0, i64::MAX, CreditCardLineKind::Purchase, true),
         ])
         .is_err());
+        assert!(totals(&[
+            item(0, i64::MAX, CreditCardLineKind::Payment, true),
+            item(0, i64::MAX, CreditCardLineKind::Payment, true),
+        ])
+        .is_err());
     }
 
     #[test]
@@ -215,7 +235,23 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(totals.purchases_in_cents, 10_000);
-        assert_eq!(totals.credits_in_cents, 7_000);
-        assert_eq!(totals.total_in_cents, 3_000);
+        assert_eq!(totals.credits_in_cents, 2_000);
+        assert_eq!(totals.payments_in_cents, 5_000);
+        assert_eq!(totals.total_in_cents, 8_000);
+    }
+
+    #[test]
+    fn payment_does_not_change_current_invoice_total() {
+        let totals = totals(&[
+            item(-10_000, 10_000, CreditCardLineKind::Purchase, true),
+            item(2_000, -2_000, CreditCardLineKind::Refund, true),
+            item(5_000, -5_000, CreditCardLineKind::Payment, true),
+        ])
+        .unwrap();
+
+        assert_eq!(totals.purchases_in_cents, 10_000);
+        assert_eq!(totals.credits_in_cents, 2_000);
+        assert_eq!(totals.payments_in_cents, 5_000);
+        assert_eq!(totals.total_in_cents, 8_000);
     }
 }

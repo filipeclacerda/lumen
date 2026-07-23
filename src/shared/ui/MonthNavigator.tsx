@@ -1,9 +1,10 @@
-import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { currentMonth, shiftMonth } from "../period";
+import { MonthPicker } from "./CalendarPicker";
 
 type Props = { month: string; onChange: (month: string) => void };
 
-/** Standard month selector: ‹ › arrows, native month input and a "hoje" shortcut. */
+/** Standard month selector: ‹ › arrows, a compatible month picker and a "hoje" shortcut. */
 export function MonthNavigator({ month, onChange }: Props) {
   const today = currentMonth();
   const [year, value] = month.split("-").map(Number);
@@ -24,17 +25,14 @@ export function MonthNavigator({ month, onChange }: Props) {
         >
           <ChevronLeft size={17} />
         </button>
-        <label className="month-nav__picker">
-          <CalendarDays size={15} aria-hidden="true" />
-          <span>{monthLabel}</span>
-          <input
-            type="month"
-            className="month-nav__input"
-            aria-label="Escolher mês"
-            value={month}
-            onChange={(e) => e.target.value && onChange(e.target.value)}
-          />
-        </label>
+        <MonthPicker
+          className="month-nav__picker"
+          ariaLabel="Escolher mês"
+          value={month}
+          onChange={onChange}
+          allowClear={false}
+          placeholder={monthLabel}
+        />
         <button
           type="button"
           className="month-nav__step"

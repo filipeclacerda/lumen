@@ -19,6 +19,7 @@ function Location() {
 function renderGuide() {
   return render(
     <MemoryRouter initialEntries={["/settings"]}>
+      <div id="tutorial-host" />
       <Routes>
         <Route path="*" element={<GuideSurface />} />
       </Routes>
@@ -32,15 +33,51 @@ function GuideSurface() {
   return (
     <>
       <Location />
-      {location.pathname === "/import" && <div data-quick-guide="import">Import target</div>}
-      {location.pathname === "/transactions" && <div data-quick-guide="transactions">Transactions target</div>}
-      {location.pathname === "/transactions" && (
-        <div data-quick-guide="transactions-filters">Transactions filters target</div>
+      {location.pathname === "/import" && (
+        <div data-tutorial="import">
+          <h1>Import target</h1>
+        </div>
       )}
-      {location.pathname === "/" && <div data-quick-guide="overview">Overview target</div>}
-      {location.pathname === "/reports" && <div data-quick-guide="reports-filters">Reports filters target</div>}
-      {location.pathname === "/reports" && <div data-quick-guide="reports-kpis">Reports cards target</div>}
-      {location.pathname === "/reports" && <div data-quick-guide="reports-categories">Reports categories target</div>}
+      {location.pathname === "/transactions" && (
+        <div data-tutorial="transactions">
+          <h1>Transactions target</h1>
+        </div>
+      )}
+      {location.pathname === "/accounts" && (
+        <div data-tutorial="accounts">
+          <h1>Accounts target</h1>
+        </div>
+      )}
+      {location.pathname === "/recurring" && (
+        <div data-tutorial="recurring">
+          <h1>Recurring target</h1>
+        </div>
+      )}
+      {location.pathname === "/budget" && (
+        <div data-tutorial="budget">
+          <h1>Budget target</h1>
+        </div>
+      )}
+      {location.pathname === "/categories" && (
+        <div data-tutorial="categories">
+          <h1>Categories target</h1>
+        </div>
+      )}
+      {location.pathname === "/" && (
+        <div data-tutorial="overview">
+          <h1>Overview target</h1>
+        </div>
+      )}
+      {location.pathname === "/reports" && (
+        <div data-tutorial="reports">
+          <h1>Reports target</h1>
+        </div>
+      )}
+      {location.pathname === "/settings" && (
+        <div data-tutorial="settings">
+          <h1>Settings target</h1>
+        </div>
+      )}
     </>
   );
 }
@@ -72,13 +109,14 @@ describe("QuickStartGuide", () => {
 
     const invitation = screen.getByRole("dialog", { name: "Conheça o essencial" });
     expect(invitation.getAttribute("aria-modal")).toBe("false");
+    expect(invitation.closest("#tutorial-host")).toBeTruthy();
     expect(screen.getByTestId("location").textContent).toBe("/settings");
 
     fireEvent.click(screen.getByRole("button", { name: "Ver guia" }));
 
     await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/import"));
-    expect(screen.getByRole("heading", { name: "Traga seu histórico" })).toBeTruthy();
-    expect(screen.getByLabelText("Etapa 1 de 7")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Importe seu histórico" })).toBeTruthy();
+    expect(screen.getByLabelText("Etapa 1 de 9")).toBeTruthy();
   });
 
   it("disables route entrance motion while the tour is active", () => {
@@ -98,28 +136,22 @@ describe("QuickStartGuide", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Avançar" }));
     await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/transactions"));
-    expect(screen.getByRole("heading", { name: "Revise e organize" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Organize suas transações" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Avançar" }));
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Encontre o que precisa" })).toBeTruthy());
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/accounts"));
+    expect(screen.getByRole("heading", { name: "Acompanhe contas e cartões" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Voltar" }));
     await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/transactions"));
-    expect(screen.getByRole("heading", { name: "Revise e organize" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Organize suas transações" })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Avançar" }));
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Encontre o que precisa" })).toBeTruthy());
-    fireEvent.click(screen.getByRole("button", { name: "Avançar" }));
-    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/"));
-    expect(screen.getByRole("heading", { name: "Acompanhe seu mês" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Avançar" }));
-    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/reports"));
-    expect(screen.getByRole("heading", { name: "Escolha o período" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Avançar" }));
-    expect(screen.getByRole("heading", { name: "Leia seus indicadores" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Avançar" }));
-    expect(screen.getByRole("heading", { name: "Explore categorias" })).toBeTruthy();
-    expect(screen.getByLabelText("Etapa 7 de 7")).toBeTruthy();
+    for (const route of ["/accounts", "/recurring", "/budget", "/categories", "/", "/reports", "/settings"]) {
+      fireEvent.click(screen.getByRole("button", { name: "Avançar" }));
+      await waitFor(() => expect(screen.getByTestId("location").textContent).toBe(route));
+    }
+    expect(screen.getByRole("heading", { name: "Proteja seus dados" })).toBeTruthy();
+    expect(screen.getByLabelText("Etapa 9 de 9")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Concluir" }));
 
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -131,7 +163,7 @@ describe("QuickStartGuide", () => {
     renderGuide();
     await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/import"));
 
-    const target = document.querySelector('[data-quick-guide="import"]') as HTMLElement;
+    const target = document.querySelector('[data-tutorial="import"] h1') as HTMLElement;
     target.style.borderRadius = "9px";
     vi.spyOn(target, "getBoundingClientRect").mockReturnValue({
       top: 24,
@@ -174,18 +206,36 @@ describe("QuickStartGuide", () => {
     });
   });
 
-  it.each(["Pular guia", "Fechar guia"])("dismisses with %s", (label) => {
+  it("dismisses with Pular guia", () => {
     restartQuickStartGuide();
     renderGuide();
-    fireEvent.click(screen.getByRole("button", { name: label }));
+    fireEvent.click(screen.getByRole("button", { name: "Pular guia" }));
     expect(storedQuickStartGuideStatus()).toBe("dismissed");
   });
 
-  it("dismisses with Escape", () => {
+  it.each(["Pausar guia", "Escape"])("pauses with %s", (action) => {
     restartQuickStartGuide();
     renderGuide();
-    fireEvent.keyDown(document, { key: "Escape" });
+    if (action === "Escape") fireEvent.keyDown(document, { key: "Escape" });
+    else fireEvent.click(screen.getByRole("button", { name: action }));
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(storedQuickStartGuideStatus()).toBe("dismissed");
+    expect(storedQuickStartGuideStatus()).toBe("pending");
+  });
+
+  it("keeps the controls available when a page target is missing", async () => {
+    restartQuickStartGuide();
+    render(
+      <MemoryRouter initialEntries={["/settings"]}>
+        <Routes>
+          <Route path="*" element={<Location />} />
+        </Routes>
+        <QuickStartGuide />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/import"));
+
+    expect(screen.getByRole("button", { name: "Avançar" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Avançar" }));
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/transactions"));
   });
 });

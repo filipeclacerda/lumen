@@ -13,6 +13,7 @@ type MoneyInputProps = {
   hint?: string;
   error?: string;
   "aria-label"?: string;
+  "aria-describedby"?: string;
 };
 
 /** Brazilian currency field. Uncontrolled text, reports parsed integer cents
@@ -29,6 +30,7 @@ export function MoneyInput({
   hint,
   error,
   "aria-label": ariaLabel,
+  "aria-describedby": ariaDescribedBy,
 }: MoneyInputProps) {
   const [text, setText] = useState(defaultCents ? centsToInput(defaultCents) : "");
   return (
@@ -40,7 +42,7 @@ export function MoneyInput({
         required={required}
         aria-label={ariaLabel}
         aria-invalid={error ? true : undefined}
-        aria-describedby={hint || error ? `${id ?? "money"}-hint` : undefined}
+        aria-describedby={ariaDescribedBy ?? (hint || error ? `${id ?? "money"}-hint` : undefined)}
         inputMode="decimal"
         autoFocus={autoFocus}
         value={text}

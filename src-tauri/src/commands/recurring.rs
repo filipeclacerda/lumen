@@ -272,13 +272,9 @@ mod tests {
             .unwrap();
         let onboarding = OnboardingInput {
             display_name: "Pessoa Teste".into(),
-            monthly_income_in_cents: None,
-            income_day: None,
-            income_day_rule: None,
-            financial_goal: None,
-            account_name: "Conta".into(),
-            account_kind: "checking".into(),
-            opening_balance_in_cents: None,
+            monthly_target_in_cents: None,
+            financial_goal: "organize".into(),
+            onboarding_start_mode: "manual".into(),
         };
         let account_id = complete_onboarding_impl(onboarding, &db)
             .await

@@ -10,6 +10,8 @@
     --status-info-fg:#24587c; --status-info-bg:#e8f2fa; --status-info-border:#89b7d5;
     --data-1:#287e60; --data-2:#be7a1f; --data-3:#607ba8; --data-4:#a65e88; --data-5:#ad574f; --data-6:#4e8d95; --data-7:#7867a5; --data-8:#65705c;
     --font-sans: "Inter Variable", Inter, "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+    --font-display: "Manrope Variable", Manrope, var(--font-sans);
+    --font-body: "DM Sans Variable", "DM Sans", var(--font-sans);
     --font-mono: "Cascadia Code", Consolas, monospace;
     --text-xs: .75rem; --text-sm: .875rem; --text-md: 1rem; --text-lg: 1.25rem; --text-xl: 1.875rem; --text-2xl: 1.5rem;
     --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-5:20px; --space-6:24px; --space-8:32px;

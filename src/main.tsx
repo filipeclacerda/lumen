@@ -7,6 +7,8 @@ import { initializeUiPreferences } from "./shared/uiPreferences";
 import { ToastProvider } from "./shared/ui/toast";
 import { WindowFrame } from "./shared/ui/WindowFrame";
 import "@fontsource-variable/inter";
+import "@fontsource-variable/manrope";
+import "@fontsource-variable/dm-sans";
 import "./styles.css";
 initializeUiPreferences();
 const queryClient = new QueryClient();

@@ -1,19 +1,22 @@
 import { PageHeader } from "../../shared/ui/PageHeader";
-import { type DragEvent, useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { type DragEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
   ArrowLeftRight,
+  BookOpen,
   Check,
   CheckCircle2,
+  ChevronLeft,
   Circle,
   CreditCard,
   Download,
   FileText,
   FileUp,
   ListChecks,
+  Lightbulb,
   Plus,
   ShieldCheck,
   TableProperties,
@@ -21,9 +24,13 @@ import {
 } from "lucide-react";
 import { api } from "../../shared/api";
 import { Modal } from "../../shared/ui/Modal";
-import { CategorySelect } from "../../shared/ui/CategorySelect";
+import { CategoryIcon, CategorySelect } from "../../shared/ui/CategorySelect";
+import { DatePicker } from "../../shared/ui/CalendarPicker";
 import { ErrorState, LoadingState } from "../../shared/ui/AsyncState";
 import { Select } from "../../shared/ui/Select";
+import { Tabs } from "../../shared/ui/Tabs";
+import { ImportTutorial, shouldAutoStartImportGuide } from "./ImportTutorial";
+import { useQuickStartGuide } from "../../shared/quickStartGuide";
 import {
   money,
   centsToInput,
@@ -33,7 +40,12 @@ import {
   suggestRulePattern,
 } from "../../shared/format";
 import type {
+  CreditCardImportCommitResult,
   CreditCardImportPreview,
+  CreditCardImportItem,
+  Category,
+  CategoryKind,
+  ImportCandidate,
   CsvColumnRole,
   CsvMappingDraft,
   CsvMappingProfile,
@@ -51,6 +63,60 @@ type MappingState = {
   saveProfile: boolean;
   matchedProfile?: CsvMappingProfile;
 };
+
+type LearningDraft = {
+  sourceRow: number;
+  categoryId: string;
+  pattern: string;
+  amountInCents: number;
+  kind: "bank" | "card";
+  count: number;
+};
+
+type ReviewUndoChoice = {
+  kind: "bank" | "card";
+  sessionId: string;
+  groupKey: string;
+  label: string;
+  sourceRows: number[];
+  representative: ImportCandidate;
+};
+
+export function cardPaymentReconciliationPath(paymentTransactionId: string) {
+  return `/accounts?reconcile=${encodeURIComponent(paymentTransactionId)}`;
+}
+
+export function CardImportCommitNotice({
+  summary,
+  onReview,
+}: {
+  summary: CreditCardImportCommitResult;
+  onReview: (paymentTransactionId: string) => void;
+}) {
+  if (summary.paymentTransactionIds.length === 0) return null;
+
+  return (
+    <article className="import-payment-summary" aria-live="polite">
+      <div>
+        <CheckCircle2 aria-hidden="true" />
+        <span>
+          <strong>
+            {summary.paymentTransactionIds.length}{" "}
+            {summary.paymentTransactionIds.length === 1
+              ? "pagamento anterior detectado"
+              : "pagamentos anteriores detectados"}
+          </strong>
+          <small>
+            Revise a correspondência com a fatura anterior e com o débito da conta antes de confirmar o vínculo.
+          </small>
+        </span>
+      </div>
+      <button className="secondary" onClick={() => onReview(summary.paymentTransactionIds[0])}>
+        Revisar conciliação
+      </button>
+    </article>
+  );
+}
 
 const bankRoles: { value: CsvColumnRole; label: string }[] = [
   { value: "date", label: "Data" },
@@ -75,18 +141,161 @@ const cardRoles: { value: CsvColumnRole; label: string }[] = [
   { value: "external_id", label: "ID externo" },
 ];
 
+export function creditCardCategorizationCandidates(preview?: CreditCardImportPreview) {
+  return preview?.items.filter((item) => !item.isPayment).map((item) => item.candidate) ?? [];
+}
+
+export function CreditCardImportTotals({ preview }: { preview: CreditCardImportPreview }) {
+  const paymentCount = preview.items.filter((item) => item.isPayment && item.included).length;
+
+  return (
+    <>
+      <div className="invoice-totals">
+        <div>
+          <span>Compras</span>
+          <strong>{money(preview.purchasesInCents)}</strong>
+        </div>
+        <div>
+          <span>Créditos e estornos</span>
+          <strong>{money(preview.creditsInCents)}</strong>
+        </div>
+        <div className="invoice-total">
+          <span>Total desta fatura</span>
+          <strong>{money(preview.totalInCents)}</strong>
+        </div>
+      </div>
+      {paymentCount > 0 && (
+        <div className="import-payment-callout" role="status">
+          <ArrowLeftRight aria-hidden="true" />
+          <span>
+            <strong>
+              {paymentCount === 1 ? "Pagamento anterior detectado" : "Pagamentos anteriores detectados"} — não altera
+              esta fatura
+            </strong>
+            <small>
+              {money(preview.paymentsInCents)} será mantido para baixar a dívida do cartão e poderá ser conciliado
+              depois.
+            </small>
+          </span>
+        </div>
+      )}
+    </>
+  );
+}
+
+type CreditCardImportItemsProps = {
+  items: CreditCardImportItem[];
+  paymentsInCents: number;
+  categories: Category[];
+  onUpdate: (sourceRow: number, included: boolean, categoryId?: string) => void;
+};
+
+export function CreditCardImportItems({ items, paymentsInCents, categories, onUpdate }: CreditCardImportItemsProps) {
+  const regularItems = items.filter((item) => !item.isPayment);
+  const paymentItems = items.filter((item) => item.isPayment);
+
+  return (
+    <div className="credit-card-import-items">
+      <CreditCardItemsTable items={regularItems} categories={categories} onUpdate={onUpdate} />
+      {paymentItems.length > 0 && (
+        <details className="import-payment-details">
+          <summary>
+            <span>
+              Pagamentos anteriores ({paymentItems.length}) <strong>{money(paymentsInCents)}</strong>
+            </span>
+            <small>Incluídos por padrão</small>
+          </summary>
+          <p>
+            Estes lançamentos baixam a dívida do cartão, mas não alteram o total desta fatura. Desmarque somente se a
+            detecção estiver incorreta.
+          </p>
+          <CreditCardItemsTable items={paymentItems} categories={categories} onUpdate={onUpdate} payments />
+        </details>
+      )}
+    </div>
+  );
+}
+
+function CreditCardItemsTable({
+  items,
+  categories,
+  onUpdate,
+  payments = false,
+}: Omit<CreditCardImportItemsProps, "paymentsInCents"> & { payments?: boolean }) {
+  if (items.length === 0) return null;
+
+  return (
+    <div className="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Incluir</th>
+            <th>Data</th>
+            <th>Estabelecimento</th>
+            <th>Portador</th>
+            <th>Parcela</th>
+            <th>Categoria</th>
+            <th>Valor</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item) => (
+            <tr key={item.candidate.sourceRow} className={!item.included ? "excluded-row" : ""}>
+              <td>
+                <input
+                  type="checkbox"
+                  checked={item.included}
+                  disabled={item.candidate.duplicateStatus === "exact"}
+                  aria-label={`Incluir ${item.candidate.description}`}
+                  onChange={(event) =>
+                    onUpdate(item.candidate.sourceRow, event.target.checked, item.candidate.suggestedCategoryId)
+                  }
+                />
+              </td>
+              <td>{item.candidate.date}</td>
+              <td>
+                {item.candidate.description}
+                {payments && <small className="source-label">pagamento anterior</small>}
+                {!payments && item.candidate.suggestionSource === "rule" && (
+                  <small className="source-label">por {item.candidate.suggestedRuleName ?? "regra"}</small>
+                )}
+                {!payments && item.candidate.suggestionSource === "history" && (
+                  <small className="source-label history-label">pelo seu histórico</small>
+                )}
+              </td>
+              <td>{item.holder ?? "—"}</td>
+              <td>{item.installment ?? "—"}</td>
+              <td>
+                <CategorySelect
+                  value={item.candidate.suggestedCategoryId}
+                  categories={categories}
+                  kind={compatibleCategoryKinds(item.candidate, categories, true)}
+                  disabled={payments}
+                  onChange={(value) => onUpdate(item.candidate.sourceRow, item.included, value)}
+                />
+              </td>
+              <td className={item.candidate.amountInCents > 0 ? "positive amount" : "amount"}>
+                {money(item.candidate.amountInCents)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function ImportPage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const client = useQueryClient();
   const [bankPreview, setBankPreview] = useState<ImportPreview>();
   const [cardPreview, setCardPreview] = useState<CreditCardImportPreview>();
-  const [learning, setLearning] = useState<{
-    sourceRow: number;
-    categoryId: string;
-    pattern: string;
-    amountInCents: number;
-    kind: "bank" | "card";
-  }>();
+  const [learning, setLearning] = useState<LearningDraft>();
+  const [lastChoice, setLastChoice] = useState<LearningDraft>();
+  const [lastReviewChoice, setLastReviewChoice] = useState<ReviewUndoChoice>();
+  const [previewMode, setPreviewMode] = useState<"review" | "all">("review");
+  const [pendingCommit, setPendingCommit] = useState<"bank" | "card">();
   const [mappingState, setMappingState] = useState<MappingState>();
   const [mappingError, setMappingError] = useState("");
   const [pendingCardPath, setPendingCardPath] = useState("");
@@ -98,6 +307,14 @@ export function ImportPage() {
   const [isReadingFile, setIsReadingFile] = useState(false);
   const [transferCandidates, setTransferCandidates] = useState<TransferCandidate[]>([]);
   const [linkingTransfer, setLinkingTransfer] = useState<string>();
+  const [cardCommitSummary, setCardCommitSummary] = useState<CreditCardImportCommitResult>();
+  const tutorialAutoStartAttempted = useRef(false);
+  const activeGuide = useQuickStartGuide((state) => state.activeGuide);
+  const guideMode = useQuickStartGuide((state) => state.mode);
+  const completeGuideStatus = useQuickStartGuide((state) => state.guides.complete.status);
+  const importGuideProgress = useQuickStartGuide((state) => state.guides.import);
+  const restartGuide = useQuickStartGuide((state) => state.restart);
+  const setImportPhase = useQuickStartGuide((state) => state.setImportPhase);
 
   useEffect(() => {
     if (pendingCardPath) {
@@ -165,6 +382,7 @@ export function ImportPage() {
     isError: accountsError,
     refetch: refetchAccounts,
   } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
+  const { data: bootstrap } = useQuery({ queryKey: ["bootstrap"], queryFn: api.bootstrap });
   const asyncLoading = categoriesLoading || accountsLoading;
   const asyncError = categoriesError || accountsError;
   const bankAccount = accounts.find((account) => account.kind !== "credit_card");
@@ -172,6 +390,47 @@ export function ImportPage() {
   const bankAccountId = bankAccount?.id;
   const firstCardId = cards[0]?.id ?? "";
   const canStartImport = !bankPreview && !cardPreview && !pendingCardPath && !mappingState;
+  const bankSummary = useMemo(() => summarizeSuggestions(bankPreview?.candidates ?? []), [bankPreview?.candidates]);
+  const bankGroups = useMemo(() => groupPendingCandidates(bankPreview?.candidates ?? []), [bankPreview?.candidates]);
+  const cardCandidates = useMemo(() => creditCardCategorizationCandidates(cardPreview), [cardPreview]);
+  const cardSummary = useMemo(() => summarizeSuggestions(cardCandidates), [cardCandidates]);
+  const cardGroups = useMemo(() => groupPendingCandidates(cardCandidates), [cardCandidates]);
+
+  useEffect(() => {
+    if (!bootstrap || tutorialAutoStartAttempted.current) return;
+    if (
+      !shouldAutoStartImportGuide({
+        hasImports: bootstrap.hasImports,
+        importStatus: importGuideProgress?.status,
+        completeStatus: completeGuideStatus,
+        activeGuide,
+        mode: guideMode,
+      })
+    )
+      return;
+
+    tutorialAutoStartAttempted.current = true;
+    restartGuide("import");
+  }, [activeGuide, bootstrap, completeGuideStatus, guideMode, importGuideProgress?.status, restartGuide]);
+
+  useEffect(() => {
+    if (activeGuide !== "import") return;
+    if (pendingCommit) {
+      setImportPhase("confirm");
+    } else if (bankPreview || cardPreview) {
+      setImportPhase("review");
+    } else if (pendingCardPath || mappingState) {
+      setImportPhase("configure");
+    } else {
+      setImportPhase("choose");
+    }
+  }, [activeGuide, bankPreview, cardPreview, mappingState, pendingCardPath, pendingCommit, setImportPhase]);
+
+  useEffect(() => {
+    setPreviewMode("review");
+    setLastChoice(undefined);
+    setLastReviewChoice(undefined);
+  }, [bankPreview?.sessionId, cardPreview?.sessionId]);
 
   // Keep the selected card valid: a custom select with a value that matches no
   // option shows the first option visually but leaves cardAccountId empty.
@@ -218,6 +477,11 @@ export function ImportPage() {
     setPendingCardPath("");
     setMappingState(undefined);
     setMappingError("");
+    setLearning(undefined);
+    setLastChoice(undefined);
+    setLastReviewChoice(undefined);
+    setPendingCommit(undefined);
+    setPreviewMode("review");
   }, []);
 
   const processImportPath = useCallback(
@@ -227,6 +491,7 @@ export function ImportPage() {
       setIsDraggingFile(false);
       resetFlow();
       setMessage("");
+      setCardCommitSummary(undefined);
       try {
         const kind = await api.detectImportKind(path);
         if (kind === "known_credit_card") {
@@ -389,11 +654,17 @@ export function ImportPage() {
     setMessage(`Template ${templateKind === "bank" ? "de conta corrente" : "de cartão de crédito"} salvo com sucesso.`);
   }
 
-  async function commitBank() {
+  async function commitBank(confirmed = false) {
     if (!bankPreview) return;
+    if (!confirmed && bankSummary.pending > 0) {
+      setPendingCommit("bank");
+      return;
+    }
+    setPendingCommit(undefined);
     const { count, batchId } = await api.commitImport(bankPreview.sessionId);
     await maybeSaveMappingProfile();
     setMessage(`${count} transações importadas com segurança.`);
+    finishImportTutorial();
     resetFlow();
     await refresh();
     await checkForTransferCandidates(batchId);
@@ -428,11 +699,22 @@ export function ImportPage() {
     setTransferCandidates((current) => current.filter((c) => c !== candidate));
   }
 
-  async function commitCard() {
+  async function commitCard(confirmed = false) {
     if (!cardPreview) return;
-    await api.commitCreditCardImport(cardPreview.sessionId);
+    if (!confirmed && cardSummary.pending > 0) {
+      setPendingCommit("card");
+      return;
+    }
+    setPendingCommit(undefined);
+    const result = await api.commitCreditCardImport(cardPreview.sessionId);
     await maybeSaveMappingProfile();
-    setMessage("Fatura importada. As compras já aparecem nas despesas pelas datas originais.");
+    setCardCommitSummary(result);
+    setMessage(
+      result.paymentTransactionIds.length > 0
+        ? "Fatura importada. Os pagamentos anteriores estão prontos para conciliação."
+        : "Fatura importada. As compras já aparecem nas despesas pelas datas originais.",
+    );
+    finishImportTutorial();
     resetFlow();
     await refresh();
   }
@@ -452,7 +734,22 @@ export function ImportPage() {
       client.invalidateQueries({ queryKey: ["summary"] }),
       client.invalidateQueries({ queryKey: ["credit-card-invoices"] }),
       client.invalidateQueries({ queryKey: ["accounts"] }),
+      client.invalidateQueries({ queryKey: ["bootstrap"] }),
     ]);
+  }
+
+  function finishImportTutorial() {
+    const importProgress = useQuickStartGuide.getState().guides.import;
+    if (importProgress?.status !== "active" && importProgress?.status !== "paused") return;
+    useQuickStartGuide.getState().setImportPhase("success");
+  }
+
+  function invalidateLastReviewChoice(kind: ReviewUndoChoice["kind"], sourceRows: number[]) {
+    setLastReviewChoice((current) =>
+      current?.kind === kind && current.sourceRows.some((sourceRow) => sourceRows.includes(sourceRow))
+        ? undefined
+        : current,
+    );
   }
 
   async function changeBankCategory(sourceRow: number, categoryId?: string) {
@@ -460,16 +757,20 @@ export function ImportPage() {
     const candidate = bankPreview.candidates.find((c) => c.sourceRow === sourceRow);
     const oldCategoryId = candidate?.suggestedCategoryId;
     await api.setImportCategory(bankPreview.sessionId, sourceRow, categoryId || undefined);
+    invalidateLastReviewChoice("bank", [sourceRow]);
     const category = categories.find((item) => item.id === categoryId);
 
     if (categoryId && oldCategoryId !== categoryId && candidate) {
-      setLearning({
+      setLastChoice({
         sourceRow,
         categoryId,
         pattern: suggestRulePattern(candidate.normalizedDescription || candidate.description),
         amountInCents: candidate.amountInCents,
         kind: "bank",
+        count: 1,
       });
+    } else if (!categoryId) {
+      setLastChoice(undefined);
     }
 
     setBankPreview({
@@ -482,10 +783,37 @@ export function ImportPage() {
               suggestedCategoryName: category?.name,
               suggestedRuleId: undefined,
               suggestedRuleName: undefined,
+              suggestionSource: undefined,
             }
           : candidate,
       ),
     });
+  }
+
+  async function changeBankGroup(rows: number[], categoryId: string | undefined, representative: ImportCandidate) {
+    if (!bankPreview) return;
+    setBankPreview(await api.setImportCategories(bankPreview.sessionId, rows, categoryId));
+    if (categoryId) {
+      setLastReviewChoice({
+        kind: "bank",
+        sessionId: bankPreview.sessionId,
+        groupKey: candidateGroupKey(representative),
+        label: representative.merchantKey || representative.description,
+        sourceRows: rows,
+        representative,
+      });
+      setLastChoice({
+        sourceRow: representative.sourceRow,
+        categoryId,
+        pattern: suggestRulePattern(representative.normalizedDescription || representative.description),
+        amountInCents: representative.amountInCents,
+        kind: "bank",
+        count: rows.length,
+      });
+    } else {
+      setLastReviewChoice(undefined);
+      setLastChoice(undefined);
+    }
   }
 
   async function updateBankCandidate(sourceRow: number, amountInCents: number, included: boolean) {
@@ -498,6 +826,7 @@ export function ImportPage() {
           candidate.sourceRow === sourceRow ? updated : candidate,
         ),
       });
+      invalidateLastReviewChoice("bank", [sourceRow]);
     } catch (error: any) {
       setMessage(`Erro ao atualizar lançamento: ${error?.message || error}`);
     }
@@ -508,18 +837,64 @@ export function ImportPage() {
 
     const item = cardPreview.items.find((i) => i.candidate.sourceRow === sourceRow);
     const oldCategoryId = item?.candidate.suggestedCategoryId;
+    const candidateEdited =
+      Boolean(item) && (item?.included !== included || item?.candidate.suggestedCategoryId !== categoryId);
 
     setCardPreview(await api.updateCreditCardImport(cardPreview.sessionId, sourceRow, included, categoryId, dueDate));
+    if (candidateEdited) invalidateLastReviewChoice("card", [sourceRow]);
 
     if (categoryId && oldCategoryId !== categoryId && item) {
-      setLearning({
+      setLastChoice({
         sourceRow,
         categoryId,
         pattern: suggestRulePattern(item.candidate.normalizedDescription || item.candidate.description),
         amountInCents: item.candidate.amountInCents,
         kind: "card",
+        count: 1,
       });
+    } else if (!categoryId) {
+      setLastChoice(undefined);
     }
+  }
+
+  async function changeCardGroup(rows: number[], categoryId: string | undefined, representative: ImportCandidate) {
+    if (!cardPreview) return;
+    setCardPreview(await api.updateCreditCardImportCategories(cardPreview.sessionId, rows, categoryId));
+    if (categoryId) {
+      setLastReviewChoice({
+        kind: "card",
+        sessionId: cardPreview.sessionId,
+        groupKey: candidateGroupKey(representative),
+        label: representative.merchantKey || representative.description,
+        sourceRows: rows,
+        representative,
+      });
+      setLastChoice({
+        sourceRow: representative.sourceRow,
+        categoryId,
+        pattern: suggestRulePattern(representative.normalizedDescription || representative.description),
+        amountInCents: representative.amountInCents,
+        kind: "card",
+        count: rows.length,
+      });
+    } else {
+      setLastReviewChoice(undefined);
+      setLastChoice(undefined);
+    }
+  }
+
+  async function undoReviewChoice(choice: ReviewUndoChoice) {
+    if (choice.kind === "bank") {
+      if (!bankPreview || choice.sessionId !== bankPreview.sessionId) {
+        throw new Error("A sessão de importação não está mais disponível.");
+      }
+      await changeBankGroup(choice.sourceRows, undefined, choice.representative);
+      return;
+    }
+    if (!cardPreview || choice.sessionId !== cardPreview.sessionId) {
+      throw new Error("A sessão de importação não está mais disponível.");
+    }
+    await changeCardGroup(choice.sourceRows, undefined, choice.representative);
   }
 
   async function createRule() {
@@ -544,39 +919,37 @@ export function ImportPage() {
         (c) =>
           matchesLearning(c.normalizedDescription || c.description) && c.suggestedCategoryId !== learning.categoryId,
       );
-      for (const u of updates) {
-        await api.setImportCategory(bankPreview.sessionId, u.sourceRow, learning.categoryId);
+      if (updates.length > 0) {
+        setBankPreview(
+          await api.setImportCategories(
+            bankPreview.sessionId,
+            updates.map((candidate) => candidate.sourceRow),
+            learning.categoryId,
+          ),
+        );
       }
-      setBankPreview({
-        ...bankPreview,
-        candidates: bankPreview.candidates.map((c) =>
-          matchesLearning(c.normalizedDescription || c.description)
-            ? { ...c, suggestedCategoryId: learning.categoryId, suggestedCategoryName: selectedCategory?.name }
-            : c,
-        ),
-      });
     }
 
     if (learning.kind === "card" && cardPreview) {
-      let currentPreview = cardPreview;
       const updates = cardPreview.items.filter(
         (i) =>
+          !i.isPayment &&
           matchesLearning(i.candidate.normalizedDescription || i.candidate.description) &&
           i.candidate.suggestedCategoryId !== learning.categoryId,
       );
-      for (const u of updates) {
-        currentPreview = await api.updateCreditCardImport(
-          cardPreview.sessionId,
-          u.candidate.sourceRow,
-          u.included,
-          learning.categoryId,
-          undefined,
+      if (updates.length > 0) {
+        setCardPreview(
+          await api.updateCreditCardImportCategories(
+            cardPreview.sessionId,
+            updates.map((item) => item.candidate.sourceRow),
+            learning.categoryId,
+          ),
         );
       }
-      setCardPreview(currentPreview);
     }
 
     setLearning(undefined);
+    setLastChoice(undefined);
   }
 
   function setDraft(next: CsvMappingDraft) {
@@ -584,13 +957,16 @@ export function ImportPage() {
   }
 
   return (
-    <section className="import-page">
+    <section className="import-page" data-tutorial="import">
       <PageHeader>
         <div>
           <p className="eyebrow">IMPORTAÇÃO SEGURA</p>
           <h1>Importar extrato ou fatura</h1>
           <p className="muted">CSV, OFX e PDF são processados somente neste computador.</p>
         </div>
+        <button className="secondary" type="button" onClick={() => restartGuide("import")}>
+          <BookOpen size={16} /> Como importar
+        </button>
       </PageHeader>
       {asyncLoading && <LoadingState variant="panel" label="Carregando dados para importação…" />}
       {asyncError && (
@@ -603,6 +979,7 @@ export function ImportPage() {
       {canStartImport && (
         <article
           className={`dropzone import-dropzone${isDraggingFile ? " dragging" : ""}`}
+          data-import-tutorial="choose"
           onDragEnter={handleDropzoneDrag}
           onDragOver={handleDropzoneDrag}
           onDragLeave={handleDropzoneLeave}
@@ -614,7 +991,7 @@ export function ImportPage() {
             Arraste um CSV, OFX ou PDF para esta área. O aplicativo reconhece automaticamente extratos e faturas; para
             outros CSVs, você pode mapear as colunas e salvar o layout.
           </p>
-          <button ref={chooseFileRef} data-quick-guide="import" onClick={choose} disabled={isReadingFile}>
+          <button ref={chooseFileRef} onClick={choose} disabled={isReadingFile}>
             {isReadingFile ? "Lendo arquivo..." : "Escolher arquivo"}
           </button>
           <div className="import-trouble-menu">
@@ -721,7 +1098,7 @@ export function ImportPage() {
       )}
 
       {pendingCardPath && (
-        <article className="panel card-import-setup">
+        <article className="panel card-import-setup" data-import-tutorial="configure">
           <div className="panel-title">
             <div>
               <p className="eyebrow">FATURA DETECTADA</p>
@@ -746,7 +1123,7 @@ export function ImportPage() {
             />
             <label>
               Vencimento da fatura (caso não conste no arquivo)
-              <input type="date" value={cardDueDate} onChange={(e) => setCardDueDate(e.target.value)} />
+              <DatePicker ariaLabel="Vencimento da fatura" value={cardDueDate} onChange={setCardDueDate} />
             </label>
             <div className="editor-actions">
               <button className="secondary" onClick={resetFlow}>
@@ -761,7 +1138,7 @@ export function ImportPage() {
       )}
 
       {mappingState && (
-        <article className="panel import-mapping-panel">
+        <article className="panel import-mapping-panel" data-import-tutorial="configure">
           <div className="panel-title">
             <div>
               <p className="eyebrow">CSV PERSONALIZADO</p>
@@ -858,12 +1235,10 @@ export function ImportPage() {
                     <span>
                       Vencimento padrão da fatura <span className="req">*</span>
                     </span>
-                    <input
-                      type="date"
+                    <DatePicker
+                      ariaLabel="Vencimento padrão da fatura"
                       value={mappingState.draft.defaultDueDate ?? ""}
-                      onChange={(event) =>
-                        setDraft({ ...mappingState.draft, defaultDueDate: event.target.value || undefined })
-                      }
+                      onChange={(value) => setDraft({ ...mappingState.draft, defaultDueDate: value || undefined })}
                     />
                   </label>
                 </div>
@@ -975,79 +1350,115 @@ export function ImportPage() {
       )}
 
       {bankPreview && (
-        <article className="panel">
+        <article className="panel import-review-panel" data-import-tutorial="review">
           <div className="panel-title">
             <h2>Prévia de {bankPreview.fileName}</h2>
             <span>{bankPreview.candidates.length} registros</span>
           </div>
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Incluir</th>
-                  <th>Data</th>
-                  <th>Descrição</th>
-                  <th>Categoria sugerida</th>
-                  <th>Valor editável</th>
-                  <th>Duplicidade</th>
-                </tr>
-              </thead>
-              <tbody>
-                {bankPreview.candidates.slice(0, 100).map((candidate) => (
-                  <tr key={candidate.sourceRow} className={!candidate.included ? "excluded-row" : ""}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        checked={candidate.included}
-                        disabled={candidate.duplicateStatus === "exact"}
-                        onChange={(event) =>
-                          updateBankCandidate(candidate.sourceRow, candidate.amountInCents, event.target.checked)
-                        }
-                      />
-                    </td>
-                    <td>{candidate.date}</td>
-                    <td>
-                      {candidate.description}
-                      {candidate.suggestionSource === "rule" && candidate.suggestedRuleName && (
-                        <small className="source-label">por {candidate.suggestedRuleName}</small>
-                      )}
-                      {candidate.suggestionSource === "history" && (
-                        <small className="source-label history-label">pelo seu histórico</small>
-                      )}
-                    </td>
-                    <td>
-                      <CategorySelect
-                        value={candidate.suggestedCategoryId}
-                        categories={categories}
-                        onChange={(value) => changeBankCategory(candidate.sourceRow, value)}
-                      />
-                    </td>
-                    <td>
-                      <MoneyEditor
-                        value={candidate.amountInCents}
-                        disabled={!candidate.included}
-                        onCommit={(value) => updateBankCandidate(candidate.sourceRow, value, candidate.included)}
-                      />
-                    </td>
-                    <td>
-                      <span className="badge">{candidate.duplicateStatus}</span>
-                    </td>
+          <SuggestionSummary summary={bankSummary} />
+          {lastChoice?.kind === "bank" && (
+            <ChoiceNotice choice={lastChoice} onCreateRule={() => setLearning(lastChoice)} />
+          )}
+          <Tabs
+            hidePanel
+            value={previewMode}
+            onChange={(value) => setPreviewMode(value as "review" | "all")}
+            tabs={[
+              { id: "review", label: `Revisar (${bankSummary.pending})` },
+              { id: "all", label: `Todas (${bankPreview.candidates.length})` },
+            ]}
+          />
+          {previewMode === "review" ? (
+            <div role="tabpanel" aria-label="Lançamentos para revisar">
+              <ImportReviewGroups
+                key={bankPreview.sessionId}
+                groups={bankGroups}
+                categories={categories}
+                onApply={(rows, categoryId, representative) => changeBankGroup(rows, categoryId, representative)}
+                undoChoice={lastReviewChoice?.kind === "bank" ? lastReviewChoice : undefined}
+                onUndo={undoReviewChoice}
+              />
+            </div>
+          ) : (
+            <div className="table-scroll" role="tabpanel" aria-label="Todos os lançamentos">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Incluir</th>
+                    <th>Data</th>
+                    <th>Descrição</th>
+                    <th>Categoria sugerida</th>
+                    <th>Valor editável</th>
+                    <th>Duplicidade</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {bankPreview.candidates.slice(0, 100).map((candidate) => (
+                    <tr key={candidate.sourceRow} className={!candidate.included ? "excluded-row" : ""}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={candidate.included}
+                          disabled={candidate.duplicateStatus === "exact"}
+                          aria-label={`Incluir ${candidate.description}`}
+                          onChange={(event) =>
+                            updateBankCandidate(candidate.sourceRow, candidate.amountInCents, event.target.checked)
+                          }
+                        />
+                      </td>
+                      <td>{candidate.date}</td>
+                      <td>
+                        {candidate.description}
+                        {candidate.suggestionSource === "rule" && candidate.suggestedRuleName && (
+                          <small className="source-label">por {candidate.suggestedRuleName}</small>
+                        )}
+                        {candidate.suggestionSource === "history" && (
+                          <small className="source-label history-label">pelo seu histórico</small>
+                        )}
+                      </td>
+                      <td>
+                        <CategorySelect
+                          value={candidate.suggestedCategoryId}
+                          categories={categories}
+                          kind={compatibleCategoryKinds(candidate, categories, false)}
+                          onChange={(value) => changeBankCategory(candidate.sourceRow, value)}
+                        />
+                      </td>
+                      <td>
+                        <MoneyEditor
+                          value={candidate.amountInCents}
+                          disabled={!candidate.included}
+                          onCommit={(value) => updateBankCandidate(candidate.sourceRow, value, candidate.included)}
+                        />
+                      </td>
+                      <td>
+                        <span className="badge">{candidate.duplicateStatus}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           <div className="editor-actions">
             <button className="secondary" onClick={resetFlow}>
               Cancelar
             </button>
-            <button onClick={commitBank}>Confirmar importação</button>
+            <button
+              data-import-tutorial="confirm"
+              onClick={() => {
+                setImportPhase("confirm");
+                void commitBank();
+              }}
+            >
+              Confirmar importação
+            </button>
           </div>
         </article>
       )}
 
       {cardPreview && (
-        <article className="panel">
+        <article className="panel import-review-panel" data-import-tutorial="review">
           <div className="panel-title">
             <div>
               <p className="eyebrow">FATURA DE CARTÃO</p>
@@ -1055,94 +1466,83 @@ export function ImportPage() {
             </div>
             <label className="compact-label">
               Vencimento
-              <input
-                type="date"
+              <DatePicker
+                ariaLabel="Vencimento da fatura"
                 value={cardPreview.dueDate}
-                onChange={(event) =>
+                onChange={(value) =>
                   updateCard(
                     cardPreview.items[0].candidate.sourceRow,
                     cardPreview.items[0].included,
                     cardPreview.items[0].candidate.suggestedCategoryId,
-                    event.target.value,
+                    value,
                   )
                 }
               />
             </label>
           </div>
-          <div className="invoice-totals">
-            <div>
-              <span>Compras</span>
-              <strong>{money(cardPreview.purchasesInCents)}</strong>
+          <CreditCardImportTotals preview={cardPreview} />
+          <SuggestionSummary summary={cardSummary} />
+          {lastChoice?.kind === "card" && (
+            <ChoiceNotice choice={lastChoice} onCreateRule={() => setLearning(lastChoice)} />
+          )}
+          <Tabs
+            hidePanel
+            value={previewMode}
+            onChange={(value) => setPreviewMode(value as "review" | "all")}
+            tabs={[
+              { id: "review", label: `Revisar (${cardSummary.pending})` },
+              { id: "all", label: `Todas (${cardPreview.items.length})` },
+            ]}
+          />
+          {previewMode === "review" ? (
+            <div role="tabpanel" aria-label="Itens da fatura para revisar">
+              <ImportReviewGroups
+                key={cardPreview.sessionId}
+                groups={cardGroups}
+                categories={categories}
+                creditCard
+                onApply={(rows, categoryId, representative) => changeCardGroup(rows, categoryId, representative)}
+                undoChoice={lastReviewChoice?.kind === "card" ? lastReviewChoice : undefined}
+                onUndo={undoReviewChoice}
+              />
             </div>
-            <div>
-              <span>Créditos e pagamentos</span>
-              <strong>{money(cardPreview.creditsInCents)}</strong>
+          ) : (
+            <div role="tabpanel" aria-label="Todos os itens da fatura">
+              <CreditCardImportItems
+                items={cardPreview.items}
+                paymentsInCents={cardPreview.paymentsInCents}
+                categories={categories}
+                onUpdate={(sourceRow, included, categoryId) => updateCard(sourceRow, included, categoryId)}
+              />
             </div>
-            <div className="invoice-total">
-              <span>Saldo da fatura</span>
-              <strong>{money(cardPreview.totalInCents)}</strong>
-            </div>
-          </div>
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Incluir</th>
-                  <th>Data</th>
-                  <th>Estabelecimento</th>
-                  <th>Portador</th>
-                  <th>Parcela</th>
-                  <th>Categoria</th>
-                  <th>Valor</th>
-                </tr>
-              </thead>
-              <tbody>
-                {cardPreview.items.map((item) => (
-                  <tr key={item.candidate.sourceRow} className={!item.included ? "excluded-row" : ""}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        checked={item.included}
-                        disabled={item.candidate.duplicateStatus === "exact"}
-                        onChange={(event) =>
-                          updateCard(item.candidate.sourceRow, event.target.checked, item.candidate.suggestedCategoryId)
-                        }
-                      />
-                    </td>
-                    <td>{item.candidate.date}</td>
-                    <td>
-                      {item.candidate.description}
-                      {item.isPayment && <small className="source-label">transferência</small>}
-                      {!item.isPayment && item.candidate.suggestionSource === "history" && (
-                        <small className="source-label history-label">pelo seu histórico</small>
-                      )}
-                    </td>
-                    <td>{item.holder ?? "—"}</td>
-                    <td>{item.installment ?? "—"}</td>
-                    <td>
-                      <CategorySelect
-                        value={item.candidate.suggestedCategoryId}
-                        categories={categories}
-                        onChange={(value) => updateCard(item.candidate.sourceRow, item.included, value)}
-                      />
-                    </td>
-                    <td className={item.candidate.amountInCents > 0 ? "positive amount" : "amount"}>
-                      {money(item.candidate.amountInCents)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          )}
           <div className="editor-actions">
             <button className="secondary" onClick={resetFlow}>
               Cancelar
             </button>
-            <button onClick={commitCard}>Confirmar fatura</button>
+            <button
+              data-import-tutorial="confirm"
+              onClick={() => {
+                setImportPhase("confirm");
+                void commitCard();
+              }}
+            >
+              Confirmar fatura
+            </button>
           </div>
         </article>
       )}
-      {message && <p className="notice">{message}</p>}
+      {message && (
+        <p className="notice" data-import-tutorial="success">
+          {message}
+        </p>
+      )}
+      {cardCommitSummary && (
+        <CardImportCommitNotice
+          summary={cardCommitSummary}
+          onReview={(paymentTransactionId) => navigate(cardPaymentReconciliationPath(paymentTransactionId))}
+        />
+      )}
 
       {transferCandidates.length > 0 && (
         <article className="panel">
@@ -1212,11 +1612,11 @@ export function ImportPage() {
       )}
 
       {learning && (
-        <Modal title="Usar esta correção no futuro?" onClose={() => setLearning(undefined)}>
+        <Modal title="Criar regra para o futuro" onClose={() => setLearning(undefined)}>
           <div className="modal-form">
             <p className="muted">
-              Você pode criar uma regra local, deixar que o histórico aprenda sozinho ou manter a alteração somente
-              nesta importação.
+              A escolha atual já será aprendida pelo histórico. Crie uma regra somente se este texto sempre tiver a
+              mesma categoria.
             </p>
             <label>
               Descrição contém
@@ -1224,12 +1624,28 @@ export function ImportPage() {
             </label>
             <div className="editor-actions">
               <button className="secondary" onClick={() => setLearning(undefined)}>
-                Somente nesta importação
-              </button>
-              <button className="secondary" onClick={() => setLearning(undefined)}>
-                Não perguntar de novo para este estabelecimento
+                Cancelar
               </button>
               <button onClick={createRule}>Criar regra</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {pendingCommit && (
+        <Modal title="Importar com categorias pendentes?" onClose={() => setPendingCommit(undefined)}>
+          <div className="modal-form import-pending-dialog">
+            <p className="muted">
+              {pendingCommit === "bank" ? bankSummary.pending : cardSummary.pending} lançamentos incluídos ainda estão
+              sem categoria. Você poderá categorizá-los depois em Transações.
+            </p>
+            <div className="editor-actions">
+              <button className="secondary" onClick={() => setPendingCommit(undefined)}>
+                Continuar revisando
+              </button>
+              <button onClick={() => void (pendingCommit === "bank" ? commitBank(true) : commitCard(true))}>
+                Importar com pendências
+              </button>
             </div>
           </div>
         </Modal>
@@ -1259,7 +1675,516 @@ export function ImportPage() {
           </div>
         </Modal>
       )}
+      <ImportTutorial />
     </section>
+  );
+}
+
+type SuggestionSummaryData = {
+  rule: number;
+  history: number;
+  manual: number;
+  pending: number;
+};
+
+type CandidateGroup = {
+  key: string;
+  label: string;
+  candidates: ImportCandidate[];
+  suggestions: ImportCandidate["categorySuggestions"];
+  totalInCents: number;
+  isPix: boolean;
+  isOwnAccountPix: boolean;
+};
+
+export function summarizeSuggestions(candidates: ImportCandidate[]): SuggestionSummaryData {
+  return candidates
+    .filter((candidate) => candidate.included && candidate.duplicateStatus !== "exact")
+    .reduce<SuggestionSummaryData>(
+      (summary, candidate) => {
+        if (!candidate.suggestedCategoryId) summary.pending += 1;
+        else if (candidate.suggestionSource === "rule") summary.rule += 1;
+        else if (candidate.suggestionSource === "history") summary.history += 1;
+        else summary.manual += 1;
+        return summary;
+      },
+      { rule: 0, history: 0, manual: 0, pending: 0 },
+    );
+}
+
+export function groupPendingCandidates(candidates: ImportCandidate[]): CandidateGroup[] {
+  return groupCandidates(candidates, (candidate) => !candidate.suggestedCategoryId);
+}
+
+function candidateGroupKey(candidate: ImportCandidate): string {
+  const direction = candidate.amountInCents >= 0 ? "credit" : "debit";
+  const identity = candidate.merchantKey || candidate.normalizedDescription || candidate.description;
+  return candidate.isPix ? `${identity}::${direction}::pix:${candidate.sourceRow}` : `${identity}::${direction}`;
+}
+
+function groupCandidates(
+  candidates: ImportCandidate[],
+  include: (candidate: ImportCandidate) => boolean,
+): CandidateGroup[] {
+  const groups = new Map<string, ImportCandidate[]>();
+  for (const candidate of candidates) {
+    if (!candidate.included || candidate.duplicateStatus === "exact" || !include(candidate)) continue;
+    const key = candidateGroupKey(candidate);
+    groups.set(key, [...(groups.get(key) ?? []), candidate]);
+  }
+  return [...groups.entries()]
+    .map(([key, items]) => {
+      const seen = new Set<string>();
+      const suggestions = items
+        .flatMap((candidate) => candidate.categorySuggestions)
+        .filter((suggestion) => {
+          if (seen.has(suggestion.categoryId)) return false;
+          seen.add(suggestion.categoryId);
+          return true;
+        })
+        .slice(0, 3);
+      return {
+        key,
+        label: items[0].merchantKey || items[0].description,
+        candidates: items,
+        suggestions,
+        totalInCents: items.reduce((total, candidate) => total + candidate.amountInCents, 0),
+        isPix: Boolean(items[0].isPix),
+        isOwnAccountPix: Boolean(items[0].isOwnAccountPix),
+      };
+    })
+    .sort(
+      (left, right) =>
+        Number(right.suggestions.length > 0) - Number(left.suggestions.length > 0) ||
+        right.candidates.length - left.candidates.length ||
+        left.label.localeCompare(right.label, "pt-BR"),
+    );
+}
+
+function compatibleCategoryKinds(
+  candidate: ImportCandidate,
+  categories: Category[],
+  creditCard: boolean,
+): CategoryKind[] {
+  if (creditCard) return ["expense", "investment"];
+  if (candidate.amountInCents < 0) return ["expense", "investment", "transfer"];
+  const suggestedKinds = candidate.categorySuggestions
+    .map((suggestion) => categories.find((category) => category.id === suggestion.categoryId)?.kind)
+    .filter((kind): kind is CategoryKind => Boolean(kind));
+  const looksLikeRefund = /estorno|reembolso|devolucao|devolução|credito compra|crédito compra/i.test(
+    candidate.description,
+  );
+  return looksLikeRefund || suggestedKinds.some((kind) => kind === "expense" || kind === "investment")
+    ? ["income", "expense", "investment", "transfer"]
+    : ["income", "transfer"];
+}
+
+function readableError(reason: unknown): string {
+  if (reason instanceof Error) return reason.message;
+  if (typeof reason === "string") return reason;
+  if (reason && typeof reason === "object" && "message" in reason) {
+    const message = (reason as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+  return "Erro inesperado";
+}
+
+function SuggestionSummary({ summary }: { summary: SuggestionSummaryData }) {
+  const items = [
+    { label: "Por regra", value: summary.rule, className: "rule" },
+    { label: "Pelo histórico", value: summary.history, className: "history" },
+    { label: "Escolhidas", value: summary.manual, className: "manual" },
+    { label: "Para revisar", value: summary.pending, className: "pending" },
+  ];
+  return (
+    <div className="import-suggestion-summary" aria-label="Resumo da categorização">
+      {items.map((item) => (
+        <div key={item.label} className={`import-suggestion-stat import-suggestion-stat--${item.className}`}>
+          <span>{item.label}</span>
+          <strong>{item.value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ChoiceNotice({ choice, onCreateRule }: { choice: LearningDraft; onCreateRule: () => void }) {
+  return (
+    <div className="import-choice-notice" role="status">
+      <CheckCircle2 size={18} aria-hidden />
+      <span>
+        Categoria aplicada a {choice.count} {choice.count === 1 ? "lançamento" : "lançamentos"}. O histórico aprenderá
+        quando você confirmar.
+      </span>
+      <button type="button" className="text-button" onClick={onCreateRule}>
+        Criar regra
+      </button>
+    </div>
+  );
+}
+
+export function ImportReviewGroups({
+  groups,
+  categories,
+  creditCard = false,
+  onApply,
+  undoChoice,
+  onUndo,
+}: {
+  groups: CandidateGroup[];
+  categories: Category[];
+  creditCard?: boolean;
+  onApply: (rows: number[], categoryId: string, representative: ImportCandidate) => Promise<void>;
+  undoChoice?: ReviewUndoChoice;
+  onUndo?: (choice: ReviewUndoChoice) => Promise<void>;
+}) {
+  const [applyingKey, setApplyingKey] = useState<string>();
+  const [undoing, setUndoing] = useState(false);
+  const [activeKey, setActiveKey] = useState<string>();
+  const [error, setError] = useState("");
+  const [announcement, setAnnouncement] = useState("");
+  const restoreFocus = useRef(false);
+  const nextKeyAfterApply = useRef<string | undefined>(undefined);
+  const returnKeyAfterUndo = useRef<string | undefined>(undefined);
+  const queueKeys = useRef(groups.map((group) => group.key));
+  const rootRef = useRef<HTMLDivElement>(null);
+  const preservedScroll = useRef<{ element: HTMLElement; top: number; left: number } | undefined>(undefined);
+  const busy = Boolean(applyingKey) || undoing;
+
+  useEffect(() => {
+    if (groups.length === 0) {
+      setActiveKey(undefined);
+      return;
+    }
+
+    if (returnKeyAfterUndo.current && groups.some((group) => group.key === returnKeyAfterUndo.current)) {
+      const returnKey = returnKeyAfterUndo.current;
+      returnKeyAfterUndo.current = undefined;
+      nextKeyAfterApply.current = undefined;
+      setActiveKey(returnKey);
+      return;
+    }
+    if (activeKey && groups.some((group) => group.key === activeKey)) return;
+    const nextKey =
+      (nextKeyAfterApply.current && groups.some((group) => group.key === nextKeyAfterApply.current)
+        ? nextKeyAfterApply.current
+        : undefined) ?? groups[0].key;
+    nextKeyAfterApply.current = undefined;
+    setActiveKey(nextKey);
+  }, [activeKey, groups]);
+
+  useLayoutEffect(() => {
+    if (!restoreFocus.current) return;
+    const focusTarget = rootRef.current?.querySelector<HTMLElement>(
+      groups.length === 0 ? ".import-review-ready" : ".import-review-group button",
+    );
+    if (!focusTarget) return;
+
+    restoreFocus.current = false;
+    const position = preservedScroll.current;
+    preservedScroll.current = undefined;
+    if (position?.element.isConnected) {
+      position.element.scrollTop = position.top;
+      position.element.scrollLeft = position.left;
+    }
+    focusTarget.focus({ preventScroll: true });
+  }, [activeKey, groups.length]);
+
+  const activeGroup = groups.find((group) => group.key === activeKey) ?? groups[0];
+  const ownAccountTransferCategory = categories.find((category) => category.id === "transfers");
+  const cardPaymentCategory = categories.find((category) => category.id === "credit-card-payment");
+  const queuePosition = Math.max(0, queueKeys.current.indexOf(activeGroup?.key));
+  const queueTotal = Math.max(queueKeys.current.length, groups.length);
+  const pendingCandidates = groups.reduce((total, group) => total + group.candidates.length, 0);
+
+  function preserveScrollPosition() {
+    const element =
+      rootRef.current?.closest<HTMLElement>(".window-frame__content") ??
+      (document.scrollingElement as HTMLElement | null);
+    if (!element) return;
+    preservedScroll.current = {
+      element,
+      top: element.scrollTop,
+      left: element.scrollLeft,
+    };
+  }
+
+  async function apply(group: CandidateGroup, categoryId: string) {
+    if (busy) return;
+    preserveScrollPosition();
+    const currentIndex = groups.findIndex((item) => item.key === group.key);
+    const remainingGroups = groups.filter((item) => item.key !== group.key);
+    nextKeyAfterApply.current = remainingGroups[Math.min(Math.max(currentIndex, 0), remainingGroups.length - 1)]?.key;
+    setApplyingKey(group.key);
+    setError("");
+    restoreFocus.current = true;
+    try {
+      await onApply(
+        group.candidates.map((candidate) => candidate.sourceRow),
+        categoryId,
+        group.candidates[0],
+      );
+      setAnnouncement(
+        `${group.label} categorizado. ${group.candidates.length} ${
+          group.candidates.length === 1 ? "lançamento resolvido" : "lançamentos resolvidos"
+        }.`,
+      );
+    } catch (reason) {
+      nextKeyAfterApply.current = undefined;
+      restoreFocus.current = false;
+      preservedScroll.current = undefined;
+      setError(`Não foi possível aplicar a categoria: ${readableError(reason)}`);
+    } finally {
+      setApplyingKey(undefined);
+    }
+  }
+
+  async function undoLastChoice() {
+    if (!undoChoice || !onUndo || busy) return;
+    preserveScrollPosition();
+    returnKeyAfterUndo.current = undoChoice.groupKey;
+    setUndoing(true);
+    setError("");
+    restoreFocus.current = true;
+    try {
+      await onUndo(undoChoice);
+      setAnnouncement(`${undoChoice.label} voltou para revisão. Escolha a categoria novamente.`);
+    } catch (reason) {
+      returnKeyAfterUndo.current = undefined;
+      restoreFocus.current = false;
+      preservedScroll.current = undefined;
+      setError(`Não foi possível voltar à escolha anterior: ${readableError(reason)}`);
+    } finally {
+      setUndoing(false);
+    }
+  }
+
+  return (
+    <div className="import-review-groups" ref={rootRef} aria-busy={busy}>
+      {groups.length === 0 ? (
+        <div className="import-review-ready" tabIndex={-1}>
+          <CheckCircle2 size={24} aria-hidden />
+          <div>
+            <strong>Tudo pronto para confirmar</strong>
+            <p>Não há lançamentos incluídos aguardando categoria.</p>
+          </div>
+          {undoChoice && onUndo && (
+            <button type="button" className="secondary import-review-undo" disabled={busy} onClick={undoLastChoice}>
+              <ChevronLeft size={17} aria-hidden />
+              {undoing ? "Voltando…" : "Voltar à escolha anterior"}
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="import-review-intro">
+          <Lightbulb size={18} aria-hidden />
+          <div>
+            <strong>Uma etapa por vez</strong>
+            <p>
+              Escolha uma categoria por estabelecimento. Cada PIX é revisado separadamente para evitar categorizações
+              indevidas.
+            </p>
+          </div>
+          <span className="import-review-intro-hint">Sugestões agilizam a revisão</span>
+        </div>
+      )}
+      {error && (
+        <p className="form-error import-review-error" role="alert">
+          {error}
+        </p>
+      )}
+      <p className="import-review-announcement" aria-live="polite">
+        {announcement}
+      </p>
+      {activeGroup && (
+        <div className="import-review-queue" role="region" aria-label="Fila guiada de revisão">
+          <div className="import-review-queue-header">
+            <div>
+              <span className="import-review-action-label">Etapa atual</span>
+              <strong>
+                Grupo {queuePosition + 1} de {queueTotal}
+              </strong>
+              <small>
+                {pendingCandidates} {pendingCandidates === 1 ? "lançamento" : "lançamentos"} pendentes · escolha uma vez
+              </small>
+            </div>
+          </div>
+          <div
+            className="import-review-queue-track"
+            role="progressbar"
+            aria-label="Posição na fila de revisão"
+            aria-valuemin={1}
+            aria-valuemax={queueTotal}
+            aria-valuenow={queuePosition + 1}
+          >
+            <i style={{ width: `${((queuePosition + 1) / queueTotal) * 100}%` }} />
+          </div>
+          <article
+            className="import-review-group"
+            key={activeGroup.key}
+            tabIndex={-1}
+            data-group-key={activeGroup.key}
+            aria-labelledby="import-review-active-title"
+          >
+            {undoChoice && onUndo && (
+              <div className="import-review-undo-row">
+                <button type="button" className="secondary" disabled={busy} onClick={undoLastChoice}>
+                  <ChevronLeft size={17} aria-hidden />
+                  {undoing ? "Voltando…" : "Voltar à escolha anterior"}
+                </button>
+              </div>
+            )}
+            <div className="import-review-group-main">
+              <div className="import-review-group-heading">
+                <span>{activeGroup.isPix ? "LANÇAMENTO PIX" : "ESTABELECIMENTO"}</span>
+                <h3 id="import-review-active-title">{activeGroup.label}</h3>
+                <p className="import-review-group-summary">
+                  {activeGroup.candidates.length} {activeGroup.candidates.length === 1 ? "lançamento" : "lançamentos"} ·{" "}
+                  <strong>{money(activeGroup.totalInCents)}</strong>
+                </p>
+              </div>
+              <div
+                className={`import-review-group-actions${
+                  activeGroup.suggestions.length === 0 ? " import-review-group-actions--manual-only" : ""
+                }`}
+              >
+                {activeGroup.isOwnAccountPix && !creditCard && (
+                  <div className="own-account-pix-guidance">
+                    <div>
+                      <span className="import-review-action-label">PIX PARA OUTRA CONTA SUA</span>
+                      <strong>Como você quer representar esse caminho?</strong>
+                      <p>
+                        Se a outra conta também está no Lumen, use Transferência nas duas pontas e vincule-as após a
+                        importação. Se ela foi apenas uma ponte e não será acompanhada, marque este valor como pagamento
+                        de fatura.
+                      </p>
+                    </div>
+                    <div className="own-account-pix-guidance__actions">
+                      {ownAccountTransferCategory && (
+                        <button
+                          type="button"
+                          className="secondary"
+                          disabled={busy}
+                          onClick={() => void apply(activeGroup, ownAccountTransferCategory.id)}
+                        >
+                          <CategoryIcon
+                            name={ownAccountTransferCategory.icon}
+                            kind={ownAccountTransferCategory.kind}
+                            size={16}
+                          />
+                          Transferência entre minhas contas
+                        </button>
+                      )}
+                      {cardPaymentCategory && (
+                        <button
+                          type="button"
+                          className="secondary"
+                          disabled={busy}
+                          onClick={() => void apply(activeGroup, cardPaymentCategory.id)}
+                        >
+                          <CategoryIcon name={cardPaymentCategory.icon} kind={cardPaymentCategory.kind} size={16} />
+                          Pagamento de fatura
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {activeGroup.suggestions.length > 0 && (
+                  <div className="import-review-quick-actions">
+                    <>
+                      <div className="import-review-action-heading">
+                        <span className="import-review-action-label">Sugestões plausíveis</span>
+                        <small>
+                          {activeGroup.isPix ? "Escolha para este PIX" : "Aplicam-se a todos os lançamentos do grupo"}
+                        </small>
+                      </div>
+                      <div className="import-suggestion-chips">
+                        {activeGroup.suggestions.map((suggestion) => {
+                          const category = categories.find((item) => item.id === suggestion.categoryId);
+                          return (
+                            <button
+                              type="button"
+                              className="secondary import-suggestion-chip"
+                              data-kind={category?.kind}
+                              key={suggestion.categoryId}
+                              title={suggestion.reason}
+                              disabled={busy}
+                              aria-label={`Aplicar ${suggestion.categoryName} a ${activeGroup.candidates.length} ${
+                                activeGroup.candidates.length === 1 ? "lançamento" : "lançamentos"
+                              } de ${activeGroup.label}. ${suggestion.reason}`}
+                              onClick={() => void apply(activeGroup, suggestion.categoryId)}
+                            >
+                              <span className="import-suggestion-chip-heading">
+                                <span
+                                  className="import-suggestion-chip-icon"
+                                  style={category?.color ? { color: category.color } : undefined}
+                                >
+                                  <CategoryIcon name={category?.icon} kind={category?.kind} size={16} />
+                                </span>
+                                <span>{applyingKey === activeGroup.key ? "Aplicando…" : suggestion.categoryName}</span>
+                              </span>
+                              <small>
+                                <strong>
+                                  {activeGroup.isPix
+                                    ? "Aplicar a este PIX"
+                                    : `Aplicar a ${activeGroup.candidates.length}`}
+                                </strong>{" "}
+                                · {suggestion.reason}
+                              </small>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </>
+                  </div>
+                )}
+                <div className="import-review-category-picker">
+                  <div className="import-review-action-heading">
+                    <span className="import-review-action-label">
+                      {activeGroup.suggestions.length === 0 ? "Escolha uma categoria" : "Todas as categorias"}
+                    </span>
+                    <small>
+                      {activeGroup.suggestions.length === 0
+                        ? "Sem sugestão segura — procure na lista completa"
+                        : "Ou procure outra opção"}
+                    </small>
+                  </div>
+                  <CategorySelect
+                    categories={categories}
+                    kind={compatibleCategoryKinds(activeGroup.candidates[0], categories, creditCard)}
+                    allowEmpty={false}
+                    emptyLabel="Escolher categoria"
+                    disabled={busy}
+                    aria-label={`Escolher categoria para ${activeGroup.label}`}
+                    onChange={(categoryId) => categoryId && void apply(activeGroup, categoryId)}
+                  />
+                </div>
+              </div>
+            </div>
+            <details className="import-review-details">
+              <summary>
+                {activeGroup.candidates.length === 1
+                  ? "Detalhes do lançamento"
+                  : `${activeGroup.candidates.length} lançamentos deste grupo`}
+              </summary>
+              <div>
+                {activeGroup.candidates.map((candidate) => (
+                  <div className="import-review-detail-row" key={candidate.sourceRow}>
+                    <span>{candidate.date}</span>
+                    <span>{candidate.description}</span>
+                    <strong>{money(candidate.amountInCents)}</strong>
+                  </div>
+                ))}
+              </div>
+            </details>
+          </article>
+          <p className="import-review-queue-hint">
+            Ao categorizar, o próximo grupo entra em foco automaticamente. Use “Voltar à escolha anterior” se precisar
+            corrigir o último grupo ou “Todas” para ajustar um lançamento isolado.
+          </p>
+        </div>
+      )}
+    </div>
   );
 }
 

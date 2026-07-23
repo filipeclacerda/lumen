@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   accounts: vi.fn(),
   categories: vi.fn(),
   creditCardInvoicesPage: vi.fn(),
+  cardPaymentReconciliations: vi.fn(),
   listTransactions: vi.fn(),
   toast: vi.fn(),
 }));
@@ -21,6 +22,7 @@ vi.mock("../shared/api", () => ({
     accounts: mocks.accounts,
     categories: mocks.categories,
     creditCardInvoicesPage: mocks.creditCardInvoicesPage,
+    cardPaymentReconciliations: mocks.cardPaymentReconciliations,
     listTransactions: mocks.listTransactions,
   },
 }));
@@ -50,6 +52,7 @@ describe("paginated screens", () => {
     mocks.accounts.mockResolvedValue([]);
     mocks.categories.mockResolvedValue([]);
     mocks.creditCardInvoicesPage.mockResolvedValue({ items: [], totalCount: 0 });
+    mocks.cardPaymentReconciliations.mockResolvedValue([]);
     mocks.listTransactions.mockResolvedValue({ items: [], totalCount: 0 });
   });
 
@@ -138,6 +141,7 @@ describe("paginated screens", () => {
             dueDate: "2026-07-10",
             purchasesInCents: 10000,
             creditsInCents: 0,
+            paymentsInCents: 0,
             totalInCents: 10000,
             status: "open",
           },
@@ -168,6 +172,7 @@ describe("paginated screens", () => {
           dueDate: "2026-08-10",
           purchasesInCents: 20000,
           creditsInCents: 0,
+          paymentsInCents: 0,
           totalInCents: 20000,
           status: "open",
         },

@@ -1,30 +1,38 @@
 export type AccountType = "checking" | "savings" | "cash" | "credit_card";
 export type Account = { id: string; name: string; kind: AccountType; balanceInCents: number };
 export type FinancialGoal = "organize" | "emergency_fund" | "pay_debt" | "save" | "invest";
+export type OnboardingStartMode = "import" | "manual" | "tour";
 export type IncomeDayRule = "fifth_business_day";
 export type UserProfile = {
   displayName: string;
   monthlyIncomeInCents?: number;
+  monthlyTargetInCents?: number;
   incomeDay?: number;
   incomeDayRule?: IncomeDayRule;
   financialGoal?: FinancialGoal;
+  onboardingStartMode?: OnboardingStartMode;
   onboardingCompletedAt: string;
+};
+export type ProfileInput = {
+  displayName: string;
+  monthlyIncomeInCents?: number;
+  monthlyTargetInCents?: number;
+  incomeDay?: number;
+  incomeDayRule?: IncomeDayRule;
+  financialGoal?: FinancialGoal;
 };
 export type OnboardingInput = {
   displayName: string;
-  monthlyIncomeInCents?: number;
-  incomeDay?: number;
-  incomeDayRule?: IncomeDayRule;
-  financialGoal?: FinancialGoal;
-  accountName: string;
-  accountKind: Exclude<AccountType, "credit_card">;
-  openingBalanceInCents?: number;
+  monthlyTargetInCents?: number;
+  financialGoal: FinancialGoal;
+  onboardingStartMode: OnboardingStartMode;
 };
 export type AppBootstrap = {
   profile?: UserProfile;
   onboardingCompleted: boolean;
   account?: Account;
   hasTransactions: boolean;
+  hasImports: boolean;
 };
 export type OnboardingResult = { profile: UserProfile; accountId: string };
 export type Transaction = {
@@ -134,14 +142,25 @@ export type ImportCandidate = {
   normalizedDescription: string;
   amountInCents: number;
   externalId?: string;
+  isPix?: boolean;
+  isOwnAccountPix?: boolean;
   suggestedCategoryId?: string;
   suggestedCategoryName?: string;
   suggestedRuleId?: string;
   suggestedRuleName?: string;
   suggestionSource?: "rule" | "history";
+  merchantKey: string;
+  categorySuggestions: CategorySuggestion[];
   duplicateStatus: "new" | "probable" | "exact";
   warnings: string[];
   included: boolean;
+};
+
+export type CategorySuggestion = {
+  categoryId: string;
+  categoryName: string;
+  source: "similar_history" | "vocabulary" | "category_name";
+  reason: string;
 };
 export type ImportSourceKind = "bank" | "credit_card";
 export type CsvColumnRole =
@@ -219,8 +238,13 @@ export type CreditCardImportPreview = {
   dueDate: string;
   purchasesInCents: number;
   creditsInCents: number;
+  paymentsInCents: number;
   totalInCents: number;
   items: CreditCardImportItem[];
+};
+export type CreditCardImportCommitResult = {
+  invoiceId: string;
+  paymentTransactionIds: string[];
 };
 export type CreditCardInvoice = {
   id: string;
@@ -229,6 +253,7 @@ export type CreditCardInvoice = {
   dueDate: string;
   purchasesInCents: number;
   creditsInCents: number;
+  paymentsInCents: number;
   totalInCents: number;
   status: "open" | "paid";
   paymentTransactionId?: string;
@@ -258,9 +283,29 @@ export type PaymentMatchCandidate = {
   amountInCents: number;
   distanceInDays: number;
 };
+export type InvoicePaymentMatchCandidate = {
+  id: string;
+  accountName: string;
+  dueDate: string;
+  totalInCents: number;
+  distanceInDays: number;
+};
+export type CardPaymentReconciliation = {
+  paymentTransactionId: string;
+  cardAccountId: string;
+  cardAccountName: string;
+  date: string;
+  description: string;
+  amountInCents: number;
+  invoiceCandidates: InvoicePaymentMatchCandidate[];
+  bankCandidates: PaymentMatchCandidate[];
+  invoiceId?: string;
+  bankTransactionId?: string;
+  state: "pending" | "invoice_confirmed" | "bank_confirmed" | "reconciled";
+};
 export type TransactionLink = {
   id: string;
-  debitTransactionId: string;
+  debitTransactionId?: string;
   creditTransactionId?: string;
   invoiceId?: string;
 };

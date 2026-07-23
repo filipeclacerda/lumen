@@ -8,6 +8,10 @@ pub struct ImportCandidate {
     pub date: String,
     pub description: String,
     pub normalized_description: String,
+    #[serde(default)]
+    pub is_pix: bool,
+    #[serde(default)]
+    pub is_own_account_pix: bool,
     pub amount_in_cents: i64,
     pub external_id: Option<String>,
     pub suggested_category_id: Option<String>,
@@ -15,9 +19,28 @@ pub struct ImportCandidate {
     pub suggested_rule_id: Option<String>,
     pub suggested_rule_name: Option<String>,
     pub suggestion_source: Option<SuggestionSource>,
+    pub merchant_key: String,
+    pub category_suggestions: Vec<CategorySuggestion>,
     pub duplicate_status: DuplicateStatus,
     pub warnings: Vec<String>,
     pub included: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CategorySuggestion {
+    pub category_id: String,
+    pub category_name: String,
+    pub source: CategorySuggestionSource,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CategorySuggestionSource {
+    SimilarHistory,
+    Vocabulary,
+    CategoryName,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -117,6 +140,32 @@ pub fn normalize_description(value: &str) -> String {
         .to_uppercase()
 }
 
+pub fn is_pix_description(value: &str) -> bool {
+    value
+        .split(|character: char| !character.is_alphanumeric())
+        .any(|token| token.eq_ignore_ascii_case("pix"))
+}
+
+pub fn is_own_account_pix_description(value: &str) -> bool {
+    if !is_pix_description(value) {
+        return false;
+    }
+    let tokens = value
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(|token| token.to_uppercase())
+        .collect::<Vec<_>>();
+    tokens.windows(2).any(|pair| {
+        matches!(
+            pair,
+            [left, right]
+                if (left == "IF" && right == "MSM")
+                    || (left == "MESMA" && right == "TITULARIDADE")
+                    || (left == "MESMO" && right == "TITULAR")
+        )
+    })
+}
+
 pub fn mapping_signature(
     headers: &[String],
     delimiter: &str,
@@ -149,5 +198,55 @@ mod tests {
     #[test]
     fn descriptions_are_stable() {
         assert_eq!(normalize_description("  Café   Central "), "CAFÉ CENTRAL");
+    }
+
+    #[test]
+    fn detects_pix_as_a_standalone_token() {
+        for description in [
+            "PIX RECEBIDO",
+            "Pagamento Pix - Maria",
+            "PIX_QRS JOAO DA SILVA",
+            "transferência/pix",
+        ] {
+            assert!(
+                is_pix_description(description),
+                "expected PIX in {description:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_detect_pix_inside_another_word() {
+        for description in ["PIXEL DESIGN", "COMPRA PIXAR", "CHAVEPIX", "PICPAY"] {
+            assert!(
+                !is_pix_description(description),
+                "did not expect PIX in {description:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn detects_pix_sent_to_an_account_with_the_same_ownership() {
+        for description in [
+            "PIX.EMIT.OUT IF-MSM",
+            "PIX IF MSM",
+            "Pagamento PIX mesma titularidade",
+            "PIX para mesmo titular",
+        ] {
+            assert!(
+                is_own_account_pix_description(description),
+                "expected an own-account PIX in {description:?}"
+            );
+        }
+        for description in [
+            "PIX EMIT OUTRA IF",
+            "PIX MARIA SILVA",
+            "IF-MSM SEM TRANSFERENCIA",
+        ] {
+            assert!(
+                !is_own_account_pix_description(description),
+                "did not expect an own-account PIX in {description:?}"
+            );
+        }
     }
 }

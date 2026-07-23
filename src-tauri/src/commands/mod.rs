@@ -32,12 +32,16 @@ use crate::{
             first_match, CategorizationInput, CategorizationRule, MovementType, RuleOperator,
         },
         import::{
-            fingerprint, mapping_signature, normalize_description, CsvColumnMapping,
-            CsvMappingDraft, CsvMappingProfile, ImportCandidate, ImportSourceKind,
-            SuggestionSource,
+            fingerprint, is_own_account_pix_description, is_pix_description, mapping_signature,
+            normalize_description, CsvColumnMapping, CsvMappingDraft, CsvMappingProfile,
+            ImportCandidate, ImportSourceKind, SuggestionSource,
         },
         merchant::merchant_key,
-        suggestion::{suggest_from_history, MerchantCategoryStat},
+        suggestion::{
+            category_compatible, is_refund_description, shortlist_categories, suggest_from_history,
+            CategoryDefinition, HistoricalCategoryStat, MerchantCategoryStat, SuggestionContext,
+            SuggestionIndex,
+        },
     },
     error::AppError,
     infrastructure::importer::{
@@ -81,9 +85,11 @@ pub struct TransferInput {
 pub struct UserProfile {
     display_name: String,
     monthly_income_in_cents: Option<i64>,
+    monthly_target_in_cents: Option<i64>,
     income_day: Option<i64>,
     income_day_rule: Option<String>,
     financial_goal: Option<String>,
+    onboarding_start_mode: Option<String>,
     onboarding_completed_at: String,
 }
 
@@ -92,6 +98,7 @@ pub struct UserProfile {
 pub struct ProfileInput {
     display_name: String,
     monthly_income_in_cents: Option<i64>,
+    monthly_target_in_cents: Option<i64>,
     income_day: Option<i64>,
     income_day_rule: Option<String>,
     financial_goal: Option<String>,
@@ -101,13 +108,9 @@ pub struct ProfileInput {
 #[serde(rename_all = "camelCase")]
 pub struct OnboardingInput {
     display_name: String,
-    monthly_income_in_cents: Option<i64>,
-    income_day: Option<i64>,
-    income_day_rule: Option<String>,
-    financial_goal: Option<String>,
-    account_name: String,
-    account_kind: String,
-    opening_balance_in_cents: Option<i64>,
+    monthly_target_in_cents: Option<i64>,
+    financial_goal: String,
+    onboarding_start_mode: String,
 }
 
 #[derive(Serialize)]
@@ -117,6 +120,7 @@ pub struct AppBootstrap {
     onboarding_completed: bool,
     account: Option<Account>,
     has_transactions: bool,
+    has_imports: bool,
 }
 
 #[derive(Serialize)]
@@ -341,49 +345,47 @@ pub(super) async fn load_rules(db: &SqlitePool) -> Result<Vec<CategorizationRule
     Ok(rows.into_iter().map(rule_from_row).collect())
 }
 
-/// Fetches, in a single batched query, the categorization history for every merchant in
-/// `merchant_keys` (previews have hundreds of rows; one query per row would be far too slow —
-/// see Etapa 2 critério de aceite de performance).
-pub(super) async fn load_merchant_category_stats(
+async fn load_suggestion_categories(db: &SqlitePool) -> Result<Vec<CategoryDefinition>, AppError> {
+    let rows = sqlx::query(
+        "SELECT id,name,kind,sort_order FROM categories WHERE deleted_at IS NULL ORDER BY sort_order,name",
+    )
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| CategoryDefinition {
+            id: row.get("id"),
+            name: row.get("name"),
+            kind: row.get("kind"),
+            sort_order: row.get("sort_order"),
+        })
+        .collect())
+}
+
+async fn load_all_historical_category_stats(
     db: &SqlitePool,
-    merchant_keys: &[String],
-) -> Result<HashMap<String, Vec<MerchantCategoryStat>>, AppError> {
-    let mut result: HashMap<String, Vec<MerchantCategoryStat>> = HashMap::new();
-    if merchant_keys.is_empty() {
-        return Ok(result);
-    }
-    let placeholders = merchant_keys
-        .iter()
-        .map(|_| "?")
-        .collect::<Vec<_>>()
-        .join(",");
-    let sql = format!(
+) -> Result<Vec<HistoricalCategoryStat>, AppError> {
+    let rows = sqlx::query(
         "SELECT t.merchant_key, t.category_id, c.name category_name, c.kind category_kind,
          COUNT(*) n, MAX(t.date) last_used
          FROM transactions t JOIN categories c ON c.id=t.category_id
-         WHERE t.merchant_key IN ({placeholders}) AND t.deleted_at IS NULL
+         WHERE t.merchant_key IS NOT NULL AND t.deleted_at IS NULL AND c.deleted_at IS NULL
          AND t.category_source IN ('manual','rule')
-         GROUP BY t.merchant_key, t.category_id"
-    );
-    let mut query = sqlx::query(&sql);
-    for key in merchant_keys {
-        query = query.bind(key);
-    }
-    let rows = query.fetch_all(db).await?;
-    for row in rows {
-        let merchant_key: String = row.get("merchant_key");
-        result
-            .entry(merchant_key)
-            .or_default()
-            .push(MerchantCategoryStat {
-                category_id: row.get("category_id"),
-                category_name: row.get("category_name"),
-                category_kind: row.get("category_kind"),
-                count: row.get("n"),
-                last_used: row.get("last_used"),
-            });
-    }
-    Ok(result)
+         GROUP BY t.merchant_key, t.category_id",
+    )
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| HistoricalCategoryStat {
+            merchant_key: row.get("merchant_key"),
+            category_id: row.get("category_id"),
+            category_name: row.get("category_name"),
+            category_kind: row.get("category_kind"),
+            count: row.get("n"),
+            last_used: row.get("last_used"),
+        })
+        .collect())
 }
 
 /// Applies rule matches first (regra explícita sempre vence histórico), then — only for
@@ -395,7 +397,7 @@ pub(super) async fn apply_category_suggestions(
     rules: &[CategorizationRule],
     candidates: &mut [ImportCandidate],
 ) -> Result<(), AppError> {
-    apply_category_suggestions_to(db, account_id, rules, candidates.iter_mut()).await
+    apply_category_suggestions_to(db, account_id, rules, candidates.iter_mut(), false).await
 }
 
 /// Same as `apply_category_suggestions`, but generic over any mutable iterator of candidates —
@@ -405,9 +407,12 @@ pub(super) async fn apply_category_suggestions_to<'a>(
     account_id: &str,
     rules: &[CategorizationRule],
     candidates: impl Iterator<Item = &'a mut ImportCandidate>,
+    credit_card_context: bool,
 ) -> Result<(), AppError> {
     let mut candidates: Vec<&mut ImportCandidate> = candidates.collect();
     for candidate in candidates.iter_mut() {
+        candidate.merchant_key = merchant_key(&candidate.normalized_description);
+        candidate.category_suggestions.clear();
         if let Some(rule) = first_match(
             rules,
             &CategorizationInput {
@@ -423,27 +428,78 @@ pub(super) async fn apply_category_suggestions_to<'a>(
             candidate.suggestion_source = Some(SuggestionSource::Rule);
         }
     }
-    let mut merchant_keys: Vec<String> = candidates
-        .iter()
-        .filter(|c| c.suggestion_source.is_none())
-        .map(|c| merchant_key(&c.normalized_description))
-        .collect();
-    merchant_keys.sort();
-    merchant_keys.dedup();
-    let stats_by_merchant = load_merchant_category_stats(db, &merchant_keys).await?;
+    let history = load_all_historical_category_stats(db).await?;
+    let mut stats_by_merchant: HashMap<String, Vec<MerchantCategoryStat>> = HashMap::new();
+    for row in &history {
+        let stats = stats_by_merchant
+            .entry(merchant_key(&row.merchant_key))
+            .or_default();
+        if let Some(existing) = stats
+            .iter_mut()
+            .find(|stat| stat.category_id == row.category_id)
+        {
+            existing.count += row.count;
+            if row.last_used > existing.last_used {
+                existing.last_used = row.last_used.clone();
+            }
+        } else {
+            stats.push(MerchantCategoryStat {
+                category_id: row.category_id.clone(),
+                category_name: Some(row.category_name.clone()),
+                category_kind: row.category_kind.clone(),
+                count: row.count,
+                last_used: row.last_used.clone(),
+            });
+        }
+    }
+    let context = if credit_card_context {
+        SuggestionContext::CreditCard
+    } else {
+        SuggestionContext::Bank
+    };
     for candidate in candidates.iter_mut() {
         if candidate.suggestion_source.is_some() {
             continue;
         }
-        let key = merchant_key(&candidate.normalized_description);
-        let Some(stats) = stats_by_merchant.get(&key) else {
+        if candidate.is_pix && !credit_card_context {
+            continue;
+        }
+        let key = &candidate.merchant_key;
+        let Some(stats) = stats_by_merchant.get(key) else {
             continue;
         };
-        if let Some(suggestion) = suggest_from_history(stats, candidate.amount_in_cents) {
+        let is_refund = is_refund_description(&candidate.normalized_description);
+        if let Some(suggestion) =
+            suggest_from_history(stats, candidate.amount_in_cents, context, is_refund)
+        {
             candidate.suggested_category_id = Some(suggestion.category_id);
             candidate.suggested_category_name = suggestion.category_name;
             candidate.suggestion_source = Some(SuggestionSource::History);
         }
+    }
+
+    if candidates
+        .iter()
+        .all(|candidate| candidate.suggestion_source.is_some())
+    {
+        return Ok(());
+    }
+    let categories = load_suggestion_categories(db).await?;
+    let index = SuggestionIndex::new(&history);
+    for candidate in candidates.iter_mut() {
+        if candidate.suggestion_source.is_some() {
+            continue;
+        }
+        let is_refund = is_refund_description(&candidate.normalized_description);
+        candidate.category_suggestions = shortlist_categories(
+            &candidate.merchant_key,
+            &candidate.normalized_description,
+            candidate.amount_in_cents,
+            context,
+            is_refund,
+            &categories,
+            &index,
+        );
     }
     Ok(())
 }
@@ -626,25 +682,53 @@ fn validate_profile(
     Ok(())
 }
 
+fn validate_monthly_target(monthly_target_in_cents: Option<i64>) -> Result<(), AppError> {
+    if monthly_target_in_cents.is_some_and(|target| target <= 0) {
+        return Err(AppError::Validation(
+            "O valor mensal deve ser maior que zero".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_onboarding_start_mode(mode: &str) -> Result<(), AppError> {
+    if !["import", "manual", "tour"].contains(&mode) {
+        return Err(AppError::Validation("Forma de começar inválida".into()));
+    }
+    Ok(())
+}
+
 fn profile_from_row(row: SqliteRow) -> UserProfile {
     UserProfile {
         display_name: row.get("display_name"),
         monthly_income_in_cents: row.get("monthly_income_cents"),
+        monthly_target_in_cents: row.get("monthly_target_cents"),
         income_day: row.get("income_day"),
         income_day_rule: row.get("income_day_rule"),
         financial_goal: row.get("financial_goal"),
+        onboarding_start_mode: row.get("onboarding_start_mode"),
         onboarding_completed_at: row.get("onboarding_completed_at"),
     }
 }
 
 async fn load_profile(db: &SqlitePool) -> Result<Option<UserProfile>, AppError> {
     Ok(sqlx::query(
-        "SELECT display_name,monthly_income_cents,income_day,income_day_rule,financial_goal,onboarding_completed_at
+        "SELECT display_name,monthly_income_cents,monthly_target_cents,income_day,income_day_rule,
+         financial_goal,onboarding_start_mode,onboarding_completed_at
          FROM user_profiles WHERE id='primary'",
     )
     .fetch_optional(db)
     .await?
     .map(profile_from_row))
+}
+
+async fn has_import_batches(db: &SqlitePool) -> Result<bool, AppError> {
+    Ok(
+        sqlx::query_scalar::<_, i64>("SELECT EXISTS(SELECT 1 FROM import_batches LIMIT 1)")
+            .fetch_one(db)
+            .await?
+            != 0,
+    )
 }
 
 #[tauri::command]
@@ -668,11 +752,13 @@ pub async fn get_app_bootstrap(state: State<'_, AppState>) -> Result<AppBootstra
             .fetch_one(&state.db)
             .await?
             > 0;
+    let has_imports = has_import_batches(&state.db).await?;
     Ok(AppBootstrap {
         onboarding_completed: profile.is_some(),
         profile,
         account,
         has_transactions,
+        has_imports,
     })
 }
 
@@ -693,12 +779,14 @@ pub async fn save_profile(
         input.income_day_rule.as_deref(),
         input.financial_goal.as_deref(),
     )?;
+    validate_monthly_target(input.monthly_target_in_cents)?;
     let result = sqlx::query(
-        "UPDATE user_profiles SET display_name=?,monthly_income_cents=?,income_day=?,income_day_rule=?,
-         financial_goal=?,updated_at=datetime('now') WHERE id='primary'",
+        "UPDATE user_profiles SET display_name=?,monthly_income_cents=?,monthly_target_cents=?,
+         income_day=?,income_day_rule=?,financial_goal=?,updated_at=datetime('now') WHERE id='primary'",
     )
     .bind(input.display_name.trim())
     .bind(input.monthly_income_in_cents)
+    .bind(input.monthly_target_in_cents)
     .bind(input.income_day)
     .bind(input.income_day_rule)
     .bind(input.financial_goal)
@@ -728,85 +816,39 @@ async fn complete_onboarding_impl(
 ) -> Result<OnboardingResult, AppError> {
     validate_profile(
         &input.display_name,
-        input.monthly_income_in_cents,
-        input.income_day,
-        input.income_day_rule.as_deref(),
-        input.financial_goal.as_deref(),
+        None,
+        None,
+        None,
+        Some(&input.financial_goal),
     )?;
-    let account_name_length = input.account_name.trim().chars().count();
-    if !(2..=80).contains(&account_name_length) {
-        return Err(AppError::Validation(
-            "O nome da conta deve ter entre 2 e 80 caracteres".into(),
-        ));
-    }
-    if !["checking", "savings", "cash"].contains(&input.account_kind.as_str()) {
-        return Err(AppError::Validation("Tipo de conta inválido".into()));
-    }
-    let has_transactions =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM transactions WHERE deleted_at IS NULL")
-            .fetch_one(db)
-            .await?
-            > 0;
-    if has_transactions
-        && input
-            .opening_balance_in_cents
-            .is_some_and(|value| value != 0)
-    {
-        return Err(AppError::Validation(
-            "O saldo inicial não pode ser aplicado após existirem transações".into(),
-        ));
-    }
+    validate_monthly_target(input.monthly_target_in_cents)?;
+    validate_onboarding_start_mode(&input.onboarding_start_mode)?;
 
     let mut tx = db.begin().await?;
-    sqlx::query(
-        "INSERT INTO user_profiles(id,display_name,monthly_income_cents,income_day,income_day_rule,financial_goal,onboarding_completed_at)
-         VALUES('primary',?,?,?,?,?,datetime('now'))
-         ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,
-         monthly_income_cents=excluded.monthly_income_cents,income_day=excluded.income_day,
-         income_day_rule=excluded.income_day_rule,
-         financial_goal=excluded.financial_goal,onboarding_completed_at=excluded.onboarding_completed_at,
-         updated_at=datetime('now')"
-    ).bind(input.display_name.trim()).bind(input.monthly_income_in_cents).bind(input.income_day).bind(input.income_day_rule)
-        .bind(input.financial_goal).execute(&mut *tx).await?;
-
     let account_id = sqlx::query_scalar::<_, String>(
         "SELECT id FROM accounts WHERE deleted_at IS NULL ORDER BY created_at LIMIT 1",
     )
     .fetch_optional(&mut *tx)
     .await?
-    .unwrap_or_else(|| Uuid::new_v4().to_string());
-    let account_exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM accounts WHERE id=?")
-        .bind(&account_id)
-        .fetch_one(&mut *tx)
-        .await?
-        > 0;
-    if account_exists {
-        sqlx::query("UPDATE accounts SET name=?,kind=? WHERE id=?")
-            .bind(input.account_name.trim())
-            .bind(&input.account_kind)
-            .bind(&account_id)
-            .execute(&mut *tx)
-            .await?;
-    } else {
-        sqlx::query("INSERT INTO accounts(id,name,kind) VALUES(?,?,?)")
-            .bind(&account_id)
-            .bind(input.account_name.trim())
-            .bind(&input.account_kind)
-            .execute(&mut *tx)
-            .await?;
-    }
-    if !has_transactions {
-        if let Some(balance) = input.opening_balance_in_cents.filter(|value| *value != 0) {
-            let transaction_id = Uuid::new_v4().to_string();
-            sqlx::query(
-                "INSERT INTO transactions(id,account_id,date,description,normalized_description,amount_cents,
-                 fingerprint,category_id,category_source,status) VALUES(?,?,?,?,?,?,?,?,?,?)"
-            ).bind(transaction_id).bind(&account_id).bind(chrono::Local::now().format("%Y-%m-%d").to_string())
-                .bind("Saldo inicial").bind("SALDO INICIAL").bind(balance)
-                .bind(format!("onboarding:opening-balance:{account_id}")).bind("opening-balance")
-                .bind("manual").bind("cleared").execute(&mut *tx).await?;
-        }
-    }
+    .ok_or_else(|| AppError::Validation("Nenhuma conta ativa foi encontrada".into()))?;
+    sqlx::query(
+        "INSERT INTO user_profiles(
+           id,display_name,monthly_target_cents,financial_goal,onboarding_start_mode,onboarding_completed_at
+         )
+         VALUES('primary',?,?,?,?,datetime('now'))
+         ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,
+         monthly_target_cents=excluded.monthly_target_cents,
+         financial_goal=excluded.financial_goal,
+         onboarding_start_mode=excluded.onboarding_start_mode,
+         onboarding_completed_at=excluded.onboarding_completed_at,
+         updated_at=datetime('now')"
+    )
+    .bind(input.display_name.trim())
+    .bind(input.monthly_target_in_cents)
+    .bind(input.financial_goal)
+    .bind(input.onboarding_start_mode)
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     let profile = load_profile(db)
         .await?
@@ -1490,6 +1532,8 @@ fn manual_fingerprint(
         date: date.to_string(),
         description: description.to_string(),
         normalized_description: normalized.to_string(),
+        is_pix: is_pix_description(description),
+        is_own_account_pix: is_own_account_pix_description(description),
         amount_in_cents,
         external_id: None,
         suggested_category_id: None,
@@ -1497,6 +1541,8 @@ fn manual_fingerprint(
         suggested_rule_id: None,
         suggested_rule_name: None,
         suggestion_source: None,
+        merchant_key: String::new(),
+        category_suggestions: vec![],
         duplicate_status: crate::domain::import::DuplicateStatus::New,
         warnings: vec![],
         included: true,
@@ -1950,6 +1996,10 @@ async fn update_transaction_amount_impl(
         date: row.get("date"),
         description: row.get("description"),
         normalized_description: row.get("normalized_description"),
+        is_pix: is_pix_description(row.get::<String, _>("description").as_str()),
+        is_own_account_pix: is_own_account_pix_description(
+            row.get::<String, _>("description").as_str(),
+        ),
         amount_in_cents,
         external_id: row.get("external_id"),
         suggested_category_id: None,
@@ -1957,6 +2007,8 @@ async fn update_transaction_amount_impl(
         suggested_rule_id: None,
         suggested_rule_name: None,
         suggestion_source: None,
+        merchant_key: String::new(),
+        category_suggestions: vec![],
         duplicate_status: crate::domain::import::DuplicateStatus::New,
         warnings: vec![],
         included: true,
@@ -2447,6 +2499,102 @@ pub async fn set_import_candidate_category(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn set_import_candidates_category(
+    session_id: String,
+    source_rows: Vec<usize>,
+    category_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<ImportPreview, AppError> {
+    let _commit_guard = state.import_commit.lock().await;
+    let rows: HashSet<usize> = source_rows.into_iter().collect();
+    if rows.is_empty() {
+        return Err(AppError::Validation(
+            "Selecione ao menos um lançamento".into(),
+        ));
+    }
+    let category = if let Some(id) = &category_id {
+        Some(
+            sqlx::query_as::<_, (String, String)>(
+                "SELECT name,kind FROM categories WHERE id=? AND deleted_at IS NULL",
+            )
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_else(|| AppError::Validation("Categoria não encontrada".into()))?,
+        )
+    } else {
+        None
+    };
+    let mut sessions = state.sessions.lock().await;
+    let session = sessions
+        .get_mut(&session_id)
+        .ok_or(AppError::SessionExpired)?;
+    if let Some((_, kind)) = &category {
+        let incompatible = session.candidates.iter().any(|candidate| {
+            rows.contains(&candidate.source_row)
+                && !explicit_bank_category_compatible(kind, candidate)
+        });
+        if incompatible {
+            return Err(AppError::Validation(
+                "A categoria não é compatível com um ou mais lançamentos".into(),
+            ));
+        }
+    }
+    set_import_candidates_category_impl(
+        session,
+        &rows,
+        category_id,
+        category.map(|(name, _)| name),
+    )?;
+    Ok(ImportPreview {
+        session_id,
+        file_name: session.file_name.clone(),
+        candidates: session.candidates.clone(),
+    })
+}
+
+fn explicit_bank_category_compatible(category_kind: &str, candidate: &ImportCandidate) -> bool {
+    category_kind == "transfer"
+        || category_compatible(
+            category_kind,
+            candidate.amount_in_cents,
+            SuggestionContext::Bank,
+            is_refund_description(&candidate.normalized_description),
+        )
+}
+
+fn set_import_candidates_category_impl(
+    session: &mut ImportSession,
+    rows: &HashSet<usize>,
+    category_id: Option<String>,
+    category_name: Option<String>,
+) -> Result<(), AppError> {
+    if session
+        .candidates
+        .iter()
+        .filter(|candidate| rows.contains(&candidate.source_row))
+        .count()
+        != rows.len()
+    {
+        return Err(AppError::Validation(
+            "Um ou mais lançamentos não foram encontrados na sessão".into(),
+        ));
+    }
+    for candidate in session
+        .candidates
+        .iter_mut()
+        .filter(|candidate| rows.contains(&candidate.source_row))
+    {
+        candidate.suggested_category_id = category_id.clone();
+        candidate.suggested_category_name = category_name.clone();
+        candidate.suggested_rule_id = None;
+        candidate.suggested_rule_name = None;
+        candidate.suggestion_source = None;
+    }
+    Ok(())
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitImportResult {
@@ -2561,6 +2709,15 @@ async fn commit_import_impl(
 mod tests {
     use super::*;
 
+    fn onboarding_input() -> OnboardingInput {
+        OnboardingInput {
+            display_name: "Pessoa Teste".into(),
+            monthly_target_in_cents: None,
+            financial_goal: "organize".into(),
+            onboarding_start_mode: "manual".into(),
+        }
+    }
+
     #[test]
     fn bulk_ids_are_deduplicated_and_bounded() {
         assert_eq!(
@@ -2597,56 +2754,61 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn onboarding_persists_profile_account_and_single_opening_balance() {
+    async fn import_history_is_detected_from_completed_batches() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = crate::infrastructure::database::connect(&directory.path().join("bootstrap.db"))
+            .await
+            .unwrap();
+
+        assert!(!has_import_batches(&db).await.unwrap());
+        sqlx::query(
+            "INSERT INTO import_batches(id,file_name,created_at) VALUES('batch-1','extrato.csv',datetime('now'))",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        assert!(has_import_batches(&db).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn onboarding_persists_preferences_without_touching_financial_data() {
         let directory = tempfile::tempdir().unwrap();
         let db = crate::infrastructure::database::connect(&directory.path().join("onboarding.db"))
             .await
             .unwrap();
         let input = OnboardingInput {
             display_name: "Pessoa Teste".into(),
-            monthly_income_in_cents: Some(500_000),
-            income_day: Some(5),
-            income_day_rule: None,
-            financial_goal: Some("organize".into()),
-            account_name: "Minha conta".into(),
-            account_kind: "checking".into(),
-            opening_balance_in_cents: Some(123_456),
+            monthly_target_in_cents: Some(50_000),
+            financial_goal: "emergency_fund".into(),
+            onboarding_start_mode: "import".into(),
         };
         let result = complete_onboarding_impl(input, &db).await.unwrap();
         assert_eq!(result.profile.display_name, "Pessoa Teste");
+        assert_eq!(result.profile.monthly_target_in_cents, Some(50_000));
+        assert_eq!(
+            result.profile.financial_goal.as_deref(),
+            Some("emergency_fund")
+        );
+        assert_eq!(
+            result.profile.onboarding_start_mode.as_deref(),
+            Some("import")
+        );
         let account_name: String = sqlx::query_scalar("SELECT name FROM accounts WHERE id=?")
             .bind(result.account_id)
             .fetch_one(&db)
             .await
             .unwrap();
-        assert_eq!(account_name, "Minha conta");
-        let opening_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM transactions t JOIN categories c ON c.id=t.category_id
-             WHERE c.kind='transfer' AND t.normalized_description='SALDO INICIAL'",
-        )
-        .fetch_one(&db)
-        .await
-        .unwrap();
-        assert_eq!(opening_count, 1);
-
-        let duplicate = OnboardingInput {
-            display_name: "Pessoa Teste".into(),
-            monthly_income_in_cents: None,
-            income_day: None,
-            income_day_rule: None,
-            financial_goal: None,
-            account_name: "Minha conta".into(),
-            account_kind: "checking".into(),
-            opening_balance_in_cents: Some(100),
-        };
-        assert!(complete_onboarding_impl(duplicate, &db).await.is_err());
-        let final_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM transactions WHERE normalized_description='SALDO INICIAL'",
-        )
-        .fetch_one(&db)
-        .await
-        .unwrap();
-        assert_eq!(final_count, 1);
+        assert_eq!(account_name, "Conta principal");
+        let transaction_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM transactions")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(transaction_count, 0);
+        let import_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM import_batches")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert_eq!(import_count, 0);
     }
 
     #[tokio::test]
@@ -2655,16 +2817,7 @@ mod tests {
         let db = crate::infrastructure::database::connect(&directory.path().join("manual.db"))
             .await
             .unwrap();
-        let onboarding = OnboardingInput {
-            display_name: "Pessoa Teste".into(),
-            monthly_income_in_cents: None,
-            income_day: None,
-            income_day_rule: None,
-            financial_goal: None,
-            account_name: "Conta".into(),
-            account_kind: "checking".into(),
-            opening_balance_in_cents: None,
-        };
+        let onboarding = onboarding_input();
         let account_id = complete_onboarding_impl(onboarding, &db)
             .await
             .unwrap()
@@ -2695,16 +2848,7 @@ mod tests {
         let db = crate::infrastructure::database::connect(&directory.path().join("transfer.db"))
             .await
             .unwrap();
-        let onboarding = OnboardingInput {
-            display_name: "Pessoa Teste".into(),
-            monthly_income_in_cents: None,
-            income_day: None,
-            income_day_rule: None,
-            financial_goal: None,
-            account_name: "Corrente".into(),
-            account_kind: "checking".into(),
-            opening_balance_in_cents: None,
-        };
+        let onboarding = onboarding_input();
         let from_account = complete_onboarding_impl(onboarding, &db)
             .await
             .unwrap()
@@ -2811,16 +2955,7 @@ mod tests {
         let db = crate::infrastructure::database::connect(&directory.path().join("detect.db"))
             .await
             .unwrap();
-        let onboarding = OnboardingInput {
-            display_name: "Pessoa Teste".into(),
-            monthly_income_in_cents: None,
-            income_day: None,
-            income_day_rule: None,
-            financial_goal: None,
-            account_name: "Corrente".into(),
-            account_kind: "checking".into(),
-            opening_balance_in_cents: None,
-        };
+        let onboarding = onboarding_input();
         let checking = complete_onboarding_impl(onboarding, &db)
             .await
             .unwrap()
@@ -2936,16 +3071,7 @@ mod tests {
         let db = crate::infrastructure::database::connect(&directory.path().join("filter.db"))
             .await
             .unwrap();
-        let onboarding = OnboardingInput {
-            display_name: "Pessoa Teste".into(),
-            monthly_income_in_cents: None,
-            income_day: None,
-            income_day_rule: None,
-            financial_goal: None,
-            account_name: "Conta".into(),
-            account_kind: "checking".into(),
-            opening_balance_in_cents: None,
-        };
+        let onboarding = onboarding_input();
         let account_id = complete_onboarding_impl(onboarding, &db)
             .await
             .unwrap()
@@ -3063,16 +3189,7 @@ mod tests {
             crate::infrastructure::database::connect(&directory.path().join("advanced-filter.db"))
                 .await
                 .unwrap();
-        let onboarding = OnboardingInput {
-            display_name: "Pessoa Teste".into(),
-            monthly_income_in_cents: None,
-            income_day: None,
-            income_day_rule: None,
-            financial_goal: None,
-            account_name: "Conta".into(),
-            account_kind: "checking".into(),
-            opening_balance_in_cents: None,
-        };
+        let onboarding = onboarding_input();
         let account_id = complete_onboarding_impl(onboarding, &db)
             .await
             .unwrap()
@@ -3181,16 +3298,7 @@ mod tests {
         let db = crate::infrastructure::database::connect(&directory.path().join("linked.db"))
             .await
             .unwrap();
-        let onboarding = OnboardingInput {
-            display_name: "Pessoa Teste".into(),
-            monthly_income_in_cents: None,
-            income_day: None,
-            income_day_rule: None,
-            financial_goal: None,
-            account_name: "Corrente".into(),
-            account_kind: "checking".into(),
-            opening_balance_in_cents: None,
-        };
+        let onboarding = onboarding_input();
         let account_id = complete_onboarding_impl(onboarding, &db)
             .await
             .unwrap()
@@ -3595,16 +3703,7 @@ mod tests {
         let db = crate::infrastructure::database::connect(&directory.path().join("suggestion.db"))
             .await
             .unwrap();
-        let onboarding = OnboardingInput {
-            display_name: "Pessoa Teste".into(),
-            monthly_income_in_cents: None,
-            income_day: None,
-            income_day_rule: None,
-            financial_goal: None,
-            account_name: "Conta".into(),
-            account_kind: "checking".into(),
-            opening_balance_in_cents: None,
-        };
+        let onboarding = onboarding_input();
         let account_id = complete_onboarding_impl(onboarding, &db)
             .await
             .unwrap()
@@ -3636,6 +3735,8 @@ mod tests {
             date: "2026-06-01".into(),
             description: description.into(),
             normalized_description: normalized,
+            is_pix: is_pix_description(description),
+            is_own_account_pix: is_own_account_pix_description(description),
             amount_in_cents,
             external_id: None,
             suggested_category_id: None,
@@ -3643,10 +3744,118 @@ mod tests {
             suggested_rule_id: None,
             suggested_rule_name: None,
             suggestion_source: None,
+            merchant_key: String::new(),
+            category_suggestions: vec![],
             duplicate_status: crate::domain::import::DuplicateStatus::New,
             warnings: vec![],
             included: true,
         }
+    }
+
+    #[test]
+    fn explicit_bank_transfer_choice_is_allowed_without_becoming_a_suggestion() {
+        let candidate = candidate("PIX.EMIT.OUT IF-MSM", -410_000);
+
+        assert!(explicit_bank_category_compatible("transfer", &candidate));
+        assert!(!category_compatible(
+            "transfer",
+            candidate.amount_in_cents,
+            SuggestionContext::Bank,
+            false,
+        ));
+    }
+
+    #[test]
+    fn grouped_bank_category_update_is_atomic_and_limited_to_requested_rows() {
+        let mut first = candidate("Mercado Central", -1000);
+        first.source_row = 1;
+        let mut second = candidate("Mercado Central", -2000);
+        second.source_row = 2;
+        let mut third = candidate("Mercado Central", -3000);
+        third.source_row = 3;
+        let mut session = ImportSession {
+            account_id: "account".into(),
+            file_name: "extrato.csv".into(),
+            candidates: vec![first, second, third],
+        };
+        set_import_candidates_category_impl(
+            &mut session,
+            &HashSet::from([1, 3]),
+            Some("groceries".into()),
+            Some("Supermercado".into()),
+        )
+        .unwrap();
+        assert_eq!(
+            session.candidates[0].suggested_category_id.as_deref(),
+            Some("groceries")
+        );
+        assert_eq!(session.candidates[1].suggested_category_id, None);
+        assert_eq!(
+            session.candidates[2].suggested_category_id.as_deref(),
+            Some("groceries")
+        );
+
+        let before = session
+            .candidates
+            .iter()
+            .map(|candidate| candidate.suggested_category_id.clone())
+            .collect::<Vec<_>>();
+        assert!(set_import_candidates_category_impl(
+            &mut session,
+            &HashSet::from([1, 99]),
+            Some("health".into()),
+            Some("Saúde".into()),
+        )
+        .is_err());
+        assert_eq!(
+            before,
+            session
+                .candidates
+                .iter()
+                .map(|candidate| candidate.suggested_category_id.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn grouped_manual_choice_persists_and_teaches_future_history() {
+        let (_directory, db, account_id) = suggestion_test_setup().await;
+        let mut first = candidate("SUPERMERCADO NOVO 01/02", -1000);
+        first.source_row = 1;
+        first.date = "2026-05-01".into();
+        let mut second = candidate("SUPERMERCADO NOVO 02/02", -2000);
+        second.source_row = 2;
+        second.date = "2026-05-02".into();
+        let mut session = ImportSession {
+            account_id: account_id.clone(),
+            file_name: "extrato.csv".into(),
+            candidates: vec![first, second],
+        };
+        set_import_candidates_category_impl(
+            &mut session,
+            &HashSet::from([1, 2]),
+            Some("groceries".into()),
+            Some("Supermercado".into()),
+        )
+        .unwrap();
+        commit_import_impl(session, &db).await.unwrap();
+        let manual_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM transactions WHERE category_source='manual' AND category_id='groceries'",
+        )
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(manual_count, 2);
+
+        let mut future = vec![candidate("SUPERMERCADO NOVO 03/03", -3000)];
+        apply_category_suggestions(&db, &account_id, &[], &mut future)
+            .await
+            .unwrap();
+        assert_eq!(
+            future[0].suggested_category_id.as_deref(),
+            Some("groceries")
+        );
+        assert_eq!(future[0].suggestion_source, Some(SuggestionSource::History));
     }
 
     #[tokio::test]
@@ -3774,6 +3983,161 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn bank_pix_skips_history_preselection_but_keeps_shortlist() {
+        let (_directory, db, account_id) = suggestion_test_setup().await;
+        for i in 0..3 {
+            insert_history(
+                &db,
+                &account_id,
+                &format!("pix-history-{i}"),
+                "PIX QRS FARMACIA SAO JOAO",
+                "health",
+                -3000,
+            )
+            .await;
+        }
+        let mut candidates = vec![candidate("PIX QRS FARMACIA SAO JOAO", -4000)];
+
+        apply_category_suggestions(&db, &account_id, &[], &mut candidates)
+            .await
+            .unwrap();
+
+        assert!(candidates[0].is_pix);
+        assert_eq!(candidates[0].suggested_category_id, None);
+        assert_eq!(candidates[0].suggestion_source, None);
+        assert_eq!(
+            candidates[0]
+                .category_suggestions
+                .first()
+                .map(|suggestion| suggestion.category_id.as_str()),
+            Some("health")
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_rule_still_wins_for_bank_pix() {
+        let (_directory, db, account_id) = suggestion_test_setup().await;
+        let rule = CategorizationRule {
+            id: "pix-rule".into(),
+            name: "PIX da farmácia".into(),
+            priority: 10,
+            enabled: true,
+            operator: RuleOperator::Contains,
+            pattern: "FARMACIA".into(),
+            account_id: None,
+            movement_type: MovementType::Expense,
+            min_amount_in_cents: None,
+            max_amount_in_cents: None,
+            category_id: "health".into(),
+            category_name: Some("Saúde".into()),
+            use_count: 0,
+            is_system: false,
+        };
+        let mut candidates = vec![candidate("PIX QRS FARMACIA SAO JOAO", -4000)];
+
+        apply_category_suggestions(&db, &account_id, &[rule], &mut candidates)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            candidates[0].suggested_category_id.as_deref(),
+            Some("health")
+        );
+        assert_eq!(
+            candidates[0].suggestion_source,
+            Some(SuggestionSource::Rule)
+        );
+    }
+
+    #[tokio::test]
+    async fn credit_card_pix_can_still_use_history_preselection() {
+        let (_directory, db, account_id) = suggestion_test_setup().await;
+        for i in 0..3 {
+            insert_history(
+                &db,
+                &account_id,
+                &format!("card-pix-history-{i}"),
+                "PIX QRS FARMACIA SAO JOAO",
+                "health",
+                -3000,
+            )
+            .await;
+        }
+        let mut candidates = vec![candidate("PIX QRS FARMACIA SAO JOAO", -4000)];
+
+        apply_category_suggestions_to(&db, &account_id, &[], candidates.iter_mut(), true)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            candidates[0].suggested_category_id.as_deref(),
+            Some("health")
+        );
+        assert_eq!(
+            candidates[0].suggestion_source,
+            Some(SuggestionSource::History)
+        );
+    }
+
+    #[tokio::test]
+    async fn unseen_description_gets_shortcuts_without_being_preselected() {
+        let (_directory, db, account_id) = suggestion_test_setup().await;
+        sqlx::query(
+            "INSERT INTO categories(id,name,kind,sort_order) VALUES('gym','Academia','expense',999)",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO categories(id,name,kind,sort_order,deleted_at) VALUES('old-gym','Academia antiga','expense',1000,datetime('now'))",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        let mut candidates = vec![
+            candidate("Farmácia São João", -4000),
+            candidate("Academia Movimento", -9000),
+        ];
+        apply_category_suggestions(&db, &account_id, &[], &mut candidates)
+            .await
+            .unwrap();
+        assert!(candidates
+            .iter()
+            .all(|candidate| candidate.suggested_category_id.is_none()));
+        assert_eq!(candidates[0].merchant_key, "FARMACIA SAO JOAO");
+        assert_eq!(candidates[0].category_suggestions[0].category_id, "health");
+        assert_eq!(candidates[1].category_suggestions[0].category_id, "gym");
+        assert!(candidates[1]
+            .category_suggestions
+            .iter()
+            .all(|suggestion| suggestion.category_id != "old-gym"));
+    }
+
+    #[tokio::test]
+    async fn preview_suggests_shopping_for_repeated_mercado_livre_descriptor() {
+        let (_directory, db, account_id) = suggestion_test_setup().await;
+        let mut candidates = vec![candidate("MERCADO LIVRE*MERCADO LIVRE", -2500)];
+
+        apply_category_suggestions(&db, &account_id, &[], &mut candidates)
+            .await
+            .unwrap();
+
+        assert_eq!(candidates[0].merchant_key, "MERCADO LIVRE");
+        assert_eq!(candidates[0].suggested_category_id, None);
+        assert_eq!(
+            candidates[0]
+                .category_suggestions
+                .first()
+                .map(|suggestion| suggestion.category_id.as_str()),
+            Some("shopping")
+        );
+        assert_eq!(
+            candidates[0].category_suggestions[0].source,
+            crate::domain::import::CategorySuggestionSource::Vocabulary
+        );
+    }
+
+    #[tokio::test]
     async fn split_history_does_not_suggest() {
         let (_directory, db, account_id) = suggestion_test_setup().await;
         insert_history(&db, &account_id, "h1", "MERCADO MISTO", "food", -1000).await;
@@ -3789,19 +4153,19 @@ mod tests {
     #[tokio::test]
     async fn batched_suggestion_lookup_handles_500_candidates_quickly() {
         let (_directory, db, account_id) = suggestion_test_setup().await;
-        for i in 0..3 {
+        for i in 0..200 {
             insert_history(
                 &db,
                 &account_id,
                 &format!("h{i}"),
-                "FARMACIA DROGASIL",
+                &format!("FARMACIA HISTORICA {i}"),
                 "health",
                 -3000,
             )
             .await;
         }
         let mut candidates: Vec<_> = (0..500)
-            .map(|_| candidate("FARMACIA DROGASIL", -4000))
+            .map(|i| candidate(&format!("FARMACIA NOVA {i}"), -4000))
             .collect();
         let start = std::time::Instant::now();
         apply_category_suggestions(&db, &account_id, &[], &mut candidates)
@@ -3814,7 +4178,8 @@ mod tests {
         );
         assert!(candidates
             .iter()
-            .all(|c| c.suggested_category_id.as_deref() == Some("health")));
+            .all(|candidate| candidate.suggested_category_id.is_none()
+                && candidate.category_suggestions[0].category_id == "health"));
     }
 
     #[tokio::test]

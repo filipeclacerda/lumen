@@ -27,6 +27,7 @@ import { api } from "../../shared/api";
 import { money, shortDate, suggestRulePattern } from "../../shared/format";
 import { currentMonth } from "../../shared/period";
 import { CategorySelect } from "../../shared/ui/CategorySelect";
+import { DatePicker, MonthPicker } from "../../shared/ui/CalendarPicker";
 import { MoneyInput } from "../../shared/ui/MoneyInput";
 import { Pagination, type PaginationSize } from "../../shared/ui/Pagination";
 import { Select } from "../../shared/ui/Select";
@@ -460,6 +461,7 @@ export function Transactions() {
             : "expense",
       categoryId: learning.categoryId,
     });
+    toast("Regra criada com sucesso.");
     setLearning(undefined);
     await api.applyRules(false);
     await client.invalidateQueries({ queryKey: ["rules"] });
@@ -512,7 +514,7 @@ export function Transactions() {
   }, [data, totalCount, pageSize]);
 
   return (
-    <section>
+    <section data-tutorial="transactions">
       <PageHeader>
         <div>
           <p className="eyebrow">MOVIMENTAÇÕES</p>
@@ -637,34 +639,34 @@ export function Transactions() {
           <div className="transaction-filter-panel">
             <label>
               <CalendarRange size={15} /> De
-              <input
-                type="month"
+              <MonthPicker
+                ariaLabel="Mês inicial"
                 value={startMonthFilter}
-                onChange={(e) => updateParams((next) => setOrDelete(next, "startMonth", e.target.value))}
+                onChange={(value) => updateParams((next) => setOrDelete(next, "startMonth", value))}
               />
             </label>
             <label>
               Até
-              <input
-                type="month"
+              <MonthPicker
+                ariaLabel="Mês final"
                 value={endMonthFilter}
-                onChange={(e) => updateParams((next) => setOrDelete(next, "endMonth", e.target.value))}
+                onChange={(value) => updateParams((next) => setOrDelete(next, "endMonth", value))}
               />
             </label>
             <label>
               Data inicial
-              <input
-                type="date"
+              <DatePicker
+                ariaLabel="Data inicial"
                 value={startDateFilter}
-                onChange={(e) => updateParams((next) => setOrDelete(next, "startDate", e.target.value))}
+                onChange={(value) => updateParams((next) => setOrDelete(next, "startDate", value))}
               />
             </label>
             <label>
               Data final
-              <input
-                type="date"
+              <DatePicker
+                ariaLabel="Data final"
                 value={endDateFilter}
-                onChange={(e) => updateParams((next) => setOrDelete(next, "endDate", e.target.value))}
+                onChange={(value) => updateParams((next) => setOrDelete(next, "endDate", value))}
               />
             </label>
             <label>
@@ -948,8 +950,7 @@ export function Transactions() {
       </article>
       {learning && (
         <Modal title="Usar esta correção no futuro?" onClose={() => setLearning(undefined)}>
-          <article className="modal">
-            <h2>Usar esta correção no futuro?</h2>
+          <div className="modal-form correction-learning-modal">
             <p className="muted">Você pode criar uma regra local ou manter a alteração somente nesta transação.</p>
             <label>
               Descrição contém
@@ -961,7 +962,7 @@ export function Transactions() {
               </button>
               <button onClick={createRule}>Criar regra</button>
             </div>
-          </article>
+          </div>
         </Modal>
       )}
       {confirmDelete && (

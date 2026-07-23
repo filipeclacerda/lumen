@@ -8,8 +8,9 @@ use crate::{
     domain::{
         credit_card::{CreditCardImportItem, CreditCardLineKind, ParsedCreditCardInvoice},
         import::{
-            normalize_description, CsvColumnMapping, CsvColumnRole, CsvMappingDraft,
-            DuplicateStatus, ImportCandidate, ImportSourceKind, NormalizedImportRow,
+            is_own_account_pix_description, is_pix_description, normalize_description,
+            CsvColumnMapping, CsvColumnRole, CsvMappingDraft, DuplicateStatus, ImportCandidate,
+            ImportSourceKind, NormalizedImportRow,
         },
         money::{parse_brl, parse_money, DecimalSeparator},
     },
@@ -440,6 +441,8 @@ fn parse_csv_legacy(content: &str) -> Result<Vec<ImportCandidate>, AppError> {
                 source_row: row + 2,
                 date: parse_date(record.get(date_i).unwrap_or(""))?,
                 normalized_description: normalize_description(&description),
+                is_pix: is_pix_description(&description),
+                is_own_account_pix: is_own_account_pix_description(&description),
                 description,
                 amount_in_cents: parse_brl(record.get(amount_i).unwrap_or(""))?,
                 external_id: id_i
@@ -452,6 +455,8 @@ fn parse_csv_legacy(content: &str) -> Result<Vec<ImportCandidate>, AppError> {
                 suggested_rule_id: None,
                 suggested_rule_name: None,
                 suggestion_source: None,
+                merchant_key: String::new(),
+                category_suggestions: vec![],
                 duplicate_status: DuplicateStatus::New,
                 warnings: vec![],
                 included: true,
@@ -524,6 +529,8 @@ fn parse_mapped_bank_rows(
                     mapping.date_format.as_deref(),
                 )?,
                 normalized_description: normalize_description(&description),
+                is_pix: is_pix_description(&description),
+                is_own_account_pix: is_own_account_pix_description(&description),
                 description,
                 amount_in_cents,
                 external_id: external_i
@@ -536,6 +543,8 @@ fn parse_mapped_bank_rows(
                 suggested_rule_id: None,
                 suggested_rule_name: None,
                 suggestion_source: None,
+                merchant_key: String::new(),
+                category_suggestions: vec![],
                 duplicate_status: DuplicateStatus::New,
                 warnings: vec![],
                 included: true,
@@ -635,6 +644,8 @@ fn parse_mapped_credit_card_rows(
                 date: normalized.date.clone(),
                 description: normalized.description.clone(),
                 normalized_description: normalize_description(&normalized.description),
+                is_pix: false,
+                is_own_account_pix: false,
                 amount_in_cents: normalized.amount_in_cents,
                 external_id: normalized.external_id.clone(),
                 suggested_category_id: None,
@@ -642,6 +653,8 @@ fn parse_mapped_credit_card_rows(
                 suggested_rule_id: None,
                 suggested_rule_name: None,
                 suggestion_source: None,
+                merchant_key: String::new(),
+                category_suggestions: vec![],
                 duplicate_status: DuplicateStatus::New,
                 warnings: normalized.warnings.clone(),
                 included: true,
@@ -719,6 +732,8 @@ fn parse_legacy_credit_card_csv(content: &str) -> Result<ParsedCreditCardInvoice
             ImportCandidate {
                 source_row: row + 2,
                 date: parse_date(record.get(0).unwrap_or(""))?,
+                is_pix: false,
+                is_own_account_pix: false,
                 description,
                 normalized_description,
                 amount_in_cents,
@@ -728,6 +743,8 @@ fn parse_legacy_credit_card_csv(content: &str) -> Result<ParsedCreditCardInvoice
                 suggested_rule_id: None,
                 suggested_rule_name: None,
                 suggestion_source: None,
+                merchant_key: String::new(),
+                category_suggestions: vec![],
                 duplicate_status: DuplicateStatus::New,
                 warnings: vec![],
                 included: true,
@@ -834,6 +851,8 @@ fn parse_sicoob_text(text: &str) -> Result<Vec<ImportCandidate>, AppError> {
             source_row: row.source_row,
             date: date.format("%Y-%m-%d").to_string(),
             normalized_description: normalize_description(&description),
+            is_pix: is_pix_description(&description),
+            is_own_account_pix: is_own_account_pix_description(&description),
             description,
             amount_in_cents: if direction == 'D' { -amount } else { amount },
             external_id: None,
@@ -842,6 +861,8 @@ fn parse_sicoob_text(text: &str) -> Result<Vec<ImportCandidate>, AppError> {
             suggested_rule_id: None,
             suggested_rule_name: None,
             suggestion_source: None,
+            merchant_key: String::new(),
+            category_suggestions: vec![],
             duplicate_status: DuplicateStatus::New,
             warnings: vec![
                 "Importado de PDF textual do Sicoob; confira a prévia antes de confirmar.".into(),
@@ -961,6 +982,8 @@ fn parse_ofx(content: &str) -> Result<Vec<ImportCandidate>, AppError> {
                 source_row: row + 1,
                 date: date.format("%Y-%m-%d").to_string(),
                 normalized_description: normalize_description(&description),
+                is_pix: is_pix_description(&description),
+                is_own_account_pix: is_own_account_pix_description(&description),
                 description,
                 amount_in_cents: parse_brl(
                     &tag(block, "TRNAMT")
@@ -975,6 +998,8 @@ fn parse_ofx(content: &str) -> Result<Vec<ImportCandidate>, AppError> {
                 suggested_rule_id: None,
                 suggested_rule_name: None,
                 suggestion_source: None,
+                merchant_key: String::new(),
+                category_suggestions: vec![],
                 duplicate_status: DuplicateStatus::New,
                 warnings: vec![],
                 included: true,
@@ -1083,10 +1108,11 @@ mod tests {
                 },
             ],
         };
-        let rows = read_csv_rows("Data;Descricao;Valor;Tipo\n01/05/2026;Supermercado;100,00;purchase\n05/05/2026;Pagamento;100,00;payment", b';').unwrap();
+        let rows = read_csv_rows("Data;Descricao;Valor;Tipo\n01/05/2026;PIX Supermercado;100,00;purchase\n05/05/2026;Pagamento;100,00;payment", b';').unwrap();
         let invoice = parse_mapped_credit_card_rows(rows, &mapping).unwrap();
         assert_eq!(invoice.due_date.as_deref(), Some("2026-06-10"));
         assert_eq!(invoice.items[0].candidate.amount_in_cents, -10_000);
+        assert!(!invoice.items[0].candidate.is_pix);
         assert_eq!(invoice.items[1].candidate.amount_in_cents, 10_000);
         assert_eq!(invoice.items[0].line_kind, CreditCardLineKind::Purchase);
         assert_eq!(invoice.items[1].line_kind, CreditCardLineKind::Payment);
@@ -1150,17 +1176,21 @@ Recebimento Pix
 CLIENTE EXEMPLO
 ***.178.766-**
 04/05 DEB PACOTE SERVIÇOS 11,45D
+05/05 PIX.EMIT.OUT IF-MSM 4.100,00D
+Pagamento Pix
 04/05 SALDO DO DIA 8.675,15C
 RESUMO
 (+) SALDO EM CONTA: 8.675,15C
 "#;
         let rows = parse_sicoob_text(text).unwrap();
-        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].date, "2026-05-04");
         assert_eq!(rows[0].amount_in_cents, 2050);
         assert!(rows[0].description.contains("CLIENTE EXEMPLO"));
         assert!(!rows[0].description.contains("***"));
         assert_eq!(rows[1].amount_in_cents, -1145);
+        assert!(rows[2].is_pix);
+        assert!(rows[2].is_own_account_pix);
     }
 
     #[test]
@@ -1193,13 +1223,14 @@ RESUMO
             &path,
             concat!(
                 "Data;Estabelecimento;Portador;Valor;Parcela\n",
-                "01/05/2026;SUPERMERCADO;JOAO;R$ 100,00;-\n",
+                "01/05/2026;PIX SUPERMERCADO;JOAO;R$ 100,00;-\n",
                 "05/05/2026;Pagamento de fatura;JOAO;R$ -80,00; de 1\n"
             ),
         )
         .unwrap();
         let invoice = parse_credit_card_csv(&path).unwrap();
         assert_eq!(invoice.items[0].candidate.amount_in_cents, -10000);
+        assert!(!invoice.items[0].candidate.is_pix);
         assert_eq!(invoice.items[1].candidate.amount_in_cents, 8000);
         assert_eq!(invoice.items[0].line_kind, CreditCardLineKind::Purchase);
         assert_eq!(invoice.items[1].line_kind, CreditCardLineKind::Payment);
