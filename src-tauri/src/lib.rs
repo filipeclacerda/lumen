@@ -69,6 +69,21 @@ pub fn run() {
                     eprintln!("Falha ao preencher merchant_key em segundo plano: {error}");
                 }
             });
+            if let Some(window) = app.get_webview_window("main") {
+                // work_area excludes the taskbar, so the larger size must actually fit.
+                let monitor = window.current_monitor()?.or(window.primary_monitor()?);
+                if let Some(monitor) = monitor {
+                    let area = monitor
+                        .work_area()
+                        .size
+                        .to_logical::<f64>(monitor.scale_factor());
+                    if area.width >= 1600.0 && area.height >= 900.0 {
+                        window.set_size(tauri::LogicalSize::new(1600.0, 900.0))?;
+                    }
+                    // Center both sizes so the resized window stays inside the work area.
+                    window.center()?;
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
