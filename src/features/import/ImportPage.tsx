@@ -1,5 +1,13 @@
 import { PageHeader } from "../../shared/ui/PageHeader";
-import { type DragEvent, useCallback, useEffect, useRef, useState } from "react";
+import {
+  type DragEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { open, save } from "@tauri-apps/plugin-dialog";
@@ -8,14 +16,18 @@ import {
   ArrowLeftRight,
   Check,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Circle,
   CreditCard,
   Download,
   FileText,
   FileUp,
   ListChecks,
+  Lightbulb,
   Plus,
   ShieldCheck,
+  Sparkles,
   TableProperties,
   X,
 } from "lucide-react";
@@ -25,6 +37,7 @@ import { CategorySelect } from "../../shared/ui/CategorySelect";
 import { DatePicker } from "../../shared/ui/CalendarPicker";
 import { ErrorState, LoadingState } from "../../shared/ui/AsyncState";
 import { Select } from "../../shared/ui/Select";
+import { Tabs } from "../../shared/ui/Tabs";
 import {
   money,
   centsToInput,
@@ -35,6 +48,9 @@ import {
 } from "../../shared/format";
 import type {
   CreditCardImportPreview,
+  Category,
+  CategoryKind,
+  ImportCandidate,
   CsvColumnRole,
   CsvMappingDraft,
   CsvMappingProfile,
@@ -51,6 +67,15 @@ type MappingState = {
   draft: CsvMappingDraft;
   saveProfile: boolean;
   matchedProfile?: CsvMappingProfile;
+};
+
+type LearningDraft = {
+  sourceRow: number;
+  categoryId: string;
+  pattern: string;
+  amountInCents: number;
+  kind: "bank" | "card";
+  count: number;
 };
 
 const bankRoles: { value: CsvColumnRole; label: string }[] = [
@@ -81,13 +106,10 @@ export function ImportPage() {
   const client = useQueryClient();
   const [bankPreview, setBankPreview] = useState<ImportPreview>();
   const [cardPreview, setCardPreview] = useState<CreditCardImportPreview>();
-  const [learning, setLearning] = useState<{
-    sourceRow: number;
-    categoryId: string;
-    pattern: string;
-    amountInCents: number;
-    kind: "bank" | "card";
-  }>();
+  const [learning, setLearning] = useState<LearningDraft>();
+  const [lastChoice, setLastChoice] = useState<LearningDraft>();
+  const [previewMode, setPreviewMode] = useState<"review" | "all">("review");
+  const [pendingCommit, setPendingCommit] = useState<"bank" | "card">();
   const [mappingState, setMappingState] = useState<MappingState>();
   const [mappingError, setMappingError] = useState("");
   const [pendingCardPath, setPendingCardPath] = useState("");
@@ -173,6 +195,19 @@ export function ImportPage() {
   const bankAccountId = bankAccount?.id;
   const firstCardId = cards[0]?.id ?? "";
   const canStartImport = !bankPreview && !cardPreview && !pendingCardPath && !mappingState;
+  const bankSummary = useMemo(() => summarizeSuggestions(bankPreview?.candidates ?? []), [bankPreview?.candidates]);
+  const bankGroups = useMemo(() => groupPendingCandidates(bankPreview?.candidates ?? []), [bankPreview?.candidates]);
+  const cardCandidates = useMemo(
+    () => cardPreview?.items.filter((item) => !item.isPayment).map((item) => item.candidate) ?? [],
+    [cardPreview?.items],
+  );
+  const cardSummary = useMemo(() => summarizeSuggestions(cardCandidates), [cardCandidates]);
+  const cardGroups = useMemo(() => groupPendingCandidates(cardCandidates), [cardCandidates]);
+
+  useEffect(() => {
+    setPreviewMode("review");
+    setLastChoice(undefined);
+  }, [bankPreview?.sessionId, cardPreview?.sessionId]);
 
   // Keep the selected card valid: a custom select with a value that matches no
   // option shows the first option visually but leaves cardAccountId empty.
@@ -219,6 +254,10 @@ export function ImportPage() {
     setPendingCardPath("");
     setMappingState(undefined);
     setMappingError("");
+    setLearning(undefined);
+    setLastChoice(undefined);
+    setPendingCommit(undefined);
+    setPreviewMode("review");
   }, []);
 
   const processImportPath = useCallback(
@@ -390,8 +429,13 @@ export function ImportPage() {
     setMessage(`Template ${templateKind === "bank" ? "de conta corrente" : "de cartão de crédito"} salvo com sucesso.`);
   }
 
-  async function commitBank() {
+  async function commitBank(confirmed = false) {
     if (!bankPreview) return;
+    if (!confirmed && bankSummary.pending > 0) {
+      setPendingCommit("bank");
+      return;
+    }
+    setPendingCommit(undefined);
     const { count, batchId } = await api.commitImport(bankPreview.sessionId);
     await maybeSaveMappingProfile();
     setMessage(`${count} transações importadas com segurança.`);
@@ -429,8 +473,13 @@ export function ImportPage() {
     setTransferCandidates((current) => current.filter((c) => c !== candidate));
   }
 
-  async function commitCard() {
+  async function commitCard(confirmed = false) {
     if (!cardPreview) return;
+    if (!confirmed && cardSummary.pending > 0) {
+      setPendingCommit("card");
+      return;
+    }
+    setPendingCommit(undefined);
     await api.commitCreditCardImport(cardPreview.sessionId);
     await maybeSaveMappingProfile();
     setMessage("Fatura importada. As compras já aparecem nas despesas pelas datas originais.");
@@ -464,12 +513,13 @@ export function ImportPage() {
     const category = categories.find((item) => item.id === categoryId);
 
     if (categoryId && oldCategoryId !== categoryId && candidate) {
-      setLearning({
+      setLastChoice({
         sourceRow,
         categoryId,
         pattern: suggestRulePattern(candidate.normalizedDescription || candidate.description),
         amountInCents: candidate.amountInCents,
         kind: "bank",
+        count: 1,
       });
     }
 
@@ -483,9 +533,23 @@ export function ImportPage() {
               suggestedCategoryName: category?.name,
               suggestedRuleId: undefined,
               suggestedRuleName: undefined,
+              suggestionSource: undefined,
             }
           : candidate,
       ),
+    });
+  }
+
+  async function changeBankGroup(rows: number[], categoryId: string, representative: ImportCandidate) {
+    if (!bankPreview) return;
+    setBankPreview(await api.setImportCategories(bankPreview.sessionId, rows, categoryId));
+    setLastChoice({
+      sourceRow: representative.sourceRow,
+      categoryId,
+      pattern: suggestRulePattern(representative.normalizedDescription || representative.description),
+      amountInCents: representative.amountInCents,
+      kind: "bank",
+      count: rows.length,
     });
   }
 
@@ -513,14 +577,28 @@ export function ImportPage() {
     setCardPreview(await api.updateCreditCardImport(cardPreview.sessionId, sourceRow, included, categoryId, dueDate));
 
     if (categoryId && oldCategoryId !== categoryId && item) {
-      setLearning({
+      setLastChoice({
         sourceRow,
         categoryId,
         pattern: suggestRulePattern(item.candidate.normalizedDescription || item.candidate.description),
         amountInCents: item.candidate.amountInCents,
         kind: "card",
+        count: 1,
       });
     }
+  }
+
+  async function changeCardGroup(rows: number[], categoryId: string, representative: ImportCandidate) {
+    if (!cardPreview) return;
+    setCardPreview(await api.updateCreditCardImportCategories(cardPreview.sessionId, rows, categoryId));
+    setLastChoice({
+      sourceRow: representative.sourceRow,
+      categoryId,
+      pattern: suggestRulePattern(representative.normalizedDescription || representative.description),
+      amountInCents: representative.amountInCents,
+      kind: "card",
+      count: rows.length,
+    });
   }
 
   async function createRule() {
@@ -545,39 +623,37 @@ export function ImportPage() {
         (c) =>
           matchesLearning(c.normalizedDescription || c.description) && c.suggestedCategoryId !== learning.categoryId,
       );
-      for (const u of updates) {
-        await api.setImportCategory(bankPreview.sessionId, u.sourceRow, learning.categoryId);
+      if (updates.length > 0) {
+        setBankPreview(
+          await api.setImportCategories(
+            bankPreview.sessionId,
+            updates.map((candidate) => candidate.sourceRow),
+            learning.categoryId,
+          ),
+        );
       }
-      setBankPreview({
-        ...bankPreview,
-        candidates: bankPreview.candidates.map((c) =>
-          matchesLearning(c.normalizedDescription || c.description)
-            ? { ...c, suggestedCategoryId: learning.categoryId, suggestedCategoryName: selectedCategory?.name }
-            : c,
-        ),
-      });
     }
 
     if (learning.kind === "card" && cardPreview) {
-      let currentPreview = cardPreview;
       const updates = cardPreview.items.filter(
         (i) =>
+          !i.isPayment &&
           matchesLearning(i.candidate.normalizedDescription || i.candidate.description) &&
           i.candidate.suggestedCategoryId !== learning.categoryId,
       );
-      for (const u of updates) {
-        currentPreview = await api.updateCreditCardImport(
-          cardPreview.sessionId,
-          u.candidate.sourceRow,
-          u.included,
-          learning.categoryId,
-          undefined,
+      if (updates.length > 0) {
+        setCardPreview(
+          await api.updateCreditCardImportCategories(
+            cardPreview.sessionId,
+            updates.map((item) => item.candidate.sourceRow),
+            learning.categoryId,
+          ),
         );
       }
-      setCardPreview(currentPreview);
     }
 
     setLearning(undefined);
+    setLastChoice(undefined);
   }
 
   function setDraft(next: CsvMappingDraft) {
@@ -974,79 +1050,105 @@ export function ImportPage() {
       )}
 
       {bankPreview && (
-        <article className="panel">
+        <article className="panel import-review-panel">
           <div className="panel-title">
             <h2>Prévia de {bankPreview.fileName}</h2>
             <span>{bankPreview.candidates.length} registros</span>
           </div>
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Incluir</th>
-                  <th>Data</th>
-                  <th>Descrição</th>
-                  <th>Categoria sugerida</th>
-                  <th>Valor editável</th>
-                  <th>Duplicidade</th>
-                </tr>
-              </thead>
-              <tbody>
-                {bankPreview.candidates.slice(0, 100).map((candidate) => (
-                  <tr key={candidate.sourceRow} className={!candidate.included ? "excluded-row" : ""}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        checked={candidate.included}
-                        disabled={candidate.duplicateStatus === "exact"}
-                        onChange={(event) =>
-                          updateBankCandidate(candidate.sourceRow, candidate.amountInCents, event.target.checked)
-                        }
-                      />
-                    </td>
-                    <td>{candidate.date}</td>
-                    <td>
-                      {candidate.description}
-                      {candidate.suggestionSource === "rule" && candidate.suggestedRuleName && (
-                        <small className="source-label">por {candidate.suggestedRuleName}</small>
-                      )}
-                      {candidate.suggestionSource === "history" && (
-                        <small className="source-label history-label">pelo seu histórico</small>
-                      )}
-                    </td>
-                    <td>
-                      <CategorySelect
-                        value={candidate.suggestedCategoryId}
-                        categories={categories}
-                        onChange={(value) => changeBankCategory(candidate.sourceRow, value)}
-                      />
-                    </td>
-                    <td>
-                      <MoneyEditor
-                        value={candidate.amountInCents}
-                        disabled={!candidate.included}
-                        onCommit={(value) => updateBankCandidate(candidate.sourceRow, value, candidate.included)}
-                      />
-                    </td>
-                    <td>
-                      <span className="badge">{candidate.duplicateStatus}</span>
-                    </td>
+          <SuggestionSummary summary={bankSummary} />
+          {lastChoice?.kind === "bank" && (
+            <ChoiceNotice choice={lastChoice} onCreateRule={() => setLearning(lastChoice)} />
+          )}
+          <Tabs
+            hidePanel
+            value={previewMode}
+            onChange={(value) => setPreviewMode(value as "review" | "all")}
+            tabs={[
+              { id: "review", label: `Revisar (${bankSummary.pending})` },
+              { id: "all", label: `Todas (${bankPreview.candidates.length})` },
+            ]}
+          />
+          {previewMode === "review" ? (
+            <div role="tabpanel" aria-label="Lançamentos para revisar">
+              <ImportReviewGroups
+                key={bankPreview.sessionId}
+                groups={bankGroups}
+                categories={categories}
+                onApply={(rows, categoryId, representative) => changeBankGroup(rows, categoryId, representative)}
+              />
+            </div>
+          ) : (
+            <div className="table-scroll" role="tabpanel" aria-label="Todos os lançamentos">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Incluir</th>
+                    <th>Data</th>
+                    <th>Descrição</th>
+                    <th>Categoria sugerida</th>
+                    <th>Valor editável</th>
+                    <th>Duplicidade</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {bankPreview.candidates.slice(0, 100).map((candidate) => (
+                    <tr key={candidate.sourceRow} className={!candidate.included ? "excluded-row" : ""}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={candidate.included}
+                          disabled={candidate.duplicateStatus === "exact"}
+                          aria-label={`Incluir ${candidate.description}`}
+                          onChange={(event) =>
+                            updateBankCandidate(candidate.sourceRow, candidate.amountInCents, event.target.checked)
+                          }
+                        />
+                      </td>
+                      <td>{candidate.date}</td>
+                      <td>
+                        {candidate.description}
+                        {candidate.suggestionSource === "rule" && candidate.suggestedRuleName && (
+                          <small className="source-label">por {candidate.suggestedRuleName}</small>
+                        )}
+                        {candidate.suggestionSource === "history" && (
+                          <small className="source-label history-label">pelo seu histórico</small>
+                        )}
+                      </td>
+                      <td>
+                        <CategorySelect
+                          value={candidate.suggestedCategoryId}
+                          categories={categories}
+                          kind={compatibleCategoryKinds(candidate, categories, false)}
+                          onChange={(value) => changeBankCategory(candidate.sourceRow, value)}
+                        />
+                      </td>
+                      <td>
+                        <MoneyEditor
+                          value={candidate.amountInCents}
+                          disabled={!candidate.included}
+                          onCommit={(value) => updateBankCandidate(candidate.sourceRow, value, candidate.included)}
+                        />
+                      </td>
+                      <td>
+                        <span className="badge">{candidate.duplicateStatus}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           <div className="editor-actions">
             <button className="secondary" onClick={resetFlow}>
               Cancelar
             </button>
-            <button onClick={commitBank}>Confirmar importação</button>
+            <button onClick={() => void commitBank()}>Confirmar importação</button>
           </div>
         </article>
       )}
 
       {cardPreview && (
-        <article className="panel">
+        <article className="panel import-review-panel">
           <div className="panel-title">
             <div>
               <p className="eyebrow">FATURA DE CARTÃO</p>
@@ -1082,62 +1184,97 @@ export function ImportPage() {
               <strong>{money(cardPreview.totalInCents)}</strong>
             </div>
           </div>
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Incluir</th>
-                  <th>Data</th>
-                  <th>Estabelecimento</th>
-                  <th>Portador</th>
-                  <th>Parcela</th>
-                  <th>Categoria</th>
-                  <th>Valor</th>
-                </tr>
-              </thead>
-              <tbody>
-                {cardPreview.items.map((item) => (
-                  <tr key={item.candidate.sourceRow} className={!item.included ? "excluded-row" : ""}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        checked={item.included}
-                        disabled={item.candidate.duplicateStatus === "exact"}
-                        onChange={(event) =>
-                          updateCard(item.candidate.sourceRow, event.target.checked, item.candidate.suggestedCategoryId)
-                        }
-                      />
-                    </td>
-                    <td>{item.candidate.date}</td>
-                    <td>
-                      {item.candidate.description}
-                      {item.isPayment && <small className="source-label">transferência</small>}
-                      {!item.isPayment && item.candidate.suggestionSource === "history" && (
-                        <small className="source-label history-label">pelo seu histórico</small>
-                      )}
-                    </td>
-                    <td>{item.holder ?? "—"}</td>
-                    <td>{item.installment ?? "—"}</td>
-                    <td>
-                      <CategorySelect
-                        value={item.candidate.suggestedCategoryId}
-                        categories={categories}
-                        onChange={(value) => updateCard(item.candidate.sourceRow, item.included, value)}
-                      />
-                    </td>
-                    <td className={item.candidate.amountInCents > 0 ? "positive amount" : "amount"}>
-                      {money(item.candidate.amountInCents)}
-                    </td>
+          <SuggestionSummary summary={cardSummary} />
+          {lastChoice?.kind === "card" && (
+            <ChoiceNotice choice={lastChoice} onCreateRule={() => setLearning(lastChoice)} />
+          )}
+          <Tabs
+            hidePanel
+            value={previewMode}
+            onChange={(value) => setPreviewMode(value as "review" | "all")}
+            tabs={[
+              { id: "review", label: `Revisar (${cardSummary.pending})` },
+              { id: "all", label: `Todas (${cardPreview.items.length})` },
+            ]}
+          />
+          {previewMode === "review" ? (
+            <div role="tabpanel" aria-label="Itens da fatura para revisar">
+              <ImportReviewGroups
+                key={cardPreview.sessionId}
+                groups={cardGroups}
+                categories={categories}
+                creditCard
+                onApply={(rows, categoryId, representative) => changeCardGroup(rows, categoryId, representative)}
+              />
+            </div>
+          ) : (
+            <div className="table-scroll" role="tabpanel" aria-label="Todos os itens da fatura">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Incluir</th>
+                    <th>Data</th>
+                    <th>Estabelecimento</th>
+                    <th>Portador</th>
+                    <th>Parcela</th>
+                    <th>Categoria</th>
+                    <th>Valor</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {cardPreview.items.map((item) => (
+                    <tr key={item.candidate.sourceRow} className={!item.included ? "excluded-row" : ""}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={item.included}
+                          disabled={item.candidate.duplicateStatus === "exact"}
+                          aria-label={`Incluir ${item.candidate.description}`}
+                          onChange={(event) =>
+                            updateCard(
+                              item.candidate.sourceRow,
+                              event.target.checked,
+                              item.candidate.suggestedCategoryId,
+                            )
+                          }
+                        />
+                      </td>
+                      <td>{item.candidate.date}</td>
+                      <td>
+                        {item.candidate.description}
+                        {item.isPayment && <small className="source-label">transferência</small>}
+                        {!item.isPayment && item.candidate.suggestionSource === "rule" && (
+                          <small className="source-label">por {item.candidate.suggestedRuleName ?? "regra"}</small>
+                        )}
+                        {!item.isPayment && item.candidate.suggestionSource === "history" && (
+                          <small className="source-label history-label">pelo seu histórico</small>
+                        )}
+                      </td>
+                      <td>{item.holder ?? "—"}</td>
+                      <td>{item.installment ?? "—"}</td>
+                      <td>
+                        <CategorySelect
+                          value={item.candidate.suggestedCategoryId}
+                          categories={categories}
+                          kind={compatibleCategoryKinds(item.candidate, categories, true)}
+                          disabled={item.isPayment}
+                          onChange={(value) => updateCard(item.candidate.sourceRow, item.included, value)}
+                        />
+                      </td>
+                      <td className={item.candidate.amountInCents > 0 ? "positive amount" : "amount"}>
+                        {money(item.candidate.amountInCents)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           <div className="editor-actions">
             <button className="secondary" onClick={resetFlow}>
               Cancelar
             </button>
-            <button onClick={commitCard}>Confirmar fatura</button>
+            <button onClick={() => void commitCard()}>Confirmar fatura</button>
           </div>
         </article>
       )}
@@ -1211,11 +1348,11 @@ export function ImportPage() {
       )}
 
       {learning && (
-        <Modal title="Usar esta correção no futuro?" onClose={() => setLearning(undefined)}>
+        <Modal title="Criar regra para o futuro" onClose={() => setLearning(undefined)}>
           <div className="modal-form">
             <p className="muted">
-              Você pode criar uma regra local, deixar que o histórico aprenda sozinho ou manter a alteração somente
-              nesta importação.
+              A escolha atual já será aprendida pelo histórico. Crie uma regra somente se este texto sempre tiver a
+              mesma categoria.
             </p>
             <label>
               Descrição contém
@@ -1223,12 +1360,28 @@ export function ImportPage() {
             </label>
             <div className="editor-actions">
               <button className="secondary" onClick={() => setLearning(undefined)}>
-                Somente nesta importação
-              </button>
-              <button className="secondary" onClick={() => setLearning(undefined)}>
-                Não perguntar de novo para este estabelecimento
+                Cancelar
               </button>
               <button onClick={createRule}>Criar regra</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {pendingCommit && (
+        <Modal title="Importar com categorias pendentes?" onClose={() => setPendingCommit(undefined)}>
+          <div className="modal-form import-pending-dialog">
+            <p className="muted">
+              {pendingCommit === "bank" ? bankSummary.pending : cardSummary.pending} lançamentos incluídos ainda estão
+              sem categoria. Você poderá categorizá-los depois em Transações.
+            </p>
+            <div className="editor-actions">
+              <button className="secondary" onClick={() => setPendingCommit(undefined)}>
+                Continuar revisando
+              </button>
+              <button onClick={() => void (pendingCommit === "bank" ? commitBank(true) : commitCard(true))}>
+                Importar com pendências
+              </button>
             </div>
           </div>
         </Modal>
@@ -1259,6 +1412,408 @@ export function ImportPage() {
         </Modal>
       )}
     </section>
+  );
+}
+
+type SuggestionSummaryData = {
+  rule: number;
+  history: number;
+  manual: number;
+  pending: number;
+};
+
+type CandidateGroup = {
+  key: string;
+  label: string;
+  candidates: ImportCandidate[];
+  suggestions: ImportCandidate["categorySuggestions"];
+  totalInCents: number;
+};
+
+export function summarizeSuggestions(candidates: ImportCandidate[]): SuggestionSummaryData {
+  return candidates
+    .filter((candidate) => candidate.included && candidate.duplicateStatus !== "exact")
+    .reduce<SuggestionSummaryData>(
+      (summary, candidate) => {
+        if (!candidate.suggestedCategoryId) summary.pending += 1;
+        else if (candidate.suggestionSource === "rule") summary.rule += 1;
+        else if (candidate.suggestionSource === "history") summary.history += 1;
+        else summary.manual += 1;
+        return summary;
+      },
+      { rule: 0, history: 0, manual: 0, pending: 0 },
+    );
+}
+
+export function groupPendingCandidates(candidates: ImportCandidate[]): CandidateGroup[] {
+  const groups = new Map<string, ImportCandidate[]>();
+  for (const candidate of candidates) {
+    if (!candidate.included || candidate.duplicateStatus === "exact" || candidate.suggestedCategoryId) continue;
+    const direction = candidate.amountInCents >= 0 ? "credit" : "debit";
+    const identity = candidate.merchantKey || candidate.normalizedDescription || candidate.description;
+    const key = `${identity}::${direction}`;
+    groups.set(key, [...(groups.get(key) ?? []), candidate]);
+  }
+  return [...groups.entries()]
+    .map(([key, items]) => {
+      const seen = new Set<string>();
+      const suggestions = items
+        .flatMap((candidate) => candidate.categorySuggestions)
+        .filter((suggestion) => {
+          if (seen.has(suggestion.categoryId)) return false;
+          seen.add(suggestion.categoryId);
+          return true;
+        })
+        .slice(0, 3);
+      return {
+        key,
+        label: items[0].merchantKey || items[0].description,
+        candidates: items,
+        suggestions,
+        totalInCents: items.reduce((total, candidate) => total + candidate.amountInCents, 0),
+      };
+    })
+    .sort(
+      (left, right) =>
+        Number(right.suggestions.length > 0) - Number(left.suggestions.length > 0) ||
+        right.candidates.length - left.candidates.length ||
+        left.label.localeCompare(right.label, "pt-BR"),
+    );
+}
+
+function compatibleCategoryKinds(
+  candidate: ImportCandidate,
+  categories: Category[],
+  creditCard: boolean,
+): CategoryKind[] {
+  if (creditCard) return ["expense", "investment"];
+  if (candidate.amountInCents < 0) return ["expense", "investment"];
+  const suggestedKinds = candidate.categorySuggestions
+    .map((suggestion) => categories.find((category) => category.id === suggestion.categoryId)?.kind)
+    .filter((kind): kind is CategoryKind => Boolean(kind));
+  const looksLikeRefund = /estorno|reembolso|devolucao|devolução|credito compra|crédito compra/i.test(
+    candidate.description,
+  );
+  return looksLikeRefund || suggestedKinds.some((kind) => kind === "expense" || kind === "investment")
+    ? ["income", "expense", "investment"]
+    : ["income"];
+}
+
+function SuggestionSummary({ summary }: { summary: SuggestionSummaryData }) {
+  const items = [
+    { label: "Por regra", value: summary.rule, className: "rule" },
+    { label: "Pelo histórico", value: summary.history, className: "history" },
+    { label: "Escolhidas", value: summary.manual, className: "manual" },
+    { label: "Para revisar", value: summary.pending, className: "pending" },
+  ];
+  return (
+    <div className="import-suggestion-summary" aria-label="Resumo da categorização">
+      {items.map((item) => (
+        <div key={item.label} className={`import-suggestion-stat import-suggestion-stat--${item.className}`}>
+          <span>{item.label}</span>
+          <strong>{item.value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ChoiceNotice({ choice, onCreateRule }: { choice: LearningDraft; onCreateRule: () => void }) {
+  return (
+    <div className="import-choice-notice" role="status">
+      <CheckCircle2 size={18} aria-hidden />
+      <span>
+        Categoria aplicada a {choice.count} {choice.count === 1 ? "lançamento" : "lançamentos"}. O histórico aprenderá
+        quando você confirmar.
+      </span>
+      <button type="button" className="text-button" onClick={onCreateRule}>
+        Criar regra
+      </button>
+    </div>
+  );
+}
+
+export function ImportReviewGroups({
+  groups,
+  categories,
+  creditCard = false,
+  onApply,
+}: {
+  groups: CandidateGroup[];
+  categories: Category[];
+  creditCard?: boolean;
+  onApply: (rows: number[], categoryId: string, representative: ImportCandidate) => Promise<void>;
+}) {
+  const [applyingKey, setApplyingKey] = useState<string>();
+  const [activeKey, setActiveKey] = useState<string>();
+  const [error, setError] = useState("");
+  const [announcement, setAnnouncement] = useState("");
+  const restoreFocus = useRef(false);
+  const nextKeyAfterApply = useRef<string | undefined>(undefined);
+  const queueKeys = useRef(groups.map((group) => group.key));
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (groups.length === 0) {
+      setActiveKey(undefined);
+      if (restoreFocus.current) {
+        restoreFocus.current = false;
+        requestAnimationFrame(() => rootRef.current?.querySelector<HTMLElement>(".import-review-ready")?.focus());
+      }
+      return;
+    }
+
+    if (activeKey && groups.some((group) => group.key === activeKey)) return;
+    const nextKey =
+      (nextKeyAfterApply.current && groups.some((group) => group.key === nextKeyAfterApply.current)
+        ? nextKeyAfterApply.current
+        : undefined) ?? groups[0].key;
+    nextKeyAfterApply.current = undefined;
+    setActiveKey(nextKey);
+  }, [activeKey, groups]);
+
+  useEffect(() => {
+    if (!restoreFocus.current || !activeKey) return;
+    restoreFocus.current = false;
+    requestAnimationFrame(() => {
+      rootRef.current?.querySelector<HTMLElement>(".import-review-group button")?.focus();
+    });
+  }, [activeKey]);
+
+  const activeIndex = Math.max(
+    0,
+    groups.findIndex((group) => group.key === activeKey),
+  );
+  const activeGroup = groups[activeIndex] ?? groups[0];
+  const queuePosition = Math.max(0, queueKeys.current.indexOf(activeGroup?.key));
+  const queueTotal = Math.max(queueKeys.current.length, groups.length);
+  const pendingCandidates = groups.reduce((total, group) => total + group.candidates.length, 0);
+
+  function navigateTo(index: number) {
+    const group = groups[index];
+    if (!group || applyingKey) return;
+    setActiveKey(group.key);
+    requestAnimationFrame(() => {
+      rootRef.current?.querySelector<HTMLElement>(".import-review-group")?.focus();
+    });
+  }
+
+  function handleQueueKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    const target = event.target as HTMLElement;
+    if (target.closest("button, input, select, textarea, [role='combobox'], summary")) return;
+
+    let nextIndex: number | undefined;
+    if (event.key === "ArrowLeft") nextIndex = activeIndex - 1;
+    else if (event.key === "ArrowRight") nextIndex = activeIndex + 1;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = groups.length - 1;
+    if (nextIndex === undefined) return;
+
+    event.preventDefault();
+    navigateTo(Math.min(Math.max(nextIndex, 0), groups.length - 1));
+  }
+
+  async function apply(group: CandidateGroup, categoryId: string) {
+    if (applyingKey) return;
+    const currentIndex = groups.findIndex((item) => item.key === group.key);
+    const remainingGroups = groups.filter((item) => item.key !== group.key);
+    nextKeyAfterApply.current = remainingGroups[Math.min(Math.max(currentIndex, 0), remainingGroups.length - 1)]?.key;
+    setApplyingKey(group.key);
+    setError("");
+    try {
+      await onApply(
+        group.candidates.map((candidate) => candidate.sourceRow),
+        categoryId,
+        group.candidates[0],
+      );
+      setAnnouncement(
+        `${group.label} categorizado. ${group.candidates.length} ${
+          group.candidates.length === 1 ? "lançamento resolvido" : "lançamentos resolvidos"
+        }.`,
+      );
+      restoreFocus.current = true;
+    } catch (reason) {
+      nextKeyAfterApply.current = undefined;
+      setError(`Não foi possível aplicar a categoria: ${reason instanceof Error ? reason.message : String(reason)}`);
+    } finally {
+      setApplyingKey(undefined);
+    }
+  }
+
+  return (
+    <div className="import-review-groups" ref={rootRef} aria-busy={Boolean(applyingKey)}>
+      {groups.length === 0 ? (
+        <div className="import-review-ready" tabIndex={-1}>
+          <CheckCircle2 size={24} aria-hidden />
+          <div>
+            <strong>Tudo pronto para confirmar</strong>
+            <p>Não há lançamentos incluídos aguardando categoria.</p>
+          </div>
+        </div>
+      ) : (
+        <div className="import-review-intro">
+          <Lightbulb size={18} aria-hidden />
+          <div>
+            <strong>Uma etapa por vez</strong>
+            <p>Escolha uma categoria por estabelecimento. A seleção vale para todas as ocorrências deste grupo.</p>
+          </div>
+          <span className="import-review-intro-hint">Atalhos aplicam o grupo inteiro</span>
+        </div>
+      )}
+      {error && (
+        <p className="form-error import-review-error" role="alert">
+          {error}
+        </p>
+      )}
+      <p className="import-review-announcement" aria-live="polite">
+        {announcement}
+      </p>
+      {activeGroup && (
+        <div
+          className="import-review-queue"
+          role="region"
+          aria-label="Fila guiada de revisão"
+          onKeyDown={handleQueueKeyDown}
+        >
+          <div className="import-review-queue-header">
+            <div>
+              <span className="import-review-action-label">Etapa atual</span>
+              <strong>
+                Grupo {queuePosition + 1} de {queueTotal}
+              </strong>
+              <small>
+                {pendingCandidates} {pendingCandidates === 1 ? "lançamento" : "lançamentos"} pendentes · escolha uma vez
+              </small>
+            </div>
+            <nav className="import-review-queue-nav" aria-label="Navegar pelos grupos">
+              <button
+                type="button"
+                className="secondary"
+                disabled={activeIndex === 0 || Boolean(applyingKey)}
+                aria-label="Grupo anterior"
+                onClick={() => navigateTo(activeIndex - 1)}
+              >
+                <ChevronLeft size={17} aria-hidden />
+                Anterior
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                disabled={activeIndex === groups.length - 1 || Boolean(applyingKey)}
+                aria-label="Próximo grupo"
+                onClick={() => navigateTo(activeIndex + 1)}
+              >
+                Próximo
+                <ChevronRight size={17} aria-hidden />
+              </button>
+            </nav>
+          </div>
+          <div
+            className="import-review-queue-track"
+            role="progressbar"
+            aria-label="Posição na fila de revisão"
+            aria-valuemin={1}
+            aria-valuemax={queueTotal}
+            aria-valuenow={queuePosition + 1}
+          >
+            <i style={{ width: `${((queuePosition + 1) / queueTotal) * 100}%` }} />
+          </div>
+          <article
+            className="import-review-group"
+            key={activeGroup.key}
+            tabIndex={-1}
+            data-group-key={activeGroup.key}
+            aria-labelledby="import-review-active-title"
+          >
+            <div className="import-review-group-main">
+              <div className="import-review-group-heading">
+                <span>ESTABELECIMENTO</span>
+                <h3 id="import-review-active-title">{activeGroup.label}</h3>
+                <p className="import-review-group-summary">
+                  {activeGroup.candidates.length} {activeGroup.candidates.length === 1 ? "lançamento" : "lançamentos"} ·{" "}
+                  <strong>{money(activeGroup.totalInCents)}</strong>
+                </p>
+              </div>
+              <div className="import-review-group-actions">
+                <div className="import-review-quick-actions">
+                  {activeGroup.suggestions.length > 0 ? (
+                    <>
+                      <div className="import-review-action-heading">
+                        <span className="import-review-action-label">Sugestões plausíveis</span>
+                        <small>Um atalho para aplicar ao grupo inteiro</small>
+                      </div>
+                      <div className="import-suggestion-chips">
+                        {activeGroup.suggestions.map((suggestion) => (
+                          <button
+                            type="button"
+                            className="secondary import-suggestion-chip"
+                            key={suggestion.categoryId}
+                            title={suggestion.reason}
+                            disabled={Boolean(applyingKey)}
+                            aria-label={`Aplicar ${suggestion.categoryName} a ${activeGroup.candidates.length} ${
+                              activeGroup.candidates.length === 1 ? "lançamento" : "lançamentos"
+                            } de ${activeGroup.label}`}
+                            onClick={() => void apply(activeGroup, suggestion.categoryId)}
+                          >
+                            <span>
+                              <Sparkles size={14} aria-hidden />
+                              {applyingKey === activeGroup.key ? "Aplicando…" : suggestion.categoryName}
+                            </span>
+                            <small>
+                              <strong>Aplicar a {activeGroup.candidates.length}</strong> · {suggestion.reason}
+                            </small>
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="import-review-no-suggestion">
+                      <span>Sem sugestão segura</span>
+                      <small>Escolha na lista completa.</small>
+                    </div>
+                  )}
+                </div>
+                <div className="import-review-category-picker">
+                  <div className="import-review-action-heading">
+                    <span className="import-review-action-label">Todas as categorias</span>
+                    <small>Ou procure outra opção</small>
+                  </div>
+                  <CategorySelect
+                    categories={categories}
+                    kind={compatibleCategoryKinds(activeGroup.candidates[0], categories, creditCard)}
+                    allowEmpty={false}
+                    emptyLabel="Escolher categoria"
+                    disabled={Boolean(applyingKey)}
+                    aria-label={`Escolher categoria para ${activeGroup.label}`}
+                    onChange={(categoryId) => categoryId && void apply(activeGroup, categoryId)}
+                  />
+                </div>
+              </div>
+            </div>
+            <details className="import-review-details">
+              <summary>
+                {activeGroup.candidates.length === 1
+                  ? "Detalhes do lançamento"
+                  : `${activeGroup.candidates.length} lançamentos deste grupo`}
+              </summary>
+              <div>
+                {activeGroup.candidates.map((candidate) => (
+                  <div className="import-review-detail-row" key={candidate.sourceRow}>
+                    <span>{candidate.date}</span>
+                    <span>{candidate.description}</span>
+                    <strong>{money(candidate.amountInCents)}</strong>
+                  </div>
+                ))}
+              </div>
+            </details>
+          </article>
+          <p className="import-review-queue-hint">
+            Ao categorizar, o próximo grupo entra em foco automaticamente. Use as setas para navegar ou “Todas” para
+            corrigir um lançamento isolado.
+          </p>
+        </div>
+      )}
+    </div>
   );
 }
 

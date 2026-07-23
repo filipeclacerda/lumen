@@ -410,6 +410,8 @@ export const api = {
     invoke("update_import_candidate", { sessionId, sourceRow, amountInCents, included }),
   setImportCategory: (sessionId: string, sourceRow: number, categoryId?: string): Promise<void> =>
     invoke("set_import_candidate_category", { sessionId, sourceRow, categoryId: categoryId || null }),
+  setImportCategories: (sessionId: string, sourceRows: number[], categoryId?: string): Promise<ImportPreview> =>
+    invoke("set_import_candidates_category", { sessionId, sourceRows, categoryId: categoryId || null }),
   commitImport: (sessionId: string): Promise<CommitImportResult> => invoke("commit_import", { sessionId }),
   detectImportKind: (path: string): Promise<"known_bank" | "known_credit_card" | "unknown_csv"> =>
     invoke("detect_import_kind", { path }),
@@ -435,6 +437,12 @@ export const api = {
       categoryId: categoryId || null,
       dueDate: dueDate || null,
     }),
+  updateCreditCardImportCategories: (
+    sessionId: string,
+    sourceRows: number[],
+    categoryId?: string,
+  ): Promise<CreditCardImportPreview> =>
+    invoke("update_credit_card_import_categories", { sessionId, sourceRows, categoryId: categoryId || null }),
   commitCreditCardImport: (sessionId: string): Promise<string> => invoke("commit_credit_card_import", { sessionId }),
   creditCardInvoices: async (): Promise<CreditCardInvoice[]> => (isTauri() ? invoke("list_credit_card_invoices") : []),
   creditCardInvoicesPage: async (filter: { limit?: number; offset?: number }): Promise<CreditCardInvoicePage> => {

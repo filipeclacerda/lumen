@@ -139,9 +139,18 @@ export type ImportCandidate = {
   suggestedRuleId?: string;
   suggestedRuleName?: string;
   suggestionSource?: "rule" | "history";
+  merchantKey: string;
+  categorySuggestions: CategorySuggestion[];
   duplicateStatus: "new" | "probable" | "exact";
   warnings: string[];
   included: boolean;
+};
+
+export type CategorySuggestion = {
+  categoryId: string;
+  categoryName: string;
+  source: "similar_history" | "vocabulary" | "category_name";
+  reason: string;
 };
 export type ImportSourceKind = "bank" | "credit_card";
 export type CsvColumnRole =

@@ -15,9 +15,28 @@ pub struct ImportCandidate {
     pub suggested_rule_id: Option<String>,
     pub suggested_rule_name: Option<String>,
     pub suggestion_source: Option<SuggestionSource>,
+    pub merchant_key: String,
+    pub category_suggestions: Vec<CategorySuggestion>,
     pub duplicate_status: DuplicateStatus,
     pub warnings: Vec<String>,
     pub included: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CategorySuggestion {
+    pub category_id: String,
+    pub category_name: String,
+    pub source: CategorySuggestionSource,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CategorySuggestionSource {
+    SimilarHistory,
+    Vocabulary,
+    CategoryName,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

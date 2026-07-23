@@ -1,20 +1,22 @@
 use regex::Regex;
 use std::sync::OnceLock;
 
+use super::suggestion::fold_accents;
+
 /// Prefixos de meio de pagamento/adquirente que não identificam o estabelecimento em si.
 /// Lista fácil de estender conforme surgirem novos extratos reais.
 const PAYMENT_PREFIXES: &[&str] = &[
-    "PAG*",
-    "PG *",
-    "PAGSEGURO*",
-    "MP *",
-    "MERCADOPAGO*",
-    "PIX QRS",
-    "COMPRA COM CARTAO",
-    "COMPRA CARTAO",
-    "DEB AUT",
-    "TED",
-    "DOC",
+    r"PAG\s*\*",
+    r"PG\s*\*",
+    r"PAGSEGURO\s*\*",
+    r"MP\s*\*",
+    r"MERCADO\s*PAGO\s*\*",
+    r"PIX\s+QRS\b",
+    r"COMPRA\s+COM\s+CARTAO\b",
+    r"COMPRA\s+CARTAO\b",
+    r"DEB\s+AUT\b",
+    r"TED\b",
+    r"DOC\b",
 ];
 
 /// Sufixos societários que não ajudam a distinguir estabelecimentos ("LTDA" x "ME").
@@ -27,6 +29,7 @@ struct Patterns {
     date: Regex,
     time: Regex,
     suffixes: Vec<Regex>,
+    separators: Regex,
     whitespace: Regex,
 }
 
@@ -35,7 +38,7 @@ fn patterns() -> &'static Patterns {
     PATTERNS.get_or_init(|| Patterns {
         prefixes: PAYMENT_PREFIXES
             .iter()
-            .map(|prefix| Regex::new(&format!(r"^{}\s*", regex::escape(prefix))).unwrap())
+            .map(|prefix| Regex::new(&format!(r"^(?:{prefix})\s*")).unwrap())
             .collect(),
         trailing_installment: Regex::new(r"\s*\b\d{1,2}/\d{1,2}\b\s*$").unwrap(),
         long_number: Regex::new(r"\d{5,}").unwrap(),
@@ -45,8 +48,45 @@ fn patterns() -> &'static Patterns {
             .iter()
             .map(|suffix| Regex::new(&format!(r"\b{}\b\.?\s*$", regex::escape(suffix))).unwrap())
             .collect(),
+        separators: Regex::new(r"[^\p{L}\p{N}]+").unwrap(),
         whitespace: Regex::new(r"\s+").unwrap(),
     })
+}
+
+fn collapse_adjacent_repetitions(tokens: &[&str]) -> Vec<String> {
+    let mut collapsed = Vec::with_capacity(tokens.len());
+    let mut cursor = 0;
+
+    while cursor < tokens.len() {
+        let remaining = tokens.len() - cursor;
+        let repeated_width = (1..=remaining / 2).find(|width| {
+            let identity_size: usize = tokens[cursor..cursor + width]
+                .iter()
+                .map(|token| token.len())
+                .sum();
+            identity_size >= 8
+                && tokens[cursor..cursor + width] == tokens[cursor + width..cursor + 2 * width]
+        });
+
+        if let Some(width) = repeated_width {
+            collapsed.extend(
+                tokens[cursor..cursor + width]
+                    .iter()
+                    .map(|token| (*token).to_string()),
+            );
+            cursor += width * 2;
+            while cursor + width <= tokens.len()
+                && tokens[cursor - width..cursor] == tokens[cursor..cursor + width]
+            {
+                cursor += width;
+            }
+        } else {
+            collapsed.push(tokens[cursor].to_string());
+            cursor += 1;
+        }
+    }
+
+    collapsed
 }
 
 /// Deriva a chave de agrupamento de um estabelecimento a partir da descrição já normalizada
@@ -58,7 +98,7 @@ fn patterns() -> &'static Patterns {
 /// descrição normalizada original — a chave nunca é vazia.
 pub fn merchant_key(normalized_description: &str) -> String {
     let p = patterns();
-    let mut value = normalized_description.trim().to_string();
+    let mut value = fold_accents(normalized_description.trim());
 
     for prefix in &p.prefixes {
         value = prefix.replace(&value, "").into_owned();
@@ -70,11 +110,13 @@ pub fn merchant_key(normalized_description: &str) -> String {
     for suffix in &p.suffixes {
         value = suffix.replace(&value, "").into_owned();
     }
+    value = p.separators.replace_all(&value, " ").into_owned();
     value = p
         .whitespace
         .replace_all(value.trim(), " ")
         .trim()
         .to_string();
+    value = collapse_adjacent_repetitions(&value.split_whitespace().collect::<Vec<_>>()).join(" ");
 
     if value.is_empty() {
         normalized_description.to_string()
@@ -106,6 +148,10 @@ mod tests {
         assert_eq!(merchant_key("PG *OFICINA DO JOAO"), "OFICINA DO JOAO");
         assert_eq!(merchant_key("MERCADOPAGO*LOJA XPTO"), "LOJA XPTO");
         assert_eq!(merchant_key("MP *FEIRA LIVRE"), "FEIRA LIVRE");
+        assert_eq!(merchant_key("MP*LOJA XPTO"), "LOJA XPTO");
+        assert_eq!(merchant_key("MERCADO PAGO*LOJA XPTO"), "LOJA XPTO");
+        assert_eq!(merchant_key("MP CONSTRUCOES"), "MP CONSTRUCOES");
+        assert_eq!(merchant_key("MERCADOPAGO"), "MERCADOPAGO");
     }
 
     #[test]
@@ -150,5 +196,22 @@ mod tests {
     #[test]
     fn deb_aut_prefix_is_removed() {
         assert_eq!(merchant_key("DEB AUT NETFLIX COM"), "NETFLIX COM");
+    }
+
+    #[test]
+    fn folds_accents_for_stable_grouping() {
+        assert_eq!(merchant_key("FARMÁCIA SÃO JOÃO"), "FARMACIA SAO JOAO");
+        assert_eq!(merchant_key("FARMACIA SAO JOAO"), "FARMACIA SAO JOAO");
+    }
+
+    #[test]
+    fn canonicalizes_punctuation_and_repeated_merchant_names() {
+        assert_eq!(merchant_key("MERCADO LIVRE*MERCADO LIVRE"), "MERCADO LIVRE");
+        assert_eq!(
+            merchant_key("MERCADO LIVRE * MERCADO LIVRE"),
+            "MERCADO LIVRE"
+        );
+        assert_eq!(merchant_key("MERCADOLIVRE*MERCADOLIVRE"), "MERCADOLIVRE");
+        assert_eq!(merchant_key("BORA BORA PIZZA"), "BORA BORA PIZZA");
     }
 }

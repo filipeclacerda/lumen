@@ -13,6 +13,7 @@ use crate::{
         import::CsvMappingDraft,
         import::{DuplicateStatus, SuggestionSource},
         merchant::merchant_key,
+        suggestion::{category_compatible, SuggestionContext},
     },
     error::AppError,
     infrastructure::importer::{
@@ -122,6 +123,8 @@ async fn build_credit_card_preview(
     let mut seen_external = HashSet::new();
     let mut seen_fingerprint = HashSet::new();
     for item in &mut parsed.items {
+        item.candidate.merchant_key = merchant_key(&item.candidate.normalized_description);
+        item.candidate.category_suggestions.clear();
         if let Some(id) = item.candidate.external_id.as_mut() {
             *id = id.trim().to_string();
             if id.is_empty() {
@@ -157,6 +160,7 @@ async fn build_credit_card_preview(
             .iter_mut()
             .filter(|item| !item.is_payment)
             .map(|item| &mut item.candidate),
+        true,
     )
     .await?;
     let totals = totals(&parsed.items)?;
@@ -338,6 +342,105 @@ pub async fn update_credit_card_import(
         total_in_cents: totals.total_in_cents,
         items: session.items.clone(),
     })
+}
+
+#[tauri::command]
+pub async fn update_credit_card_import_categories(
+    session_id: String,
+    source_rows: Vec<usize>,
+    category_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<CreditCardImportPreview, AppError> {
+    let _commit_guard = state.import_commit.lock().await;
+    let rows: HashSet<usize> = source_rows.into_iter().collect();
+    if rows.is_empty() {
+        return Err(AppError::Validation("Selecione ao menos um item".into()));
+    }
+    let category = if let Some(id) = &category_id {
+        Some(
+            sqlx::query_as::<_, (String, String)>(
+                "SELECT name,kind FROM categories WHERE id=? AND deleted_at IS NULL",
+            )
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_else(|| AppError::Validation("Categoria não encontrada".into()))?,
+        )
+    } else {
+        None
+    };
+    let mut sessions = state.credit_card_sessions.lock().await;
+    let session = sessions
+        .get_mut(&session_id)
+        .ok_or(AppError::SessionExpired)?;
+    if let Some((_, kind)) = &category {
+        let incompatible = session.items.iter().any(|item| {
+            rows.contains(&item.candidate.source_row)
+                && !category_compatible(
+                    kind,
+                    item.candidate.amount_in_cents,
+                    SuggestionContext::CreditCard,
+                    false,
+                )
+        });
+        if incompatible {
+            return Err(AppError::Validation(
+                "A categoria não é compatível com um ou mais itens da fatura".into(),
+            ));
+        }
+    }
+    update_credit_card_import_categories_impl(
+        session,
+        &rows,
+        category_id,
+        category.map(|(name, _)| name),
+    )?;
+    let totals = totals(&session.items)?;
+    Ok(CreditCardImportPreview {
+        session_id,
+        file_name: session.file_name.clone(),
+        account_id: session.account_id.clone(),
+        due_date: session.due_date.clone(),
+        purchases_in_cents: totals.purchases_in_cents,
+        credits_in_cents: totals.credits_in_cents,
+        total_in_cents: totals.total_in_cents,
+        items: session.items.clone(),
+    })
+}
+
+fn update_credit_card_import_categories_impl(
+    session: &mut CreditCardImportSession,
+    rows: &HashSet<usize>,
+    category_id: Option<String>,
+    category_name: Option<String>,
+) -> Result<(), AppError> {
+    let selected: Vec<_> = session
+        .items
+        .iter()
+        .filter(|item| rows.contains(&item.candidate.source_row))
+        .collect();
+    if selected.len() != rows.len() {
+        return Err(AppError::Validation(
+            "Um ou mais itens não foram encontrados na sessão".into(),
+        ));
+    }
+    if selected.iter().any(|item| item.is_payment) {
+        return Err(AppError::Validation(
+            "Pagamentos de fatura não podem ser recategorizados em grupo".into(),
+        ));
+    }
+    for item in session
+        .items
+        .iter_mut()
+        .filter(|item| rows.contains(&item.candidate.source_row))
+    {
+        item.candidate.suggested_category_id = category_id.clone();
+        item.candidate.suggested_category_name = category_name.clone();
+        item.candidate.suggested_rule_id = None;
+        item.candidate.suggested_rule_name = None;
+        item.candidate.suggestion_source = None;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -893,6 +996,8 @@ mod tests {
                 suggested_rule_id: None,
                 suggested_rule_name: None,
                 suggestion_source: None,
+                merchant_key: String::new(),
+                category_suggestions: vec![],
                 duplicate_status: DuplicateStatus::New,
                 warnings: vec![],
                 included: true,
@@ -902,6 +1007,55 @@ mod tests {
             1000,
             CreditCardLineKind::Purchase,
         )
+    }
+
+    #[test]
+    fn grouped_card_category_update_is_atomic_and_protects_payments() {
+        let mut first = card_item("Compra um", None);
+        first.candidate.source_row = 1;
+        let mut second = card_item("Compra dois", None);
+        second.candidate.source_row = 2;
+        let mut payment = card_item("Pagamento fatura", None);
+        payment.candidate.source_row = 3;
+        payment.is_payment = true;
+        let mut session = CreditCardImportSession {
+            account_id: "card".into(),
+            file_name: "fatura.csv".into(),
+            due_date: "2026-06-10".into(),
+            items: vec![first, second, payment],
+        };
+        update_credit_card_import_categories_impl(
+            &mut session,
+            &HashSet::from([1, 2]),
+            Some("restaurants".into()),
+            Some("Restaurantes".into()),
+        )
+        .unwrap();
+        assert!(session.items[..2].iter().all(|item| {
+            item.candidate.suggested_category_id.as_deref() == Some("restaurants")
+        }));
+        assert_eq!(session.items[2].candidate.suggested_category_id, None);
+
+        let before = session
+            .items
+            .iter()
+            .map(|item| item.candidate.suggested_category_id.clone())
+            .collect::<Vec<_>>();
+        assert!(update_credit_card_import_categories_impl(
+            &mut session,
+            &HashSet::from([1, 3]),
+            Some("health".into()),
+            Some("Saúde".into()),
+        )
+        .is_err());
+        assert_eq!(
+            before,
+            session
+                .items
+                .iter()
+                .map(|item| item.candidate.suggested_category_id.clone())
+                .collect::<Vec<_>>()
+        );
     }
 
     async fn card_test_setup() -> (tempfile::TempDir, sqlx::SqlitePool, String) {

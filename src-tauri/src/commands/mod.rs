@@ -37,7 +37,11 @@ use crate::{
             SuggestionSource,
         },
         merchant::merchant_key,
-        suggestion::{suggest_from_history, MerchantCategoryStat},
+        suggestion::{
+            category_compatible, is_refund_description, shortlist_categories, suggest_from_history,
+            CategoryDefinition, HistoricalCategoryStat, MerchantCategoryStat, SuggestionContext,
+            SuggestionIndex,
+        },
     },
     error::AppError,
     infrastructure::importer::{
@@ -341,49 +345,47 @@ pub(super) async fn load_rules(db: &SqlitePool) -> Result<Vec<CategorizationRule
     Ok(rows.into_iter().map(rule_from_row).collect())
 }
 
-/// Fetches, in a single batched query, the categorization history for every merchant in
-/// `merchant_keys` (previews have hundreds of rows; one query per row would be far too slow —
-/// see Etapa 2 critério de aceite de performance).
-pub(super) async fn load_merchant_category_stats(
+async fn load_suggestion_categories(db: &SqlitePool) -> Result<Vec<CategoryDefinition>, AppError> {
+    let rows = sqlx::query(
+        "SELECT id,name,kind,sort_order FROM categories WHERE deleted_at IS NULL ORDER BY sort_order,name",
+    )
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| CategoryDefinition {
+            id: row.get("id"),
+            name: row.get("name"),
+            kind: row.get("kind"),
+            sort_order: row.get("sort_order"),
+        })
+        .collect())
+}
+
+async fn load_all_historical_category_stats(
     db: &SqlitePool,
-    merchant_keys: &[String],
-) -> Result<HashMap<String, Vec<MerchantCategoryStat>>, AppError> {
-    let mut result: HashMap<String, Vec<MerchantCategoryStat>> = HashMap::new();
-    if merchant_keys.is_empty() {
-        return Ok(result);
-    }
-    let placeholders = merchant_keys
-        .iter()
-        .map(|_| "?")
-        .collect::<Vec<_>>()
-        .join(",");
-    let sql = format!(
+) -> Result<Vec<HistoricalCategoryStat>, AppError> {
+    let rows = sqlx::query(
         "SELECT t.merchant_key, t.category_id, c.name category_name, c.kind category_kind,
          COUNT(*) n, MAX(t.date) last_used
          FROM transactions t JOIN categories c ON c.id=t.category_id
-         WHERE t.merchant_key IN ({placeholders}) AND t.deleted_at IS NULL
+         WHERE t.merchant_key IS NOT NULL AND t.deleted_at IS NULL AND c.deleted_at IS NULL
          AND t.category_source IN ('manual','rule')
-         GROUP BY t.merchant_key, t.category_id"
-    );
-    let mut query = sqlx::query(&sql);
-    for key in merchant_keys {
-        query = query.bind(key);
-    }
-    let rows = query.fetch_all(db).await?;
-    for row in rows {
-        let merchant_key: String = row.get("merchant_key");
-        result
-            .entry(merchant_key)
-            .or_default()
-            .push(MerchantCategoryStat {
-                category_id: row.get("category_id"),
-                category_name: row.get("category_name"),
-                category_kind: row.get("category_kind"),
-                count: row.get("n"),
-                last_used: row.get("last_used"),
-            });
-    }
-    Ok(result)
+         GROUP BY t.merchant_key, t.category_id",
+    )
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| HistoricalCategoryStat {
+            merchant_key: row.get("merchant_key"),
+            category_id: row.get("category_id"),
+            category_name: row.get("category_name"),
+            category_kind: row.get("category_kind"),
+            count: row.get("n"),
+            last_used: row.get("last_used"),
+        })
+        .collect())
 }
 
 /// Applies rule matches first (regra explícita sempre vence histórico), then — only for
@@ -395,7 +397,7 @@ pub(super) async fn apply_category_suggestions(
     rules: &[CategorizationRule],
     candidates: &mut [ImportCandidate],
 ) -> Result<(), AppError> {
-    apply_category_suggestions_to(db, account_id, rules, candidates.iter_mut()).await
+    apply_category_suggestions_to(db, account_id, rules, candidates.iter_mut(), false).await
 }
 
 /// Same as `apply_category_suggestions`, but generic over any mutable iterator of candidates —
@@ -405,9 +407,12 @@ pub(super) async fn apply_category_suggestions_to<'a>(
     account_id: &str,
     rules: &[CategorizationRule],
     candidates: impl Iterator<Item = &'a mut ImportCandidate>,
+    credit_card_context: bool,
 ) -> Result<(), AppError> {
     let mut candidates: Vec<&mut ImportCandidate> = candidates.collect();
     for candidate in candidates.iter_mut() {
+        candidate.merchant_key = merchant_key(&candidate.normalized_description);
+        candidate.category_suggestions.clear();
         if let Some(rule) = first_match(
             rules,
             &CategorizationInput {
@@ -423,27 +428,75 @@ pub(super) async fn apply_category_suggestions_to<'a>(
             candidate.suggestion_source = Some(SuggestionSource::Rule);
         }
     }
-    let mut merchant_keys: Vec<String> = candidates
-        .iter()
-        .filter(|c| c.suggestion_source.is_none())
-        .map(|c| merchant_key(&c.normalized_description))
-        .collect();
-    merchant_keys.sort();
-    merchant_keys.dedup();
-    let stats_by_merchant = load_merchant_category_stats(db, &merchant_keys).await?;
+    let history = load_all_historical_category_stats(db).await?;
+    let mut stats_by_merchant: HashMap<String, Vec<MerchantCategoryStat>> = HashMap::new();
+    for row in &history {
+        let stats = stats_by_merchant
+            .entry(merchant_key(&row.merchant_key))
+            .or_default();
+        if let Some(existing) = stats
+            .iter_mut()
+            .find(|stat| stat.category_id == row.category_id)
+        {
+            existing.count += row.count;
+            if row.last_used > existing.last_used {
+                existing.last_used = row.last_used.clone();
+            }
+        } else {
+            stats.push(MerchantCategoryStat {
+                category_id: row.category_id.clone(),
+                category_name: Some(row.category_name.clone()),
+                category_kind: row.category_kind.clone(),
+                count: row.count,
+                last_used: row.last_used.clone(),
+            });
+        }
+    }
+    let context = if credit_card_context {
+        SuggestionContext::CreditCard
+    } else {
+        SuggestionContext::Bank
+    };
     for candidate in candidates.iter_mut() {
         if candidate.suggestion_source.is_some() {
             continue;
         }
-        let key = merchant_key(&candidate.normalized_description);
-        let Some(stats) = stats_by_merchant.get(&key) else {
+        let key = &candidate.merchant_key;
+        let Some(stats) = stats_by_merchant.get(key) else {
             continue;
         };
-        if let Some(suggestion) = suggest_from_history(stats, candidate.amount_in_cents) {
+        let is_refund = is_refund_description(&candidate.normalized_description);
+        if let Some(suggestion) =
+            suggest_from_history(stats, candidate.amount_in_cents, context, is_refund)
+        {
             candidate.suggested_category_id = Some(suggestion.category_id);
             candidate.suggested_category_name = suggestion.category_name;
             candidate.suggestion_source = Some(SuggestionSource::History);
         }
+    }
+
+    if candidates
+        .iter()
+        .all(|candidate| candidate.suggestion_source.is_some())
+    {
+        return Ok(());
+    }
+    let categories = load_suggestion_categories(db).await?;
+    let index = SuggestionIndex::new(&history);
+    for candidate in candidates.iter_mut() {
+        if candidate.suggestion_source.is_some() {
+            continue;
+        }
+        let is_refund = is_refund_description(&candidate.normalized_description);
+        candidate.category_suggestions = shortlist_categories(
+            &candidate.merchant_key,
+            &candidate.normalized_description,
+            candidate.amount_in_cents,
+            context,
+            is_refund,
+            &categories,
+            &index,
+        );
     }
     Ok(())
 }
@@ -1497,6 +1550,8 @@ fn manual_fingerprint(
         suggested_rule_id: None,
         suggested_rule_name: None,
         suggestion_source: None,
+        merchant_key: String::new(),
+        category_suggestions: vec![],
         duplicate_status: crate::domain::import::DuplicateStatus::New,
         warnings: vec![],
         included: true,
@@ -1957,6 +2012,8 @@ async fn update_transaction_amount_impl(
         suggested_rule_id: None,
         suggested_rule_name: None,
         suggestion_source: None,
+        merchant_key: String::new(),
+        category_suggestions: vec![],
         duplicate_status: crate::domain::import::DuplicateStatus::New,
         warnings: vec![],
         included: true,
@@ -2444,6 +2501,97 @@ pub async fn set_import_candidate_category(
     candidate.suggested_rule_id = None;
     candidate.suggested_rule_name = None;
     candidate.suggestion_source = None;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_import_candidates_category(
+    session_id: String,
+    source_rows: Vec<usize>,
+    category_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<ImportPreview, AppError> {
+    let _commit_guard = state.import_commit.lock().await;
+    let rows: HashSet<usize> = source_rows.into_iter().collect();
+    if rows.is_empty() {
+        return Err(AppError::Validation(
+            "Selecione ao menos um lançamento".into(),
+        ));
+    }
+    let category = if let Some(id) = &category_id {
+        Some(
+            sqlx::query_as::<_, (String, String)>(
+                "SELECT name,kind FROM categories WHERE id=? AND deleted_at IS NULL",
+            )
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_else(|| AppError::Validation("Categoria não encontrada".into()))?,
+        )
+    } else {
+        None
+    };
+    let mut sessions = state.sessions.lock().await;
+    let session = sessions
+        .get_mut(&session_id)
+        .ok_or(AppError::SessionExpired)?;
+    if let Some((_, kind)) = &category {
+        let incompatible = session.candidates.iter().any(|candidate| {
+            rows.contains(&candidate.source_row)
+                && !category_compatible(
+                    kind,
+                    candidate.amount_in_cents,
+                    SuggestionContext::Bank,
+                    is_refund_description(&candidate.normalized_description),
+                )
+        });
+        if incompatible {
+            return Err(AppError::Validation(
+                "A categoria não é compatível com um ou mais lançamentos".into(),
+            ));
+        }
+    }
+    set_import_candidates_category_impl(
+        session,
+        &rows,
+        category_id,
+        category.map(|(name, _)| name),
+    )?;
+    Ok(ImportPreview {
+        session_id,
+        file_name: session.file_name.clone(),
+        candidates: session.candidates.clone(),
+    })
+}
+
+fn set_import_candidates_category_impl(
+    session: &mut ImportSession,
+    rows: &HashSet<usize>,
+    category_id: Option<String>,
+    category_name: Option<String>,
+) -> Result<(), AppError> {
+    if session
+        .candidates
+        .iter()
+        .filter(|candidate| rows.contains(&candidate.source_row))
+        .count()
+        != rows.len()
+    {
+        return Err(AppError::Validation(
+            "Um ou mais lançamentos não foram encontrados na sessão".into(),
+        ));
+    }
+    for candidate in session
+        .candidates
+        .iter_mut()
+        .filter(|candidate| rows.contains(&candidate.source_row))
+    {
+        candidate.suggested_category_id = category_id.clone();
+        candidate.suggested_category_name = category_name.clone();
+        candidate.suggested_rule_id = None;
+        candidate.suggested_rule_name = None;
+        candidate.suggestion_source = None;
+    }
     Ok(())
 }
 
@@ -3643,10 +3791,105 @@ mod tests {
             suggested_rule_id: None,
             suggested_rule_name: None,
             suggestion_source: None,
+            merchant_key: String::new(),
+            category_suggestions: vec![],
             duplicate_status: crate::domain::import::DuplicateStatus::New,
             warnings: vec![],
             included: true,
         }
+    }
+
+    #[test]
+    fn grouped_bank_category_update_is_atomic_and_limited_to_requested_rows() {
+        let mut first = candidate("Mercado Central", -1000);
+        first.source_row = 1;
+        let mut second = candidate("Mercado Central", -2000);
+        second.source_row = 2;
+        let mut third = candidate("Mercado Central", -3000);
+        third.source_row = 3;
+        let mut session = ImportSession {
+            account_id: "account".into(),
+            file_name: "extrato.csv".into(),
+            candidates: vec![first, second, third],
+        };
+        set_import_candidates_category_impl(
+            &mut session,
+            &HashSet::from([1, 3]),
+            Some("groceries".into()),
+            Some("Supermercado".into()),
+        )
+        .unwrap();
+        assert_eq!(
+            session.candidates[0].suggested_category_id.as_deref(),
+            Some("groceries")
+        );
+        assert_eq!(session.candidates[1].suggested_category_id, None);
+        assert_eq!(
+            session.candidates[2].suggested_category_id.as_deref(),
+            Some("groceries")
+        );
+
+        let before = session
+            .candidates
+            .iter()
+            .map(|candidate| candidate.suggested_category_id.clone())
+            .collect::<Vec<_>>();
+        assert!(set_import_candidates_category_impl(
+            &mut session,
+            &HashSet::from([1, 99]),
+            Some("health".into()),
+            Some("Saúde".into()),
+        )
+        .is_err());
+        assert_eq!(
+            before,
+            session
+                .candidates
+                .iter()
+                .map(|candidate| candidate.suggested_category_id.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn grouped_manual_choice_persists_and_teaches_future_history() {
+        let (_directory, db, account_id) = suggestion_test_setup().await;
+        let mut first = candidate("SUPERMERCADO NOVO 01/02", -1000);
+        first.source_row = 1;
+        first.date = "2026-05-01".into();
+        let mut second = candidate("SUPERMERCADO NOVO 02/02", -2000);
+        second.source_row = 2;
+        second.date = "2026-05-02".into();
+        let mut session = ImportSession {
+            account_id: account_id.clone(),
+            file_name: "extrato.csv".into(),
+            candidates: vec![first, second],
+        };
+        set_import_candidates_category_impl(
+            &mut session,
+            &HashSet::from([1, 2]),
+            Some("groceries".into()),
+            Some("Supermercado".into()),
+        )
+        .unwrap();
+        commit_import_impl(session, &db).await.unwrap();
+        let manual_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM transactions WHERE category_source='manual' AND category_id='groceries'",
+        )
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(manual_count, 2);
+
+        let mut future = vec![candidate("SUPERMERCADO NOVO 03/03", -3000)];
+        apply_category_suggestions(&db, &account_id, &[], &mut future)
+            .await
+            .unwrap();
+        assert_eq!(
+            future[0].suggested_category_id.as_deref(),
+            Some("groceries")
+        );
+        assert_eq!(future[0].suggestion_source, Some(SuggestionSource::History));
     }
 
     #[tokio::test]
@@ -3774,6 +4017,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unseen_description_gets_shortcuts_without_being_preselected() {
+        let (_directory, db, account_id) = suggestion_test_setup().await;
+        sqlx::query(
+            "INSERT INTO categories(id,name,kind,sort_order) VALUES('gym','Academia','expense',999)",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO categories(id,name,kind,sort_order,deleted_at) VALUES('old-gym','Academia antiga','expense',1000,datetime('now'))",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        let mut candidates = vec![
+            candidate("Farmácia São João", -4000),
+            candidate("Academia Movimento", -9000),
+        ];
+        apply_category_suggestions(&db, &account_id, &[], &mut candidates)
+            .await
+            .unwrap();
+        assert!(candidates
+            .iter()
+            .all(|candidate| candidate.suggested_category_id.is_none()));
+        assert_eq!(candidates[0].merchant_key, "FARMACIA SAO JOAO");
+        assert_eq!(candidates[0].category_suggestions[0].category_id, "health");
+        assert_eq!(candidates[1].category_suggestions[0].category_id, "gym");
+        assert!(candidates[1]
+            .category_suggestions
+            .iter()
+            .all(|suggestion| suggestion.category_id != "old-gym"));
+    }
+
+    #[tokio::test]
+    async fn preview_suggests_shopping_for_repeated_mercado_livre_descriptor() {
+        let (_directory, db, account_id) = suggestion_test_setup().await;
+        let mut candidates = vec![candidate("MERCADO LIVRE*MERCADO LIVRE", -2500)];
+
+        apply_category_suggestions(&db, &account_id, &[], &mut candidates)
+            .await
+            .unwrap();
+
+        assert_eq!(candidates[0].merchant_key, "MERCADO LIVRE");
+        assert_eq!(candidates[0].suggested_category_id, None);
+        assert_eq!(
+            candidates[0]
+                .category_suggestions
+                .first()
+                .map(|suggestion| suggestion.category_id.as_str()),
+            Some("shopping")
+        );
+        assert_eq!(
+            candidates[0].category_suggestions[0].source,
+            crate::domain::import::CategorySuggestionSource::Vocabulary
+        );
+    }
+
+    #[tokio::test]
     async fn split_history_does_not_suggest() {
         let (_directory, db, account_id) = suggestion_test_setup().await;
         insert_history(&db, &account_id, "h1", "MERCADO MISTO", "food", -1000).await;
@@ -3789,19 +4090,19 @@ mod tests {
     #[tokio::test]
     async fn batched_suggestion_lookup_handles_500_candidates_quickly() {
         let (_directory, db, account_id) = suggestion_test_setup().await;
-        for i in 0..3 {
+        for i in 0..200 {
             insert_history(
                 &db,
                 &account_id,
                 &format!("h{i}"),
-                "FARMACIA DROGASIL",
+                &format!("FARMACIA HISTORICA {i}"),
                 "health",
                 -3000,
             )
             .await;
         }
         let mut candidates: Vec<_> = (0..500)
-            .map(|_| candidate("FARMACIA DROGASIL", -4000))
+            .map(|i| candidate(&format!("FARMACIA NOVA {i}"), -4000))
             .collect();
         let start = std::time::Instant::now();
         apply_category_suggestions(&db, &account_id, &[], &mut candidates)
@@ -3814,7 +4115,8 @@ mod tests {
         );
         assert!(candidates
             .iter()
-            .all(|c| c.suggested_category_id.as_deref() == Some("health")));
+            .all(|candidate| candidate.suggested_category_id.is_none()
+                && candidate.category_suggestions[0].category_id == "health"));
     }
 
     #[tokio::test]

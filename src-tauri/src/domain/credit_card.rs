@@ -164,6 +164,8 @@ mod tests {
                 suggested_rule_id: None,
                 suggested_rule_name: None,
                 suggestion_source: None,
+                merchant_key: String::new(),
+                category_suggestions: vec![],
                 duplicate_status: DuplicateStatus::New,
                 warnings: vec![],
                 included,

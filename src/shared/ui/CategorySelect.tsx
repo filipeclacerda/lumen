@@ -1,4 +1,13 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowLeftRight,
@@ -223,6 +232,7 @@ function CategoryDropdown({
   const [query, setQuery] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listboxId = useId();
   const [panelStyle, setPanelStyle] = useState<CSSProperties>();
@@ -243,6 +253,7 @@ function CategoryDropdown({
       if (e.key === "Escape") {
         setOpen(false);
         setQuery("");
+        requestAnimationFrame(() => triggerRef.current?.focus());
       }
     }
     document.addEventListener("mousedown", onDoc);
@@ -311,6 +322,30 @@ function CategoryDropdown({
     onChange(id);
     setOpen(false);
     setQuery("");
+    requestAnimationFrame(() => triggerRef.current?.focus());
+  }
+
+  function focusListOption(position: "first" | "last" | "next" | "previous", current?: HTMLElement) {
+    const options = [...(panelRef.current?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])];
+    if (options.length === 0) return;
+    if (!current || position === "first" || position === "last") {
+      options[position === "last" ? options.length - 1 : 0]?.focus();
+      return;
+    }
+    const currentIndex = options.indexOf(current);
+    const nextIndex =
+      position === "next" ? Math.min(currentIndex + 1, options.length - 1) : Math.max(currentIndex - 1, 0);
+    options[nextIndex]?.focus();
+  }
+
+  function handleOptionKeyDown(e: ReactKeyboardEvent<HTMLButtonElement>) {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Home" || e.key === "End") {
+      e.preventDefault();
+      focusListOption(
+        e.key === "ArrowDown" ? "next" : e.key === "ArrowUp" ? "previous" : e.key === "Home" ? "first" : "last",
+        e.currentTarget,
+      );
+    }
   }
 
   return (
@@ -320,6 +355,7 @@ function CategoryDropdown({
       ref={rootRef}
     >
       <button
+        ref={triggerRef}
         type="button"
         className="category-dropdown-trigger"
         disabled={disabled}
@@ -329,6 +365,12 @@ function CategoryDropdown({
         aria-controls={listboxId}
         aria-label={ariaLabel}
         onClick={() => setOpen((o) => !o)}
+        onKeyDown={(e) => {
+          if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+            e.preventDefault();
+            setOpen(true);
+          }
+        }}
         title={selected ? `${selected.name}${selected.icon ? " · " + selected.icon : ""}` : emptyLabel}
       >
         {selected ? (
@@ -360,6 +402,12 @@ function CategoryDropdown({
                 ref={inputRef}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                    e.preventDefault();
+                    focusListOption(e.key === "ArrowDown" ? "first" : "last");
+                  }
+                }}
                 placeholder="Buscar categoria…"
                 aria-label="Buscar categoria"
               />
@@ -370,6 +418,7 @@ function CategoryDropdown({
                   type="button"
                   className={"category-dropdown-option" + (!value ? " selected" : "")}
                   onClick={() => select(undefined)}
+                  onKeyDown={handleOptionKeyDown}
                   role="option"
                   aria-selected={!value}
                 >
@@ -412,6 +461,7 @@ function CategoryDropdown({
                           data-depth={d}
                           style={{ "--category-depth": d } as CSSProperties}
                           onClick={() => select(c.id)}
+                          onKeyDown={handleOptionKeyDown}
                           title={parent ? `${c.name} · Subcategoria de ${parent.name}` : c.name}
                           role="option"
                           aria-selected={isSelected}
