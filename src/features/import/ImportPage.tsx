@@ -22,6 +22,7 @@ import {
 import { api } from "../../shared/api";
 import { Modal } from "../../shared/ui/Modal";
 import { CategorySelect } from "../../shared/ui/CategorySelect";
+import { DatePicker } from "../../shared/ui/CalendarPicker";
 import { ErrorState, LoadingState } from "../../shared/ui/AsyncState";
 import { Select } from "../../shared/ui/Select";
 import {
@@ -746,7 +747,7 @@ export function ImportPage() {
             />
             <label>
               Vencimento da fatura (caso não conste no arquivo)
-              <input type="date" value={cardDueDate} onChange={(e) => setCardDueDate(e.target.value)} />
+              <DatePicker ariaLabel="Vencimento da fatura" value={cardDueDate} onChange={setCardDueDate} />
             </label>
             <div className="editor-actions">
               <button className="secondary" onClick={resetFlow}>
@@ -858,12 +859,10 @@ export function ImportPage() {
                     <span>
                       Vencimento padrão da fatura <span className="req">*</span>
                     </span>
-                    <input
-                      type="date"
+                    <DatePicker
+                      ariaLabel="Vencimento padrão da fatura"
                       value={mappingState.draft.defaultDueDate ?? ""}
-                      onChange={(event) =>
-                        setDraft({ ...mappingState.draft, defaultDueDate: event.target.value || undefined })
-                      }
+                      onChange={(value) => setDraft({ ...mappingState.draft, defaultDueDate: value || undefined })}
                     />
                   </label>
                 </div>
@@ -1055,15 +1054,15 @@ export function ImportPage() {
             </div>
             <label className="compact-label">
               Vencimento
-              <input
-                type="date"
+              <DatePicker
+                ariaLabel="Vencimento da fatura"
                 value={cardPreview.dueDate}
-                onChange={(event) =>
+                onChange={(value) =>
                   updateCard(
                     cardPreview.items[0].candidate.sourceRow,
                     cardPreview.items[0].included,
                     cardPreview.items[0].candidate.suggestedCategoryId,
-                    event.target.value,
+                    value,
                   )
                 }
               />

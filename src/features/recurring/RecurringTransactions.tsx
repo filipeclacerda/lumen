@@ -7,6 +7,7 @@ import { money } from "../../shared/format";
 import { currentMonth } from "../../shared/period";
 import { useToast } from "../../shared/ui/toast";
 import { CategorySelect } from "../../shared/ui/CategorySelect";
+import { MonthPicker } from "../../shared/ui/CalendarPicker";
 import { MoneyInput } from "../../shared/ui/MoneyInput";
 import type { RecurringTransaction, RecurringTransactionInput } from "../../shared/types";
 import { ErrorState, LoadingState } from "../../shared/ui/AsyncState";
@@ -238,18 +239,19 @@ export function RecurringTransactions() {
             <div className="form-row">
               <label>
                 Começa em
-                <input
-                  type="month"
+                <MonthPicker
+                  ariaLabel="Mês de início da recorrência"
                   value={draft.startMonth}
-                  onChange={(e) => setDraft({ ...draft, startMonth: e.target.value })}
+                  onChange={(value) => setDraft({ ...draft, startMonth: value })}
+                  allowClear={false}
                 />
               </label>
               <label>
                 Termina em (opcional)
-                <input
-                  type="month"
+                <MonthPicker
+                  ariaLabel="Mês de término da recorrência"
                   value={draft.endMonth ?? ""}
-                  onChange={(e) => setDraft({ ...draft, endMonth: e.target.value || undefined })}
+                  onChange={(value) => setDraft({ ...draft, endMonth: value || undefined })}
                 />
               </label>
             </div>

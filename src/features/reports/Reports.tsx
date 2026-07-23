@@ -23,6 +23,7 @@ import {
 import { api } from "../../shared/api";
 import { money, shortDate } from "../../shared/format";
 import { currentMonth as curMonth, monthLabel, shiftMonth } from "../../shared/period";
+import { MonthPicker } from "../../shared/ui/CalendarPicker";
 import type {
   CategoryReport,
   FinancialReport,
@@ -189,23 +190,23 @@ export function Reports() {
         <div className="report-filter-fields">
           <label>
             <CalendarRange size={15} /> De
-            <input
-              type="month"
+            <MonthPicker
+              ariaLabel="Mês inicial do relatório"
               value={startMonth}
-              onChange={(e) => {
+              onChange={(value) => {
                 setPreset("custom");
-                setStartMonth(e.target.value);
+                setStartMonth(value);
               }}
             />
           </label>
           <label>
             Até
-            <input
-              type="month"
+            <MonthPicker
+              ariaLabel="Mês final do relatório"
               value={endMonth}
-              onChange={(e) => {
+              onChange={(value) => {
                 setPreset("custom");
-                setEndMonth(e.target.value);
+                setEndMonth(value);
               }}
             />
           </label>

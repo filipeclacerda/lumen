@@ -5,6 +5,7 @@ import { api } from "../../shared/api";
 import { Modal } from "../../shared/ui/Modal";
 import { MoneyInput } from "../../shared/ui/MoneyInput";
 import { CategorySelect } from "../../shared/ui/CategorySelect";
+import { DatePicker } from "../../shared/ui/CalendarPicker";
 import { useToast } from "../../shared/ui/toast";
 import { todayIso } from "../../shared/format";
 import type { Transaction } from "../../shared/types";
@@ -162,7 +163,7 @@ export function TransactionForm({ onClose, existing, initialType = "expense" }: 
             <div className="form-row">
               <label>
                 Data
-                <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+                <DatePicker ariaLabel="Data da transferência" value={date} onChange={setDate} />
               </label>
               <label>
                 Descrição (opcional)
@@ -182,7 +183,7 @@ export function TransactionForm({ onClose, existing, initialType = "expense" }: 
             <div className="form-row">
               <label>
                 Data
-                <input type="date" value={date} onChange={(e) => setDate(e.target.value)} disabled={isTransferLeg} />
+                <DatePicker ariaLabel="Data da transação" value={date} onChange={setDate} disabled={isTransferLeg} />
               </label>
               <label>
                 Conta
