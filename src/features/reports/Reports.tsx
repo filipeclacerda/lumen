@@ -153,7 +153,7 @@ export function Reports() {
   }
 
   return (
-    <section className="reports-page">
+    <section className="reports-page" data-tutorial="reports">
       <div>
         <PageHeader>
           <div>

@@ -14,6 +14,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
   ArrowLeftRight,
+  BookOpen,
   Check,
   CheckCircle2,
   ChevronLeft,
@@ -27,17 +28,18 @@ import {
   Lightbulb,
   Plus,
   ShieldCheck,
-  Sparkles,
   TableProperties,
   X,
 } from "lucide-react";
 import { api } from "../../shared/api";
 import { Modal } from "../../shared/ui/Modal";
-import { CategorySelect } from "../../shared/ui/CategorySelect";
+import { CategoryIcon, CategorySelect } from "../../shared/ui/CategorySelect";
 import { DatePicker } from "../../shared/ui/CalendarPicker";
 import { ErrorState, LoadingState } from "../../shared/ui/AsyncState";
 import { Select } from "../../shared/ui/Select";
 import { Tabs } from "../../shared/ui/Tabs";
+import { ImportTutorial, shouldAutoStartImportGuide } from "./ImportTutorial";
+import { useQuickStartGuide } from "../../shared/quickStartGuide";
 import {
   money,
   centsToInput,
@@ -305,6 +307,13 @@ export function ImportPage() {
   const [transferCandidates, setTransferCandidates] = useState<TransferCandidate[]>([]);
   const [linkingTransfer, setLinkingTransfer] = useState<string>();
   const [cardCommitSummary, setCardCommitSummary] = useState<CreditCardImportCommitResult>();
+  const tutorialAutoStartAttempted = useRef(false);
+  const activeGuide = useQuickStartGuide((state) => state.activeGuide);
+  const guideMode = useQuickStartGuide((state) => state.mode);
+  const completeGuideStatus = useQuickStartGuide((state) => state.guides.complete.status);
+  const importGuideProgress = useQuickStartGuide((state) => state.guides.import);
+  const restartGuide = useQuickStartGuide((state) => state.restart);
+  const setImportPhase = useQuickStartGuide((state) => state.setImportPhase);
 
   useEffect(() => {
     if (pendingCardPath) {
@@ -372,6 +381,7 @@ export function ImportPage() {
     isError: accountsError,
     refetch: refetchAccounts,
   } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
+  const { data: bootstrap } = useQuery({ queryKey: ["bootstrap"], queryFn: api.bootstrap });
   const asyncLoading = categoriesLoading || accountsLoading;
   const asyncError = categoriesError || accountsError;
   const bankAccount = accounts.find((account) => account.kind !== "credit_card");
@@ -384,6 +394,36 @@ export function ImportPage() {
   const cardCandidates = useMemo(() => creditCardCategorizationCandidates(cardPreview), [cardPreview]);
   const cardSummary = useMemo(() => summarizeSuggestions(cardCandidates), [cardCandidates]);
   const cardGroups = useMemo(() => groupPendingCandidates(cardCandidates), [cardCandidates]);
+
+  useEffect(() => {
+    if (!bootstrap || tutorialAutoStartAttempted.current) return;
+    if (
+      !shouldAutoStartImportGuide({
+        hasImports: bootstrap.hasImports,
+        importStatus: importGuideProgress?.status,
+        completeStatus: completeGuideStatus,
+        activeGuide,
+        mode: guideMode,
+      })
+    )
+      return;
+
+    tutorialAutoStartAttempted.current = true;
+    restartGuide("import");
+  }, [activeGuide, bootstrap, completeGuideStatus, guideMode, importGuideProgress?.status, restartGuide]);
+
+  useEffect(() => {
+    if (activeGuide !== "import") return;
+    if (pendingCommit) {
+      setImportPhase("confirm");
+    } else if (bankPreview || cardPreview) {
+      setImportPhase("review");
+    } else if (pendingCardPath || mappingState) {
+      setImportPhase("configure");
+    } else {
+      setImportPhase("choose");
+    }
+  }, [activeGuide, bankPreview, cardPreview, mappingState, pendingCardPath, pendingCommit, setImportPhase]);
 
   useEffect(() => {
     setPreviewMode("review");
@@ -621,6 +661,7 @@ export function ImportPage() {
     const { count, batchId } = await api.commitImport(bankPreview.sessionId);
     await maybeSaveMappingProfile();
     setMessage(`${count} transações importadas com segurança.`);
+    finishImportTutorial();
     resetFlow();
     await refresh();
     await checkForTransferCandidates(batchId);
@@ -670,6 +711,7 @@ export function ImportPage() {
         ? "Fatura importada. Os pagamentos anteriores estão prontos para conciliação."
         : "Fatura importada. As compras já aparecem nas despesas pelas datas originais.",
     );
+    finishImportTutorial();
     resetFlow();
     await refresh();
   }
@@ -689,7 +731,14 @@ export function ImportPage() {
       client.invalidateQueries({ queryKey: ["summary"] }),
       client.invalidateQueries({ queryKey: ["credit-card-invoices"] }),
       client.invalidateQueries({ queryKey: ["accounts"] }),
+      client.invalidateQueries({ queryKey: ["bootstrap"] }),
     ]);
+  }
+
+  function finishImportTutorial() {
+    const importProgress = useQuickStartGuide.getState().guides.import;
+    if (importProgress?.status !== "active" && importProgress?.status !== "paused") return;
+    useQuickStartGuide.getState().setImportPhase("success");
   }
 
   async function changeBankCategory(sourceRow: number, categoryId?: string) {
@@ -848,13 +897,16 @@ export function ImportPage() {
   }
 
   return (
-    <section className="import-page">
+    <section className="import-page" data-tutorial="import">
       <PageHeader>
         <div>
           <p className="eyebrow">IMPORTAÇÃO SEGURA</p>
           <h1>Importar extrato ou fatura</h1>
           <p className="muted">CSV, OFX e PDF são processados somente neste computador.</p>
         </div>
+        <button className="secondary" type="button" onClick={() => restartGuide("import")}>
+          <BookOpen size={16} /> Como importar
+        </button>
       </PageHeader>
       {asyncLoading && <LoadingState variant="panel" label="Carregando dados para importação…" />}
       {asyncError && (
@@ -867,6 +919,7 @@ export function ImportPage() {
       {canStartImport && (
         <article
           className={`dropzone import-dropzone${isDraggingFile ? " dragging" : ""}`}
+          data-import-tutorial="choose"
           onDragEnter={handleDropzoneDrag}
           onDragOver={handleDropzoneDrag}
           onDragLeave={handleDropzoneLeave}
@@ -878,7 +931,7 @@ export function ImportPage() {
             Arraste um CSV, OFX ou PDF para esta área. O aplicativo reconhece automaticamente extratos e faturas; para
             outros CSVs, você pode mapear as colunas e salvar o layout.
           </p>
-          <button ref={chooseFileRef} data-quick-guide="import" onClick={choose} disabled={isReadingFile}>
+          <button ref={chooseFileRef} onClick={choose} disabled={isReadingFile}>
             {isReadingFile ? "Lendo arquivo..." : "Escolher arquivo"}
           </button>
           <div className="import-trouble-menu">
@@ -985,7 +1038,7 @@ export function ImportPage() {
       )}
 
       {pendingCardPath && (
-        <article className="panel card-import-setup">
+        <article className="panel card-import-setup" data-import-tutorial="configure">
           <div className="panel-title">
             <div>
               <p className="eyebrow">FATURA DETECTADA</p>
@@ -1025,7 +1078,7 @@ export function ImportPage() {
       )}
 
       {mappingState && (
-        <article className="panel import-mapping-panel">
+        <article className="panel import-mapping-panel" data-import-tutorial="configure">
           <div className="panel-title">
             <div>
               <p className="eyebrow">CSV PERSONALIZADO</p>
@@ -1237,7 +1290,7 @@ export function ImportPage() {
       )}
 
       {bankPreview && (
-        <article className="panel import-review-panel">
+        <article className="panel import-review-panel" data-import-tutorial="review">
           <div className="panel-title">
             <h2>Prévia de {bankPreview.fileName}</h2>
             <span>{bankPreview.candidates.length} registros</span>
@@ -1329,13 +1382,21 @@ export function ImportPage() {
             <button className="secondary" onClick={resetFlow}>
               Cancelar
             </button>
-            <button onClick={() => void commitBank()}>Confirmar importação</button>
+            <button
+              data-import-tutorial="confirm"
+              onClick={() => {
+                setImportPhase("confirm");
+                void commitBank();
+              }}
+            >
+              Confirmar importação
+            </button>
           </div>
         </article>
       )}
 
       {cardPreview && (
-        <article className="panel import-review-panel">
+        <article className="panel import-review-panel" data-import-tutorial="review">
           <div className="panel-title">
             <div>
               <p className="eyebrow">FATURA DE CARTÃO</p>
@@ -1395,11 +1456,23 @@ export function ImportPage() {
             <button className="secondary" onClick={resetFlow}>
               Cancelar
             </button>
-            <button onClick={() => void commitCard()}>Confirmar fatura</button>
+            <button
+              data-import-tutorial="confirm"
+              onClick={() => {
+                setImportPhase("confirm");
+                void commitCard();
+              }}
+            >
+              Confirmar fatura
+            </button>
           </div>
         </article>
       )}
-      {message && <p className="notice">{message}</p>}
+      {message && (
+        <p className="notice" data-import-tutorial="success">
+          {message}
+        </p>
+      )}
       {cardCommitSummary && (
         <CardImportCommitNotice
           summary={cardCommitSummary}
@@ -1538,6 +1611,7 @@ export function ImportPage() {
           </div>
         </Modal>
       )}
+      <ImportTutorial />
     </section>
   );
 }
@@ -1555,6 +1629,7 @@ type CandidateGroup = {
   candidates: ImportCandidate[];
   suggestions: ImportCandidate["categorySuggestions"];
   totalInCents: number;
+  isPix: boolean;
 };
 
 export function summarizeSuggestions(candidates: ImportCandidate[]): SuggestionSummaryData {
@@ -1578,7 +1653,7 @@ export function groupPendingCandidates(candidates: ImportCandidate[]): Candidate
     if (!candidate.included || candidate.duplicateStatus === "exact" || candidate.suggestedCategoryId) continue;
     const direction = candidate.amountInCents >= 0 ? "credit" : "debit";
     const identity = candidate.merchantKey || candidate.normalizedDescription || candidate.description;
-    const key = `${identity}::${direction}`;
+    const key = candidate.isPix ? `${identity}::${direction}::pix:${candidate.sourceRow}` : `${identity}::${direction}`;
     groups.set(key, [...(groups.get(key) ?? []), candidate]);
   }
   return [...groups.entries()]
@@ -1598,6 +1673,7 @@ export function groupPendingCandidates(candidates: ImportCandidate[]): Candidate
         candidates: items,
         suggestions,
         totalInCents: items.reduce((total, candidate) => total + candidate.amountInCents, 0),
+        isPix: Boolean(items[0].isPix),
       };
     })
     .sort(
@@ -1782,9 +1858,12 @@ export function ImportReviewGroups({
           <Lightbulb size={18} aria-hidden />
           <div>
             <strong>Uma etapa por vez</strong>
-            <p>Escolha uma categoria por estabelecimento. A seleção vale para todas as ocorrências deste grupo.</p>
+            <p>
+              Escolha uma categoria por estabelecimento. Cada PIX é revisado separadamente para evitar categorizações
+              indevidas.
+            </p>
           </div>
-          <span className="import-review-intro-hint">Atalhos aplicam o grupo inteiro</span>
+          <span className="import-review-intro-hint">Sugestões agilizam a revisão</span>
         </div>
       )}
       {error && (
@@ -1854,56 +1933,77 @@ export function ImportReviewGroups({
           >
             <div className="import-review-group-main">
               <div className="import-review-group-heading">
-                <span>ESTABELECIMENTO</span>
+                <span>{activeGroup.isPix ? "LANÇAMENTO PIX" : "ESTABELECIMENTO"}</span>
                 <h3 id="import-review-active-title">{activeGroup.label}</h3>
                 <p className="import-review-group-summary">
                   {activeGroup.candidates.length} {activeGroup.candidates.length === 1 ? "lançamento" : "lançamentos"} ·{" "}
                   <strong>{money(activeGroup.totalInCents)}</strong>
                 </p>
               </div>
-              <div className="import-review-group-actions">
-                <div className="import-review-quick-actions">
-                  {activeGroup.suggestions.length > 0 ? (
+              <div
+                className={`import-review-group-actions${
+                  activeGroup.suggestions.length === 0 ? " import-review-group-actions--manual-only" : ""
+                }`}
+              >
+                {activeGroup.suggestions.length > 0 && (
+                  <div className="import-review-quick-actions">
                     <>
                       <div className="import-review-action-heading">
                         <span className="import-review-action-label">Sugestões plausíveis</span>
-                        <small>Um atalho para aplicar ao grupo inteiro</small>
+                        <small>
+                          {activeGroup.isPix ? "Escolha para este PIX" : "Aplicam-se a todos os lançamentos do grupo"}
+                        </small>
                       </div>
                       <div className="import-suggestion-chips">
-                        {activeGroup.suggestions.map((suggestion) => (
-                          <button
-                            type="button"
-                            className="secondary import-suggestion-chip"
-                            key={suggestion.categoryId}
-                            title={suggestion.reason}
-                            disabled={Boolean(applyingKey)}
-                            aria-label={`Aplicar ${suggestion.categoryName} a ${activeGroup.candidates.length} ${
-                              activeGroup.candidates.length === 1 ? "lançamento" : "lançamentos"
-                            } de ${activeGroup.label}`}
-                            onClick={() => void apply(activeGroup, suggestion.categoryId)}
-                          >
-                            <span>
-                              <Sparkles size={14} aria-hidden />
-                              {applyingKey === activeGroup.key ? "Aplicando…" : suggestion.categoryName}
-                            </span>
-                            <small>
-                              <strong>Aplicar a {activeGroup.candidates.length}</strong> · {suggestion.reason}
-                            </small>
-                          </button>
-                        ))}
+                        {activeGroup.suggestions.map((suggestion) => {
+                          const category = categories.find((item) => item.id === suggestion.categoryId);
+                          return (
+                            <button
+                              type="button"
+                              className="secondary import-suggestion-chip"
+                              data-kind={category?.kind}
+                              key={suggestion.categoryId}
+                              title={suggestion.reason}
+                              disabled={Boolean(applyingKey)}
+                              aria-label={`Aplicar ${suggestion.categoryName} a ${activeGroup.candidates.length} ${
+                                activeGroup.candidates.length === 1 ? "lançamento" : "lançamentos"
+                              } de ${activeGroup.label}. ${suggestion.reason}`}
+                              onClick={() => void apply(activeGroup, suggestion.categoryId)}
+                            >
+                              <span className="import-suggestion-chip-heading">
+                                <span
+                                  className="import-suggestion-chip-icon"
+                                  style={category?.color ? { color: category.color } : undefined}
+                                >
+                                  <CategoryIcon name={category?.icon} kind={category?.kind} size={16} />
+                                </span>
+                                <span>{applyingKey === activeGroup.key ? "Aplicando…" : suggestion.categoryName}</span>
+                              </span>
+                              <small>
+                                <strong>
+                                  {activeGroup.isPix
+                                    ? "Aplicar a este PIX"
+                                    : `Aplicar a ${activeGroup.candidates.length}`}
+                                </strong>{" "}
+                                · {suggestion.reason}
+                              </small>
+                            </button>
+                          );
+                        })}
                       </div>
                     </>
-                  ) : (
-                    <div className="import-review-no-suggestion">
-                      <span>Sem sugestão segura</span>
-                      <small>Escolha na lista completa.</small>
-                    </div>
-                  )}
-                </div>
+                  </div>
+                )}
                 <div className="import-review-category-picker">
                   <div className="import-review-action-heading">
-                    <span className="import-review-action-label">Todas as categorias</span>
-                    <small>Ou procure outra opção</small>
+                    <span className="import-review-action-label">
+                      {activeGroup.suggestions.length === 0 ? "Escolha uma categoria" : "Todas as categorias"}
+                    </span>
+                    <small>
+                      {activeGroup.suggestions.length === 0
+                        ? "Sem sugestão segura — procure na lista completa"
+                        : "Ou procure outra opção"}
+                    </small>
                   </div>
                   <CategorySelect
                     categories={categories}

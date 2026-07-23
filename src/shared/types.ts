@@ -25,6 +25,7 @@ export type AppBootstrap = {
   onboardingCompleted: boolean;
   account?: Account;
   hasTransactions: boolean;
+  hasImports: boolean;
 };
 export type OnboardingResult = { profile: UserProfile; accountId: string };
 export type Transaction = {
@@ -134,6 +135,7 @@ export type ImportCandidate = {
   normalizedDescription: string;
   amountInCents: number;
   externalId?: string;
+  isPix?: boolean;
   suggestedCategoryId?: string;
   suggestedCategoryName?: string;
   suggestedRuleId?: string;

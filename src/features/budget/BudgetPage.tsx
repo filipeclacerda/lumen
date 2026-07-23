@@ -84,7 +84,7 @@ export function BudgetPage() {
   const isCurrentMonth = month === currentMonth;
 
   return (
-    <section className="budget-page">
+    <section className="budget-page" data-tutorial="budget">
       <PageHeader
         eyebrow="PLANEJAMENTO"
         title="Orçamento"

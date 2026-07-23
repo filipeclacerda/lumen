@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   AlertTriangle,
@@ -11,6 +11,7 @@ import {
   Download,
   ExternalLink,
   FileDown,
+  FileUp,
   HardDrive,
   Info,
   Keyboard,
@@ -53,7 +54,7 @@ import { Select } from "../../shared/ui/Select";
 import { useToast } from "../../shared/ui/toast";
 import { parseSettingsSection, settingsSections, type SettingsSection } from "./settingsNavigation";
 import { useMaintenanceRestart } from "../../shared/maintenanceRestart";
-import { restartQuickStartGuide } from "../../shared/quickStartGuide";
+import { restartImportGuide, restartQuickStartGuide } from "../../shared/quickStartGuide";
 
 const RESET_CONFIRM_WORD = "APAGAR";
 const RESTORE_CONFIRM_WORD = "RESTAURAR";
@@ -451,7 +452,7 @@ export function SettingsPage() {
     );
 
   return (
-    <section className="settings-page">
+    <section className="settings-page" data-tutorial="settings">
       <PageHeader
         eyebrow="PREFERÊNCIAS"
         title="Configurações"
@@ -988,6 +989,8 @@ function AboutSection({
   checkingUpdate: boolean;
   onCheckUpdates: () => void;
 }) {
+  const navigate = useNavigate();
+
   return (
     <div className="settings-section">
       <article className="panel settings-panel">
@@ -1029,11 +1032,27 @@ function AboutSection({
         </div>
         <div className="settings-about-row">
           <div>
-            <strong>Guia rápido</strong>
-            <small>Reveja os passos essenciais para adicionar, organizar e acompanhar seu dinheiro.</small>
+            <strong>Tour completo</strong>
+            <small>Reveja as nove áreas principais para adicionar, organizar e acompanhar seu dinheiro.</small>
           </div>
           <button className="secondary" type="button" onClick={restartQuickStartGuide}>
-            <BookOpen size={16} /> Refazer guia
+            <BookOpen size={16} /> Refazer tour completo
+          </button>
+        </div>
+        <div className="settings-about-row">
+          <div>
+            <strong>Ajuda de importação</strong>
+            <small>Retome a orientação contextual para importar um extrato ou uma fatura.</small>
+          </div>
+          <button
+            className="secondary"
+            type="button"
+            onClick={() => {
+              restartImportGuide();
+              navigate("/import");
+            }}
+          >
+            <FileUp size={16} /> Rever ajuda de importação
           </button>
         </div>
         <div className="settings-shortcuts">

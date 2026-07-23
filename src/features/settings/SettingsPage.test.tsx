@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   resetDatabase: vi.fn(),
   openUrl: vi.fn(),
   restartGuide: vi.fn(),
+  restartImportGuide: vi.fn(),
   toast: vi.fn(),
 }));
 
@@ -31,7 +32,10 @@ vi.mock("../../shared/api", () => ({
   },
 }));
 vi.mock("../../shared/ui/toast", () => ({ useToast: () => mocks.toast }));
-vi.mock("../../shared/quickStartGuide", () => ({ restartQuickStartGuide: mocks.restartGuide }));
+vi.mock("../../shared/quickStartGuide", () => ({
+  restartQuickStartGuide: mocks.restartGuide,
+  restartImportGuide: mocks.restartImportGuide,
+}));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: mocks.openUrl }));
 vi.mock("../../shared/updater", () => ({
   isTauriRuntime: () => true,
@@ -49,7 +53,13 @@ vi.mock("./desktopDataOperations", () => ({
 }));
 
 function LocationProbe() {
-  return <output data-testid="location">{useLocation().search}</output>;
+  const location = useLocation();
+  return (
+    <>
+      <output data-testid="location">{location.search}</output>
+      <output data-testid="pathname">{location.pathname}</output>
+    </>
+  );
 }
 
 function renderPage(entry = "/settings") {
@@ -109,10 +119,17 @@ describe("SettingsPage", () => {
     expect(mocks.openUrl).toHaveBeenCalledWith("https://github.com/filipeclacerda/lumen");
   });
 
-  it("restarts the quick guide from the about section", async () => {
+  it("restarts the complete tour from the about section", async () => {
     renderPage("/settings?section=about");
-    fireEvent.click(await screen.findByRole("button", { name: /Refazer guia/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Refazer tour completo/ }));
     expect(mocks.restartGuide).toHaveBeenCalledOnce();
+  });
+
+  it("restarts import help and navigates to the import page", async () => {
+    renderPage("/settings?section=about");
+    fireEvent.click(await screen.findByRole("button", { name: /Rever ajuda de importação/ }));
+    expect(mocks.restartImportGuide).toHaveBeenCalledOnce();
+    await waitFor(() => expect(screen.getByTestId("pathname").textContent).toBe("/import"));
   });
 
   it("saves a profile only after edits and allows discarding the draft", async () => {

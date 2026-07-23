@@ -514,7 +514,7 @@ export function Transactions() {
   }, [data, totalCount, pageSize]);
 
   return (
-    <section>
+    <section data-tutorial="transactions">
       <PageHeader>
         <div>
           <p className="eyebrow">MOVIMENTAÇÕES</p>

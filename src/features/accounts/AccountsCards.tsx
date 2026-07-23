@@ -245,7 +245,7 @@ export function AccountsCards() {
   }
 
   return (
-    <section className="accounts-page">
+    <section className="accounts-page" data-tutorial="accounts">
       <PageHeader>
         <div>
           <p className="eyebrow">PATRIMÔNIO E CRÉDITO</p>

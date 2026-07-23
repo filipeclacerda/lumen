@@ -23,6 +23,7 @@ vi.mock("../../shared/api", () => ({
 const bootstrap = {
   onboardingCompleted: false,
   hasTransactions: false,
+  hasImports: false,
 };
 
 function renderOnboarding(onFinished = vi.fn().mockResolvedValue(undefined)) {
@@ -105,25 +106,41 @@ describe("Onboarding", () => {
     expect(useQuickStartGuide.getState().mode).toBe("closed");
   });
 
-  it("queues the quick guide only after onboarding is saved", async () => {
+  it("offers three explicit next steps without automatically queuing a guide", async () => {
     await completeFlow();
 
-    expect(screen.getByRole("heading", { name: "Conheça o essencial" })).toBeTruthy();
-    expect(screen.getByLabelText("Etapas do guia rápido").children).toHaveLength(7);
-    expect(screen.getAllByRole("button")).toHaveLength(1);
-    expect(screen.getByText("Você pode pular ou fechar o guia a qualquer momento.")).toBeTruthy();
-    expect(storedQuickStartGuideStatus()).toBe("pending");
-    expect(useQuickStartGuide.getState().mode).toBe("invitation");
+    expect(screen.getByRole("button", { name: /Fazer primeira importação/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Conhecer o Lumen/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Explorar por conta própria/i })).toBeTruthy();
+    expect(storedQuickStartGuideStatus()).toBeUndefined();
+    expect(useQuickStartGuide.getState().mode).toBe("closed");
   });
 
-  it("starts the contextual guide from the completion invitation", async () => {
+  it("starts the import help from the completion choices", async () => {
     const onFinished = vi.fn().mockResolvedValue(undefined);
     await completeFlow(onFinished);
 
-    fireEvent.click(screen.getByRole("button", { name: /Começar guia/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Fazer primeira importação/i }));
 
     await waitFor(() => expect(onFinished).toHaveBeenCalledWith("/import"));
-    expect(storedQuickStartGuideStatus()).toBe("pending");
-    expect(useQuickStartGuide.getState().mode).toBe("tour");
+    expect(useQuickStartGuide.getState().activeGuide).toBe("import");
+    expect(useQuickStartGuide.getState().guides.import).toEqual({ status: "active", phase: "choose" });
+  });
+
+  it("starts the complete tour or explores without a guide", async () => {
+    const tourFinished = vi.fn().mockResolvedValue(undefined);
+    await completeFlow(tourFinished);
+    fireEvent.click(screen.getByRole("button", { name: /Conhecer o Lumen/i }));
+    await waitFor(() => expect(tourFinished).toHaveBeenCalledWith("/import"));
+    expect(useQuickStartGuide.getState().activeGuide).toBe("complete");
+
+    cleanup();
+    localStorage.clear();
+    resetQuickStartGuideForTests();
+    const exploreFinished = vi.fn().mockResolvedValue(undefined);
+    await completeFlow(exploreFinished);
+    fireEvent.click(screen.getByRole("button", { name: /Explorar por conta própria/i }));
+    await waitFor(() => expect(exploreFinished).toHaveBeenCalledWith("/"));
+    expect(useQuickStartGuide.getState().mode).toBe("closed");
   });
 });

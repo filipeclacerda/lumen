@@ -32,9 +32,9 @@ use crate::{
             first_match, CategorizationInput, CategorizationRule, MovementType, RuleOperator,
         },
         import::{
-            fingerprint, mapping_signature, normalize_description, CsvColumnMapping,
-            CsvMappingDraft, CsvMappingProfile, ImportCandidate, ImportSourceKind,
-            SuggestionSource,
+            fingerprint, is_pix_description, mapping_signature, normalize_description,
+            CsvColumnMapping, CsvMappingDraft, CsvMappingProfile, ImportCandidate,
+            ImportSourceKind, SuggestionSource,
         },
         merchant::merchant_key,
         suggestion::{
@@ -121,6 +121,7 @@ pub struct AppBootstrap {
     onboarding_completed: bool,
     account: Option<Account>,
     has_transactions: bool,
+    has_imports: bool,
 }
 
 #[derive(Serialize)]
@@ -461,6 +462,9 @@ pub(super) async fn apply_category_suggestions_to<'a>(
         if candidate.suggestion_source.is_some() {
             continue;
         }
+        if candidate.is_pix && !credit_card_context {
+            continue;
+        }
         let key = &candidate.merchant_key;
         let Some(stats) = stats_by_merchant.get(key) else {
             continue;
@@ -700,6 +704,15 @@ async fn load_profile(db: &SqlitePool) -> Result<Option<UserProfile>, AppError> 
     .map(profile_from_row))
 }
 
+async fn has_import_batches(db: &SqlitePool) -> Result<bool, AppError> {
+    Ok(
+        sqlx::query_scalar::<_, i64>("SELECT EXISTS(SELECT 1 FROM import_batches LIMIT 1)")
+            .fetch_one(db)
+            .await?
+            != 0,
+    )
+}
+
 #[tauri::command]
 pub async fn get_app_bootstrap(state: State<'_, AppState>) -> Result<AppBootstrap, AppError> {
     let profile = load_profile(&state.db).await?;
@@ -721,11 +734,13 @@ pub async fn get_app_bootstrap(state: State<'_, AppState>) -> Result<AppBootstra
             .fetch_one(&state.db)
             .await?
             > 0;
+    let has_imports = has_import_batches(&state.db).await?;
     Ok(AppBootstrap {
         onboarding_completed: profile.is_some(),
         profile,
         account,
         has_transactions,
+        has_imports,
     })
 }
 
@@ -1543,6 +1558,7 @@ fn manual_fingerprint(
         date: date.to_string(),
         description: description.to_string(),
         normalized_description: normalized.to_string(),
+        is_pix: is_pix_description(description),
         amount_in_cents,
         external_id: None,
         suggested_category_id: None,
@@ -2005,6 +2021,7 @@ async fn update_transaction_amount_impl(
         date: row.get("date"),
         description: row.get("description"),
         normalized_description: row.get("normalized_description"),
+        is_pix: is_pix_description(row.get::<String, _>("description").as_str()),
         amount_in_cents,
         external_id: row.get("external_id"),
         suggested_category_id: None,
@@ -2742,6 +2759,23 @@ mod tests {
             Some("organize")
         )
         .is_ok());
+    }
+
+    #[tokio::test]
+    async fn import_history_is_detected_from_completed_batches() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = crate::infrastructure::database::connect(&directory.path().join("bootstrap.db"))
+            .await
+            .unwrap();
+
+        assert!(!has_import_batches(&db).await.unwrap());
+        sqlx::query(
+            "INSERT INTO import_batches(id,file_name,created_at) VALUES('batch-1','extrato.csv',datetime('now'))",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        assert!(has_import_batches(&db).await.unwrap());
     }
 
     #[tokio::test]
@@ -3784,6 +3818,7 @@ mod tests {
             date: "2026-06-01".into(),
             description: description.into(),
             normalized_description: normalized,
+            is_pix: is_pix_description(description),
             amount_in_cents,
             external_id: None,
             suggested_category_id: None,
@@ -4014,6 +4049,103 @@ mod tests {
             candidates[0].suggestion_source,
             Some(crate::domain::import::SuggestionSource::History)
         ));
+    }
+
+    #[tokio::test]
+    async fn bank_pix_skips_history_preselection_but_keeps_shortlist() {
+        let (_directory, db, account_id) = suggestion_test_setup().await;
+        for i in 0..3 {
+            insert_history(
+                &db,
+                &account_id,
+                &format!("pix-history-{i}"),
+                "PIX QRS FARMACIA SAO JOAO",
+                "health",
+                -3000,
+            )
+            .await;
+        }
+        let mut candidates = vec![candidate("PIX QRS FARMACIA SAO JOAO", -4000)];
+
+        apply_category_suggestions(&db, &account_id, &[], &mut candidates)
+            .await
+            .unwrap();
+
+        assert!(candidates[0].is_pix);
+        assert_eq!(candidates[0].suggested_category_id, None);
+        assert_eq!(candidates[0].suggestion_source, None);
+        assert_eq!(
+            candidates[0]
+                .category_suggestions
+                .first()
+                .map(|suggestion| suggestion.category_id.as_str()),
+            Some("health")
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_rule_still_wins_for_bank_pix() {
+        let (_directory, db, account_id) = suggestion_test_setup().await;
+        let rule = CategorizationRule {
+            id: "pix-rule".into(),
+            name: "PIX da farmácia".into(),
+            priority: 10,
+            enabled: true,
+            operator: RuleOperator::Contains,
+            pattern: "FARMACIA".into(),
+            account_id: None,
+            movement_type: MovementType::Expense,
+            min_amount_in_cents: None,
+            max_amount_in_cents: None,
+            category_id: "health".into(),
+            category_name: Some("Saúde".into()),
+            use_count: 0,
+            is_system: false,
+        };
+        let mut candidates = vec![candidate("PIX QRS FARMACIA SAO JOAO", -4000)];
+
+        apply_category_suggestions(&db, &account_id, &[rule], &mut candidates)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            candidates[0].suggested_category_id.as_deref(),
+            Some("health")
+        );
+        assert_eq!(
+            candidates[0].suggestion_source,
+            Some(SuggestionSource::Rule)
+        );
+    }
+
+    #[tokio::test]
+    async fn credit_card_pix_can_still_use_history_preselection() {
+        let (_directory, db, account_id) = suggestion_test_setup().await;
+        for i in 0..3 {
+            insert_history(
+                &db,
+                &account_id,
+                &format!("card-pix-history-{i}"),
+                "PIX QRS FARMACIA SAO JOAO",
+                "health",
+                -3000,
+            )
+            .await;
+        }
+        let mut candidates = vec![candidate("PIX QRS FARMACIA SAO JOAO", -4000)];
+
+        apply_category_suggestions_to(&db, &account_id, &[], candidates.iter_mut(), true)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            candidates[0].suggested_category_id.as_deref(),
+            Some("health")
+        );
+        assert_eq!(
+            candidates[0].suggestion_source,
+            Some(SuggestionSource::History)
+        );
     }
 
     #[tokio::test]

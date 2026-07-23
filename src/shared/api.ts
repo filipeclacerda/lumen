@@ -255,6 +255,7 @@ export const api = {
       onboardingCompleted: Boolean(profile),
       account: { id: "demo", name: "Conta principal", kind: "checking", balanceInCents: 0 },
       hasTransactions: false,
+      hasImports: false,
     };
   },
   profile: async (): Promise<UserProfile | undefined> => (isTauri() ? invoke("get_profile") : demoProfile()),

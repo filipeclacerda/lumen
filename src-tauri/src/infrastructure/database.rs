@@ -652,12 +652,11 @@ async fn repair_payment_settlement_migration(
     if migrations_table_exists == 0 {
         return Ok(());
     }
-    let applied: Option<Vec<u8>> = sqlx::query_scalar(
-        "SELECT checksum FROM _sqlx_migrations WHERE version=? AND success=1",
-    )
-    .bind(PAYMENT_SETTLEMENT_MIGRATION_VERSION)
-    .fetch_optional(pool)
-    .await?;
+    let applied: Option<Vec<u8>> =
+        sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations WHERE version=? AND success=1")
+            .bind(PAYMENT_SETTLEMENT_MIGRATION_VERSION)
+            .fetch_optional(pool)
+            .await?;
     if applied.as_deref() != Some(LEGACY_PAYMENT_SETTLEMENT_CHECKSUM.as_slice()) {
         return Ok(());
     }

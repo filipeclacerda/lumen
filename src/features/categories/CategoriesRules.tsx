@@ -238,7 +238,7 @@ export function CategoriesRules() {
   }
 
   return (
-    <section className="categories-rules-page">
+    <section className="categories-rules-page" data-tutorial="categories">
       <PageHeader>
         <div>
           <p className="eyebrow">{tab === "categories" ? "PLANO DE CATEGORIAS" : "ORGANIZAÇÃO AUTOMÁTICA"}</p>

@@ -17,6 +17,8 @@ const categories: Category[] = [
   {
     id: "food",
     name: "Alimentacao",
+    color: "#c2410c",
+    icon: "utensils",
     kind: "expense",
     sortOrder: 0,
     isSystem: false,
@@ -192,6 +194,19 @@ describe("groupPendingCandidates", () => {
     expect(debitGroup?.totalInCents).toBe(-2_000);
     expect(creditGroup?.candidates.map((item) => item.sourceRow)).toEqual([9]);
   });
+
+  it("mantem cada PIX em um grupo individual mesmo quando o favorecido e a direcao coincidem", () => {
+    const groups = groupPendingCandidates([
+      candidate({ sourceRow: 2, merchantKey: "MARIA SILVA", isPix: true }),
+      candidate({ sourceRow: 8, merchantKey: "MARIA SILVA", isPix: true }),
+      candidate({ sourceRow: 9, merchantKey: "MARIA SILVA" }),
+      candidate({ sourceRow: 10, merchantKey: "MARIA SILVA" }),
+    ]);
+
+    expect(groups).toHaveLength(3);
+    expect(groups.filter((group) => group.isPix).map((group) => group.candidates[0].sourceRow)).toEqual([2, 8]);
+    expect(groups.find((group) => !group.isPix)?.candidates.map((item) => item.sourceRow)).toEqual([9, 10]);
+  });
 });
 
 describe("ImportReviewGroups", () => {
@@ -245,6 +260,12 @@ describe("ImportReviewGroups", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Alimentacao/ }));
 
+    const suggestionButton = screen.getByRole("button", { name: /Aplicar Alimentacao/ });
+    expect(suggestionButton.getAttribute("data-kind")).toBe("expense");
+    expect(suggestionButton.querySelector("svg")).toBeTruthy();
+    expect(suggestionButton.querySelector(".import-suggestion-chip-icon")?.getAttribute("style")).toContain(
+      "color: rgb(194, 65, 12)",
+    );
     expect(onApply).toHaveBeenCalledOnce();
     expect(onApply).toHaveBeenCalledWith([3, 7], "food", first);
   });
@@ -261,9 +282,34 @@ describe("ImportReviewGroups", () => {
 
     render(<ImportReviewGroups groups={groups} categories={categories} onApply={vi.fn()} />);
 
-    expect(screen.getByText("Sem sugestão segura")).toBeTruthy();
-    expect(screen.getByText("Todas as categorias")).toBeTruthy();
+    expect(screen.getByText("Sem sugestão segura — procure na lista completa")).toBeTruthy();
+    expect(screen.getByText("Escolha uma categoria")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Escolher categoria para LOJA DESCONHECIDA" })).toBeTruthy();
+    expect(document.querySelector(".import-review-group-actions--manual-only")).toBeTruthy();
+    expect(document.querySelector(".import-review-quick-actions")).toBeNull();
+  });
+
+  it("identifica PIX na copia e aplica sugestoes somente ao lancamento atual", () => {
+    const pix = candidate({
+      sourceRow: 12,
+      merchantKey: "JOAO SILVA",
+      isPix: true,
+      categorySuggestions: [
+        {
+          categoryId: "food",
+          categoryName: "Alimentacao",
+          source: "similar_history",
+          reason: "Categoria usada em um lançamento semelhante",
+        },
+      ],
+    });
+    const onApply = vi.fn().mockResolvedValue(undefined);
+
+    render(<ImportReviewGroups groups={groupPendingCandidates([pix])} categories={categories} onApply={onApply} />);
+
+    expect(screen.getByText("LANÇAMENTO PIX")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Aplicar Alimentacao/ }));
+    expect(onApply).toHaveBeenCalledWith([12], "food", pix);
   });
 
   it("move o foco para o proximo grupo depois de aplicar uma sugestao", async () => {

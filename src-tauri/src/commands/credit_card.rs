@@ -1546,6 +1546,7 @@ mod tests {
                 date: "2026-06-01".into(),
                 description: description.into(),
                 normalized_description: description.to_uppercase(),
+                is_pix: false,
                 amount_in_cents: -1000,
                 external_id: external_id.map(str::to_owned),
                 suggested_category_id: None,

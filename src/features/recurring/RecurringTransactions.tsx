@@ -147,7 +147,7 @@ export function RecurringTransactions() {
   }
 
   return (
-    <section>
+    <section data-tutorial="recurring">
       <PageHeader>
         <div>
           <p className="eyebrow">LANÇAMENTOS AUTOMÁTICOS</p>

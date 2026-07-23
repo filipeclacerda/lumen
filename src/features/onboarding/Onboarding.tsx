@@ -1,4 +1,14 @@
-import { ArrowRight, CheckCircle2, Landmark, ShieldCheck, Sparkles, UserRound, WalletCards } from "lucide-react";
+import {
+  ArrowRight,
+  CheckCircle2,
+  Compass,
+  FileUp,
+  Landmark,
+  ShieldCheck,
+  Sparkles,
+  UserRound,
+  WalletCards,
+} from "lucide-react";
 import { useState } from "react";
 import { api } from "../../shared/api";
 import { MoneyInput } from "../../shared/ui/MoneyInput";
@@ -6,7 +16,7 @@ import { Select } from "../../shared/ui/Select";
 import type { AccountType, AppBootstrap, FinancialGoal } from "../../shared/types";
 import { BrandLogo } from "../../shared/ui/BrandLogo";
 import { incomeDayOptions, parseIncomeDaySelection } from "../../shared/incomeDay";
-import { queueQuickStartGuide, useQuickStartGuide } from "../../shared/quickStartGuide";
+import { restartImportGuide, restartQuickStartGuide } from "../../shared/quickStartGuide";
 
 const goals: { value: FinancialGoal; label: string }[] = [
   { value: "organize", label: "Organizar minhas finanças" },
@@ -36,7 +46,6 @@ export function Onboarding({
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [completed, setCompleted] = useState(false);
-  const startQuickStartGuide = useQuickStartGuide((state) => state.start);
 
   function nextProfile() {
     if (name.trim().length < 2) {
@@ -63,7 +72,6 @@ export function Onboarding({
         accountKind,
         openingBalanceInCents: !bootstrap.hasTransactions ? (openingBalanceInCents ?? undefined) : undefined,
       });
-      queueQuickStartGuide();
       setCompleted(true);
     } catch (e) {
       setError(typeof e === "object" && e && "message" in e ? String((e as { message: unknown }).message) : String(e));
@@ -72,9 +80,18 @@ export function Onboarding({
     }
   }
 
-  async function beginQuickStartGuide() {
-    startQuickStartGuide();
+  async function beginImportGuide() {
+    restartImportGuide();
     await onFinished("/import");
+  }
+
+  async function beginQuickStartGuide() {
+    restartQuickStartGuide();
+    await onFinished("/import");
+  }
+
+  async function exploreIndependently() {
+    await onFinished("/");
   }
 
   if (completed)
@@ -87,7 +104,7 @@ export function Onboarding({
             </div>
             <p className="eyebrow">TUDO PRONTO</p>
             <h1>Seu espaço financeiro está pronto</h1>
-            <p className="muted">Antes de começar, veja onde estão as funções principais do Lumen.</p>
+            <p className="muted">Escolha como prefere começar. Você poderá rever estas ajudas nas Configurações.</p>
           </div>
 
           <section className="completion-guide" aria-labelledby="completion-guide-title">
@@ -95,38 +112,23 @@ export function Onboarding({
               <Sparkles />
             </div>
             <div className="completion-guide-content">
-              <span>GUIA RÁPIDO · 7 PASSOS</span>
-              <h2 id="completion-guide-title">Conheça o essencial</h2>
-              <p>Veja como importar, organizar e acompanhar seu mês em menos de um minuto.</p>
-              <ol aria-label="Etapas do guia rápido">
-                <li>
-                  <b>1</b> Importar
-                </li>
-                <li>
-                  <b>2</b> Organizar
-                </li>
-                <li>
-                  <b>3</b> Acompanhar
-                </li>
-                <li>
-                  <b>4</b> Filtros
-                </li>
-                <li>
-                  <b>5</b> Indicadores
-                </li>
-                <li>
-                  <b>6</b> Relatórios
-                </li>
-                <li>
-                  <b>7</b> Categorias
-                </li>
-              </ol>
+              <span>PRÓXIMO PASSO</span>
+              <h2 id="completion-guide-title">Como você quer começar?</h2>
+              <p>Escolha uma orientação prática ou explore o Lumen no seu ritmo.</p>
             </div>
-            <button onClick={beginQuickStartGuide}>
-              Começar guia <ArrowRight size={17} />
-            </button>
+            <div className="completion-choices">
+              <button onClick={beginImportGuide}>
+                <FileUp size={17} /> Fazer primeira importação
+              </button>
+              <button className="secondary" onClick={beginQuickStartGuide}>
+                <Sparkles size={17} /> Conhecer o Lumen
+              </button>
+              <button className="text-button" onClick={exploreIndependently}>
+                <Compass size={17} /> Explorar por conta própria
+              </button>
+            </div>
           </section>
-          <p className="completion-guide-note">Você pode pular ou fechar o guia a qualquer momento.</p>
+          <p className="completion-guide-note">As orientações podem ser pausadas ou encerradas a qualquer momento.</p>
         </div>
       </div>
     );

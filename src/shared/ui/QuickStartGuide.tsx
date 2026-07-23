@@ -5,10 +5,15 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  CreditCard,
   FileUp,
   LayoutDashboard,
-  ListChecks,
+  Repeat,
+  Settings,
   Sparkles,
+  Tags,
+  Wallet,
+  WalletCards,
   X,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -19,52 +24,66 @@ type TargetRect = { top: number; left: number; width: number; height: number; bo
 const steps = [
   {
     route: "/import",
-    target: '[data-quick-guide="import"]',
-    title: "Traga seu histórico",
+    target: '[data-tutorial="import"]',
+    title: "Importe seu histórico",
     description: "Importe CSV, OFX ou PDF. Você revisa tudo antes de confirmar.",
     icon: FileUp,
   },
   {
     route: "/transactions",
-    target: '[data-quick-guide="transactions"]',
-    title: "Revise e organize",
-    description: "Confira lançamentos, ajuste categorias e use Nova transação para registrar algo manualmente.",
-    icon: ListChecks,
+    target: '[data-tutorial="transactions"]',
+    title: "Organize suas transações",
+    description: "Consulte lançamentos, ajuste categorias e registre receitas ou despesas manualmente.",
+    icon: CreditCard,
   },
   {
-    route: "/transactions",
-    target: '[data-quick-guide="transactions-filters"]',
-    title: "Encontre o que precisa",
-    description: "Busque lançamentos e use Filtros para separar períodos, valores, contas e categorias.",
-    icon: ListChecks,
+    route: "/accounts",
+    target: '[data-tutorial="accounts"]',
+    title: "Acompanhe contas e cartões",
+    description: "Mantenha saldos, limites e faturas organizados em um só lugar.",
+    icon: WalletCards,
+  },
+  {
+    route: "/recurring",
+    target: '[data-tutorial="recurring"]',
+    title: "Planeje recorrências",
+    description: "Cadastre compromissos frequentes para não perder receitas e despesas futuras.",
+    icon: Repeat,
+  },
+  {
+    route: "/budget",
+    target: '[data-tutorial="budget"]',
+    title: "Defina seu orçamento",
+    description: "Estabeleça limites por categoria e acompanhe o consumo ao longo do mês.",
+    icon: Wallet,
+  },
+  {
+    route: "/categories",
+    target: '[data-tutorial="categories"]',
+    title: "Personalize categorias e regras",
+    description: "Organize seus lançamentos e automatize classificações que se repetem.",
+    icon: Tags,
   },
   {
     route: "/",
-    target: '[data-quick-guide="overview"]',
-    title: "Acompanhe seu mês",
-    description: "A Visão geral reúne receitas, despesas, saldo e o ritmo do período.",
+    target: '[data-tutorial="overview"]',
+    title: "Acompanhe sua visão geral",
+    description: "Veja receitas, despesas, saldo e o ritmo financeiro do período.",
     icon: LayoutDashboard,
   },
   {
     route: "/reports",
-    target: '[data-quick-guide="reports-filters"]',
-    title: "Escolha o período",
-    description: "Compare meses, contas e origens para enxergar cada recorte das suas finanças.",
+    target: '[data-tutorial="reports"]',
+    title: "Explore seus relatórios",
+    description: "Compare períodos e entenda como seu dinheiro se distribui.",
     icon: BarChart3,
   },
   {
-    route: "/reports",
-    target: '[data-quick-guide="reports-kpis"]',
-    title: "Leia seus indicadores",
-    description: "Os cards resumem ganhos, despesas, maior categoria e o total investido.",
-    icon: BarChart3,
-  },
-  {
-    route: "/reports",
-    target: '[data-quick-guide="reports-categories"]',
-    title: "Explore categorias",
-    description: "Abra Categorias para entender onde seu dinheiro está concentrado e comparar os gastos.",
-    icon: BarChart3,
+    route: "/settings",
+    target: '[data-tutorial="settings"]',
+    title: "Proteja seus dados",
+    description: "Em Configurações, crie backups e ajuste o Lumen às suas preferências.",
+    icon: Settings,
   },
 ] as const;
 
@@ -83,7 +102,8 @@ function visibleRect(element: Element): TargetRect | undefined {
 
 export function QuickStartGuide() {
   const navigate = useNavigate();
-  const { mode, stepIndex, start, goToStep, dismiss, complete } = useQuickStartGuide();
+  const { activeGuide, mode, guides, resume, goToStep, pause, dismiss, complete } = useQuickStartGuide();
+  const stepIndex = guides.complete.stepIndex;
   const [targetRect, setTargetRect] = useState<TargetRect>();
   const [cardPosition, setCardPosition] = useState<CSSProperties>();
   const cardRef = useRef<HTMLElement>(null);
@@ -96,24 +116,24 @@ export function QuickStartGuide() {
   }, [mode]);
 
   useEffect(() => {
-    if (mode !== "tour") return;
+    if (mode !== "tour" || activeGuide !== "complete") return;
     navigate(step.route);
-  }, [mode, navigate, step.route]);
+  }, [activeGuide, mode, navigate, step.route]);
 
   useEffect(() => {
-    if (mode === "closed") return;
+    if (mode === "closed" || (mode === "tour" && activeGuide !== "complete")) return;
     cardRef.current?.focus({ preventScroll: true });
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
-      dismiss();
+      pause("complete");
     };
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [dismiss, mode, stepIndex]);
+  }, [activeGuide, mode, pause, stepIndex]);
 
   useLayoutEffect(() => {
-    if (mode !== "tour") {
+    if (mode !== "tour" || activeGuide !== "complete") {
       setTargetRect(undefined);
       setCardPosition(undefined);
       return;
@@ -176,15 +196,17 @@ export function QuickStartGuide() {
       document.removeEventListener("scroll", update, true);
       window.removeEventListener("resize", update);
     };
-  }, [mode, step.target, stepIndex]);
+  }, [activeGuide, mode, step.target, stepIndex]);
 
-  if (mode === "closed") return null;
+  if (mode === "closed" || (mode === "tour" && activeGuide !== "complete")) return null;
 
   const invitation = mode === "invitation";
   const Icon = invitation ? Sparkles : step.icon;
-  const title = invitation ? "Conheça o essencial" : step.title;
+  const title = invitation ? (stepIndex > 0 ? "Continue conhecendo o Lumen" : "Conheça o essencial") : step.title;
   const description = invitation
-    ? "Veja em 7 passos como adicionar, organizar e acompanhar seu dinheiro."
+    ? stepIndex > 0
+      ? `Retome o tutorial completo na etapa ${stepIndex + 1} de 9.`
+      : "Veja em 9 passos como adicionar, organizar e acompanhar seu dinheiro."
     : step.description;
 
   return createPortal(
@@ -224,7 +246,7 @@ export function QuickStartGuide() {
             )}
             <h2 id="quick-start-guide-title">{title}</h2>
           </div>
-          <button className="icon-button" type="button" aria-label="Fechar guia" onClick={dismiss}>
+          <button className="icon-button" type="button" aria-label="Pausar guia" onClick={() => pause("complete")}>
             <X size={16} />
           </button>
         </div>
@@ -241,12 +263,12 @@ export function QuickStartGuide() {
           </div>
         )}
         <div className="quick-start-guide__actions">
-          <button className="text-button" type="button" onClick={dismiss}>
+          <button className="text-button" type="button" onClick={() => dismiss("complete")}>
             Pular guia
           </button>
           {invitation ? (
-            <button type="button" onClick={start}>
-              Ver guia <ChevronRight size={16} />
+            <button type="button" onClick={() => resume("complete")}>
+              {stepIndex > 0 ? "Continuar tutorial" : "Ver guia"} <ChevronRight size={16} />
             </button>
           ) : (
             <div>
@@ -259,7 +281,7 @@ export function QuickStartGuide() {
                 <ChevronLeft size={16} /> Voltar
               </button>
               {stepIndex === steps.length - 1 ? (
-                <button type="button" onClick={complete}>
+                <button type="button" onClick={() => complete("complete")}>
                   Concluir <Check size={16} />
                 </button>
               ) : (

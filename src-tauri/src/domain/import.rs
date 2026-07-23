@@ -8,6 +8,8 @@ pub struct ImportCandidate {
     pub date: String,
     pub description: String,
     pub normalized_description: String,
+    #[serde(default)]
+    pub is_pix: bool,
     pub amount_in_cents: i64,
     pub external_id: Option<String>,
     pub suggested_category_id: Option<String>,
@@ -136,6 +138,12 @@ pub fn normalize_description(value: &str) -> String {
         .to_uppercase()
 }
 
+pub fn is_pix_description(value: &str) -> bool {
+    value
+        .split(|character: char| !character.is_alphanumeric())
+        .any(|token| token.eq_ignore_ascii_case("pix"))
+}
+
 pub fn mapping_signature(
     headers: &[String],
     delimiter: &str,
@@ -168,5 +176,30 @@ mod tests {
     #[test]
     fn descriptions_are_stable() {
         assert_eq!(normalize_description("  Café   Central "), "CAFÉ CENTRAL");
+    }
+
+    #[test]
+    fn detects_pix_as_a_standalone_token() {
+        for description in [
+            "PIX RECEBIDO",
+            "Pagamento Pix - Maria",
+            "PIX_QRS JOAO DA SILVA",
+            "transferência/pix",
+        ] {
+            assert!(
+                is_pix_description(description),
+                "expected PIX in {description:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_detect_pix_inside_another_word() {
+        for description in ["PIXEL DESIGN", "COMPRA PIXAR", "CHAVEPIX", "PICPAY"] {
+            assert!(
+                !is_pix_description(description),
+                "did not expect PIX in {description:?}"
+            );
+        }
     }
 }
