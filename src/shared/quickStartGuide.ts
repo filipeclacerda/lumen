@@ -45,7 +45,7 @@ type QuickStartGuideStore = {
 
 const DEFAULT_COMPLETE_PROGRESS: CompleteGuideProgress = { status: "paused", stepIndex: 0 };
 const DEFAULT_IMPORT_PROGRESS: ImportGuideProgress = { status: "paused", phase: "choose" };
-const COMPLETE_TOUR_LAST_STEP = 8;
+const COMPLETE_TOUR_LAST_STEP = 4;
 const validStatuses: ReadonlyArray<QuickStartGuideStatus> = ["active", "paused", "completed", "dismissed"];
 const validImportPhases: ReadonlyArray<ImportGuidePhase> = ["choose", "configure", "review", "confirm", "success"];
 
@@ -217,10 +217,11 @@ export const useQuickStartGuide = create<QuickStartGuideStore>((set) => {
             : { ...state.guides, import: progress as ImportGuideProgress };
         writeStoredGuide(guides);
         const isActiveGuide = state.activeGuide === resolved;
+        const isInvitation = resolved === "complete" && state.mode === "invitation";
         return {
           guides,
           activeGuide: isActiveGuide ? null : state.activeGuide,
-          mode: isActiveGuide ? "closed" : state.mode,
+          mode: isActiveGuide || isInvitation ? "closed" : state.mode,
         };
       }),
     resume: (guide) => updateGuide(guide, (progress) => ({ ...progress, status: "active" }), guide, "tour"),

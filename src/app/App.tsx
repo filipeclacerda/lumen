@@ -244,7 +244,7 @@ export function App() {
           </Routes>
         </div>
       </main>
-      <QuickStartGuide />
+      <QuickStartGuide hasTransactions={bootstrap.hasTransactions} />
       <MaintenanceRestartNotice />
     </div>
   );

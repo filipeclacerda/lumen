@@ -30,7 +30,7 @@ import { ErrorState, LoadingState } from "../../shared/ui/AsyncState";
 import { Select } from "../../shared/ui/Select";
 import { Tabs } from "../../shared/ui/Tabs";
 import { ImportTutorial, shouldAutoStartImportGuide } from "./ImportTutorial";
-import { useQuickStartGuide } from "../../shared/quickStartGuide";
+import { useQuickStartGuide, type ImportGuidePhase } from "../../shared/quickStartGuide";
 import {
   money,
   centsToInput,
@@ -285,6 +285,24 @@ function CreditCardItemsTable({
   );
 }
 
+export function importGuidePhaseForScreen({
+  currentPhase,
+  pendingCommit,
+  hasPreview,
+  hasConfiguration,
+}: {
+  currentPhase?: ImportGuidePhase;
+  pendingCommit: boolean;
+  hasPreview: boolean;
+  hasConfiguration: boolean;
+}): ImportGuidePhase {
+  if (currentPhase === "success") return "success";
+  if (pendingCommit) return "confirm";
+  if (hasPreview) return "review";
+  if (hasConfiguration) return "configure";
+  return "choose";
+}
+
 export function ImportPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -415,16 +433,23 @@ export function ImportPage() {
 
   useEffect(() => {
     if (activeGuide !== "import") return;
-    if (pendingCommit) {
-      setImportPhase("confirm");
-    } else if (bankPreview || cardPreview) {
-      setImportPhase("review");
-    } else if (pendingCardPath || mappingState) {
-      setImportPhase("configure");
-    } else {
-      setImportPhase("choose");
-    }
-  }, [activeGuide, bankPreview, cardPreview, mappingState, pendingCardPath, pendingCommit, setImportPhase]);
+    const phase = importGuidePhaseForScreen({
+      currentPhase: importGuideProgress?.phase,
+      pendingCommit: Boolean(pendingCommit),
+      hasPreview: Boolean(bankPreview || cardPreview),
+      hasConfiguration: Boolean(pendingCardPath || mappingState),
+    });
+    if (phase !== importGuideProgress?.phase) setImportPhase(phase);
+  }, [
+    activeGuide,
+    bankPreview,
+    cardPreview,
+    importGuideProgress?.phase,
+    mappingState,
+    pendingCardPath,
+    pendingCommit,
+    setImportPhase,
+  ]);
 
   useEffect(() => {
     setPreviewMode("review");

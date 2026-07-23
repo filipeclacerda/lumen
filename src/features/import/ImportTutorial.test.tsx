@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { resetQuickStartGuideForTests, useQuickStartGuide } from "../../shared/quickStartGuide";
 import { ImportTutorial, shouldAutoStartImportGuide } from "./ImportTutorial";
@@ -10,6 +10,18 @@ describe("ImportTutorial", () => {
   beforeEach(() => {
     localStorage.clear();
     resetQuickStartGuideForTests();
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockReturnValue({
+        matches: true,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }),
+    });
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
   });
 
   afterEach(cleanup);
@@ -65,12 +77,14 @@ describe("ImportTutorial", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByRole("heading", { name: "Escolha seu arquivo" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Comece pelo arquivo exportado" })).toBeTruthy();
     await waitFor(() =>
-      expect(screen.getByRole("region", { name: "Escolha seu arquivo" }).closest("#tutorial-host")).toBeTruthy(),
+      expect(
+        screen.getByRole("region", { name: "Comece pelo arquivo exportado" }).closest("#tutorial-host"),
+      ).toBeTruthy(),
     );
     useQuickStartGuide.getState().setImportPhase("review");
-    await waitFor(() => expect(screen.getByRole("heading", { name: "Revise antes de salvar" })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Revise o que vai entrar" })).toBeTruthy());
   });
 
   it("can be paused or permanently dismissed", () => {
@@ -80,7 +94,7 @@ describe("ImportTutorial", () => {
         <ImportTutorial />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Continuar sem ajuda" }));
+    fireEvent.click(screen.getByRole("button", { name: "Pausar ajuda" }));
     expect(useQuickStartGuide.getState().guides.import?.status).toBe("paused");
 
     useQuickStartGuide.getState().resume("import");
@@ -89,7 +103,7 @@ describe("ImportTutorial", () => {
         <ImportTutorial />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Sair do tutorial" }));
+    fireEvent.click(screen.getByRole("button", { name: "Encerrar ajuda" }));
     expect(useQuickStartGuide.getState().guides.import?.status).toBe("dismissed");
   });
 

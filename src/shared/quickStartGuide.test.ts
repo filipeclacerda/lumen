@@ -31,6 +31,15 @@ describe("quickStartGuide state", () => {
     });
   });
 
+  it("lets the user postpone the invitation without dismissing the tutorial", () => {
+    queueQuickStartGuide();
+
+    useQuickStartGuide.getState().pause("complete");
+
+    expect(useQuickStartGuide.getState().mode).toBe("closed");
+    expect(storedQuickStartGuideState()?.complete.status).toBe("paused");
+  });
+
   it.each([
     ["pending", "paused"],
     ["completed", "completed"],
@@ -62,20 +71,20 @@ describe("quickStartGuide state", () => {
 
   it("persists progress, pause, resume, completion and restart", () => {
     restartQuickStartGuide();
-    useQuickStartGuide.getState().goToStep(5);
-    expect(storedQuickStartGuideState()?.complete).toEqual({ status: "active", stepIndex: 5 });
+    useQuickStartGuide.getState().goToStep(4);
+    expect(storedQuickStartGuideState()?.complete).toEqual({ status: "active", stepIndex: 4 });
 
     useQuickStartGuide.getState().pause("complete");
-    expect(storedQuickStartGuideState()?.complete).toEqual({ status: "paused", stepIndex: 5 });
+    expect(storedQuickStartGuideState()?.complete).toEqual({ status: "paused", stepIndex: 4 });
     expect(useQuickStartGuide.getState().activeGuide).toBeNull();
 
     resetQuickStartGuideForTests();
     expect(useQuickStartGuide.getState().mode).toBe("invitation");
-    expect(useQuickStartGuide.getState().guides.complete.stepIndex).toBe(5);
+    expect(useQuickStartGuide.getState().guides.complete.stepIndex).toBe(4);
 
     useQuickStartGuide.getState().resume("complete");
     expect(useQuickStartGuide.getState().activeGuide).toBe("complete");
-    expect(storedQuickStartGuideState()?.complete).toEqual({ status: "active", stepIndex: 5 });
+    expect(storedQuickStartGuideState()?.complete).toEqual({ status: "active", stepIndex: 4 });
 
     useQuickStartGuide.getState().complete("complete");
     expect(storedQuickStartGuideState()?.complete.status).toBe("completed");
@@ -86,13 +95,13 @@ describe("quickStartGuide state", () => {
 
   it("restores the active guide and its persisted progress", () => {
     restartQuickStartGuide();
-    useQuickStartGuide.getState().goToStep(6);
+    useQuickStartGuide.getState().goToStep(99);
 
     resetQuickStartGuideForTests();
 
     expect(useQuickStartGuide.getState().activeGuide).toBe("complete");
     expect(useQuickStartGuide.getState().mode).toBe("tour");
-    expect(useQuickStartGuide.getState().guides.complete).toEqual({ status: "active", stepIndex: 6 });
+    expect(useQuickStartGuide.getState().guides.complete).toEqual({ status: "active", stepIndex: 4 });
   });
 
   it("restarts an interrupted import tutorial without restoring an ephemeral session", () => {

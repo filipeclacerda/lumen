@@ -8,24 +8,13 @@ import {
   resetQuickStartGuideForTests,
   restartQuickStartGuide,
   storedQuickStartGuideStatus,
+  useQuickStartGuide,
 } from "../quickStartGuide";
 import { QuickStartGuide } from "./QuickStartGuide";
 
 function Location() {
   const location = useLocation();
-  return <output data-testid="location">{location.pathname}</output>;
-}
-
-function renderGuide() {
-  return render(
-    <MemoryRouter initialEntries={["/settings"]}>
-      <div id="tutorial-host" />
-      <Routes>
-        <Route path="*" element={<GuideSurface />} />
-      </Routes>
-      <QuickStartGuide />
-    </MemoryRouter>,
-  );
+  return <output data-testid="location">{`${location.pathname}${location.search}`}</output>;
 }
 
 function GuideSurface() {
@@ -33,138 +22,160 @@ function GuideSurface() {
   return (
     <>
       <Location />
-      {location.pathname === "/import" && (
-        <div data-tutorial="import">
-          <h1>Import target</h1>
-        </div>
-      )}
-      {location.pathname === "/transactions" && (
-        <div data-tutorial="transactions">
-          <h1>Transactions target</h1>
-        </div>
-      )}
-      {location.pathname === "/accounts" && (
-        <div data-tutorial="accounts">
-          <h1>Accounts target</h1>
-        </div>
-      )}
-      {location.pathname === "/recurring" && (
-        <div data-tutorial="recurring">
-          <h1>Recurring target</h1>
-        </div>
-      )}
-      {location.pathname === "/budget" && (
-        <div data-tutorial="budget">
-          <h1>Budget target</h1>
-        </div>
-      )}
-      {location.pathname === "/categories" && (
-        <div data-tutorial="categories">
-          <h1>Categories target</h1>
-        </div>
-      )}
-      {location.pathname === "/" && (
-        <div data-tutorial="overview">
-          <h1>Overview target</h1>
-        </div>
-      )}
-      {location.pathname === "/reports" && (
-        <div data-tutorial="reports">
-          <h1>Reports target</h1>
-        </div>
-      )}
-      {location.pathname === "/settings" && (
-        <div data-tutorial="settings">
-          <h1>Settings target</h1>
-        </div>
-      )}
+      {location.pathname === "/import" && <div data-import-tutorial="choose">Escolha o arquivo</div>}
+      {location.pathname === "/transactions" && <div data-quick-guide="transactions-filters">Busca e filtros</div>}
+      {location.pathname === "/" && <div data-quick-guide="overview">Resumo mensal</div>}
+      {location.pathname === "/reports" && <div data-quick-guide="reports-filters">Filtros dos relatórios</div>}
+      {location.pathname === "/settings" && <div data-quick-guide="backup">Backup completo</div>}
     </>
   );
+}
+
+function renderGuide(hasTransactions = false) {
+  return render(
+    <MemoryRouter initialEntries={["/settings"]}>
+      <div id="tutorial-host" />
+      <Routes>
+        <Route path="*" element={<GuideSurface />} />
+      </Routes>
+      <QuickStartGuide hasTransactions={hasTransactions} />
+    </MemoryRouter>,
+  );
+}
+
+function mockMedia(matches: boolean) {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: vi.fn().mockReturnValue({
+      matches,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }),
+  });
 }
 
 describe("QuickStartGuide", () => {
   beforeEach(() => {
     localStorage.clear();
     resetQuickStartGuideForTests();
-    Object.defineProperty(window, "matchMedia", {
-      configurable: true,
-      value: vi.fn().mockReturnValue({ matches: true }),
-    });
+    mockMedia(true);
     Object.defineProperty(Element.prototype, "scrollIntoView", {
       configurable: true,
       value: vi.fn(),
     });
   });
 
-  afterEach(cleanup);
+  afterEach(() => {
+    document.documentElement.style.removeProperty("--app-zoom");
+    cleanup();
+  });
 
   it("does not interrupt an existing user without a pending record", () => {
     renderGuide();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("offers a non-modal invitation before navigating", async () => {
+  it("offers a concise invitation before navigating", async () => {
     queueQuickStartGuide();
     renderGuide();
 
-    const invitation = screen.getByRole("dialog", { name: "Conheça o essencial" });
+    const invitation = screen.getByRole("dialog", { name: "Aprenda com seus próprios dados" });
     expect(invitation.getAttribute("aria-modal")).toBe("false");
-    expect(invitation.closest("#tutorial-host")).toBeTruthy();
     expect(screen.getByTestId("location").textContent).toBe("/settings");
 
-    fireEvent.click(screen.getByRole("button", { name: "Ver guia" }));
+    fireEvent.click(screen.getByRole("button", { name: "Começar" }));
 
     await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/import"));
-    expect(screen.getByRole("heading", { name: "Importe seu histórico" })).toBeTruthy();
-    expect(screen.getByLabelText("Etapa 1 de 9")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Comece pelo arquivo exportado" })).toBeTruthy();
+    expect(screen.getByLabelText("Etapa 1 de 5")).toBeTruthy();
   });
 
-  it("disables route entrance motion while the tour is active", () => {
-    restartQuickStartGuide();
-    renderGuide();
-    expect(document.body.classList.contains("quick-start-guide-active")).toBe(true);
-
-    fireEvent.click(screen.getByRole("button", { name: "Pular guia" }));
-
-    expect(document.body.classList.contains("quick-start-guide-active")).toBe(false);
-  });
-
-  it("moves forward and back through the contextual routes, then completes", async () => {
+  it("hands the first step to the contextual import guide", async () => {
     restartQuickStartGuide();
     renderGuide();
     await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/import"));
 
-    fireEvent.click(screen.getByRole("button", { name: "Avançar" }));
-    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/transactions"));
-    expect(screen.getByRole("heading", { name: "Organize suas transações" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Começar importação" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Avançar" }));
-    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/accounts"));
-    expect(screen.getByRole("heading", { name: "Acompanhe contas e cartões" })).toBeTruthy();
+    expect(useQuickStartGuide.getState().activeGuide).toBe("import");
+    expect(useQuickStartGuide.getState().guides.complete.status).toBe("paused");
+    expect(screen.queryByRole("heading", { name: "Comece pelo arquivo exportado" })).toBeNull();
+  });
 
-    fireEvent.click(screen.getByRole("button", { name: "Voltar" }));
-    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/transactions"));
-    expect(screen.getByRole("heading", { name: "Organize suas transações" })).toBeTruthy();
+  it("shows the import overview without starting the contextual guide when there are transactions", async () => {
+    restartQuickStartGuide();
+    renderGuide(true);
 
-    for (const route of ["/accounts", "/recurring", "/budget", "/categories", "/", "/reports", "/settings"]) {
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/import"));
+    expect(screen.getByRole("heading", { name: "Comece pelo arquivo exportado" })).toBeTruthy();
+    expect(screen.getByLabelText("Etapa 1 de 5")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Começar importação" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Voltar" }).hasAttribute("disabled")).toBe(true);
+    expect(useQuickStartGuide.getState().activeGuide).toBe("complete");
+    expect(useQuickStartGuide.getState().guides.import?.status).not.toBe("active");
+
+    for (const route of ["/transactions", "/", "/reports", "/settings?section=data"]) {
       fireEvent.click(screen.getByRole("button", { name: "Avançar" }));
       await waitFor(() => expect(screen.getByTestId("location").textContent).toBe(route));
     }
-    expect(screen.getByRole("heading", { name: "Proteja seus dados" })).toBeTruthy();
-    expect(screen.getByLabelText("Etapa 9 de 9")).toBeTruthy();
+
+    expect(screen.getByRole("heading", { name: "Proteja seu histórico local" })).toBeTruthy();
+    expect(screen.getByLabelText("Etapa 5 de 5")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Concluir" }));
 
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(storedQuickStartGuideStatus()).toBe("completed");
   });
 
-  it("aligns the highlight with the target bounds and radius", async () => {
+  it("pauses without permanently dismissing and can be ended explicitly", () => {
+    restartQuickStartGuide();
+    const view = renderGuide();
+
+    fireEvent.click(screen.getByRole("button", { name: "Pausar tutorial" }));
+    expect(storedQuickStartGuideStatus()).toBe("pending");
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    useQuickStartGuide.getState().resume("complete");
+    view.rerender(
+      <MemoryRouter initialEntries={["/import"]}>
+        <div id="tutorial-host" />
+        <div data-import-tutorial="choose">Escolha o arquivo</div>
+        <QuickStartGuide hasTransactions={false} />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Encerrar tutorial" }));
+    expect(storedQuickStartGuideStatus()).toBe("dismissed");
+  });
+
+  it("cycles the floating card to a docked fallback with the mover control", async () => {
+    mockMedia(false);
+    restartQuickStartGuide();
+    renderGuide();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Mover tutorial" })).toBeTruthy());
+
+    for (let index = 0; index < 4; index += 1) {
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: /^(Mover|Tentar flutuar) tutorial$/,
+        }),
+      );
+    }
+
+    expect(document.querySelector(".quick-start-guide__announcement")?.textContent).toContain(
+      "Tutorial fixado na página.",
+    );
+    expect(screen.getByRole("button", { name: "Tentar flutuar tutorial" })).toBeTruthy();
+    expect(screen.getByRole("dialog").classList.contains("is-docked")).toBe(true);
+  });
+
+  it("aligns the target highlight when the app zoom is not 100%", async () => {
+    mockMedia(false);
+    document.documentElement.style.setProperty("--app-zoom", "0.9");
     restartQuickStartGuide();
     renderGuide();
     await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/import"));
 
-    const target = document.querySelector('[data-tutorial="import"] h1') as HTMLElement;
-    target.style.borderRadius = "9px";
+    const target = document.querySelector('[data-import-tutorial="choose"]') as HTMLElement;
     vi.spyOn(target, "getBoundingClientRect").mockReturnValue({
       top: 24,
       right: 260,
@@ -180,62 +191,28 @@ describe("QuickStartGuide", () => {
 
     await waitFor(() => {
       const highlight = document.querySelector(".quick-start-guide__highlight") as HTMLElement;
-      expect(highlight.style.top).toBe("24px");
-      expect(highlight.style.left).toBe("40px");
-      expect(highlight.style.width).toBe("220px");
-      expect(highlight.style.height).toBe("44px");
-      expect(highlight.style.borderRadius).toBe("9px");
+      expect(Number.parseFloat(highlight.style.top)).toBeCloseTo(24 / 0.9);
+      expect(Number.parseFloat(highlight.style.left)).toBeCloseTo(40 / 0.9);
+      expect(Number.parseFloat(highlight.style.width)).toBeCloseTo(220 / 0.9);
+      expect(Number.parseFloat(highlight.style.height)).toBeCloseTo(44 / 0.9);
     });
-
-    vi.spyOn(target, "getBoundingClientRect").mockReturnValue({
-      top: 18,
-      right: 260,
-      bottom: 62,
-      left: 40,
-      width: 220,
-      height: 44,
-      x: 40,
-      y: 18,
-      toJSON: () => ({}),
-    });
-    fireEvent.animationEnd(target);
-
-    await waitFor(() => {
-      const highlight = document.querySelector(".quick-start-guide__highlight") as HTMLElement;
-      expect(highlight.style.top).toBe("18px");
-    });
+    document.documentElement.style.removeProperty("--app-zoom");
   });
 
-  it("dismisses with Pular guia", () => {
-    restartQuickStartGuide();
-    renderGuide();
-    fireEvent.click(screen.getByRole("button", { name: "Pular guia" }));
-    expect(storedQuickStartGuideStatus()).toBe("dismissed");
-  });
-
-  it.each(["Pausar guia", "Escape"])("pauses with %s", (action) => {
-    restartQuickStartGuide();
-    renderGuide();
-    if (action === "Escape") fireEvent.keyDown(document, { key: "Escape" });
-    else fireEvent.click(screen.getByRole("button", { name: action }));
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(storedQuickStartGuideStatus()).toBe("pending");
-  });
-
-  it("keeps the controls available when a page target is missing", async () => {
+  it("keeps the controls available when a target is missing", async () => {
     restartQuickStartGuide();
     render(
       <MemoryRouter initialEntries={["/settings"]}>
+        <div id="tutorial-host" />
         <Routes>
           <Route path="*" element={<Location />} />
         </Routes>
-        <QuickStartGuide />
+        <QuickStartGuide hasTransactions={false} />
       </MemoryRouter>,
     );
-    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/import"));
 
-    expect(screen.getByRole("button", { name: "Avançar" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Avançar" }));
-    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/transactions"));
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/import"));
+    expect(screen.getByRole("button", { name: "Começar importação" })).toBeTruthy();
+    expect(screen.getByRole("dialog").closest("#tutorial-host")).toBeTruthy();
   });
 });

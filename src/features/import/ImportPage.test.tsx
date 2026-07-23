@@ -9,6 +9,7 @@ import {
   CreditCardImportTotals,
   creditCardCategorizationCandidates,
   groupPendingCandidates,
+  importGuidePhaseForScreen,
   ImportReviewGroups,
   summarizeSuggestions,
 } from "./ImportPage";
@@ -113,6 +114,19 @@ function creditCardPreview(): CreditCardImportPreview {
 }
 
 afterEach(cleanup);
+
+describe("fase contextual do tutorial", () => {
+  it("mantém a conclusão visível depois que o fluxo de importação é limpo", () => {
+    expect(
+      importGuidePhaseForScreen({
+        currentPhase: "success",
+        pendingCommit: false,
+        hasPreview: false,
+        hasConfiguration: false,
+      }),
+    ).toBe("success");
+  });
+});
 
 describe("prévia da fatura", () => {
   it("separa pagamentos anteriores dos itens que precisam de categoria", () => {

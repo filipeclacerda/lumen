@@ -922,7 +922,7 @@ function DataSection({
           <AlertTriangle size={16} aria-hidden="true" /> Arquivos CSV, OFX e PDF não são criptografados pelo Lumen.
         </p>
       </article>
-      <article className="panel settings-panel">
+      <article className="panel settings-panel" data-quick-guide="backup">
         <div className="panel-title">
           <h2>
             <Database size={18} /> Backup completo
@@ -1072,7 +1072,7 @@ function AboutSection({
         <div className="settings-about-row">
           <div>
             <strong>Tour completo</strong>
-            <small>Reveja as nove áreas principais para adicionar, organizar e acompanhar seu dinheiro.</small>
+            <small>Reveja as cinco etapas essenciais para importar, revisar e proteger seu histórico.</small>
           </div>
           <button className="secondary" type="button" onClick={restartQuickStartGuide}>
             <BookOpen size={16} /> Refazer tour completo
