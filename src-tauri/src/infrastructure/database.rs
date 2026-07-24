@@ -40,9 +40,51 @@ async fn initialize_pool(pool: &SqlitePool) -> Result<(), AppError> {
     sqlx::query("PRAGMA journal_mode=WAL").execute(pool).await?;
     sqlx::query("PRAGMA foreign_keys=ON").execute(pool).await?;
     let migrator = sqlx::migrate!("./migrations");
+    repair_v22_disabled_profile_target(pool).await?;
     repair_payment_settlement_migration(pool, &migrator).await?;
     repair_line_ending_migration_checksums(pool, &migrator).await?;
     migrator.run(pool).await?;
+    Ok(())
+}
+
+async fn repair_v22_disabled_profile_target(pool: &SqlitePool) -> Result<(), AppError> {
+    let migration_table: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='_sqlx_migrations'",
+    )
+    .fetch_one(pool)
+    .await?;
+    if migration_table == 0 {
+        return Ok(());
+    }
+    let at_v22: i64 = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=22 AND success=1)
+          AND NOT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version=23 AND success=1)",
+    )
+    .fetch_one(pool)
+    .await?;
+    if at_v22 == 0 {
+        return Ok(());
+    }
+    sqlx::query(
+        "UPDATE financial_targets
+         SET kind='savings',category_id=NULL,amount_cents=(
+           SELECT monthly_target_cents FROM user_profiles WHERE id='primary'
+         ),enabled=1,deleted_at=NULL,updated_at=datetime('now')
+         WHERE id=(
+           SELECT id FROM financial_targets
+           WHERE kind='savings'
+           ORDER BY CASE
+             WHEN deleted_at IS NULL THEN 0
+             WHEN id='profile-monthly-savings' THEN 1
+             ELSE 2
+           END,created_at,id
+           LIMIT 1
+         )
+           AND EXISTS(SELECT 1 FROM user_profiles
+                      WHERE id='primary' AND monthly_target_cents IS NOT NULL)",
+    )
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -504,6 +546,231 @@ async fn validate_integrity(connection: &mut SqliteConnection) -> Result<(), App
     }
     Ok(())
 }
+
+async fn validate_index_definition(
+    connection: &mut SqliteConnection,
+    table: &str,
+    index: &str,
+    unique: bool,
+    columns: &[(&str, bool)],
+    predicate: Option<&str>,
+) -> Result<(), AppError> {
+    let index_row = sqlx::query("SELECT \"unique\",partial FROM pragma_index_list(?) WHERE name=?")
+        .bind(table)
+        .bind(index)
+        .fetch_optional(&mut *connection)
+        .await?
+        .ok_or_else(invalid_backup)?;
+    if (index_row.try_get::<i64, _>("unique")? != 0) != unique
+        || (index_row.try_get::<i64, _>("partial")? != 0) != predicate.is_some()
+    {
+        return Err(invalid_backup());
+    }
+
+    let actual_columns =
+        sqlx::query("SELECT name,\"desc\" FROM pragma_index_xinfo(?) WHERE key=1 ORDER BY seqno")
+            .bind(index)
+            .fetch_all(&mut *connection)
+            .await?
+            .into_iter()
+            .map(|row| {
+                Ok((
+                    row.try_get::<String, _>("name")?,
+                    row.try_get::<i64, _>("desc")? != 0,
+                ))
+            })
+            .collect::<Result<Vec<_>, sqlx::Error>>()?;
+    let expected_columns = columns
+        .iter()
+        .map(|(name, descending)| ((*name).to_string(), *descending))
+        .collect::<Vec<_>>();
+    if actual_columns != expected_columns {
+        return Err(invalid_backup());
+    }
+
+    if let Some(expected_predicate) = predicate {
+        let sql: String =
+            sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE type='index' AND name=?")
+                .bind(index)
+                .fetch_one(&mut *connection)
+                .await?;
+        let compact = sql
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .flat_map(char::to_lowercase)
+            .collect::<String>();
+        let actual_predicate = compact
+            .split_once("where")
+            .map(|(_, value)| value)
+            .ok_or_else(invalid_backup)?;
+        if actual_predicate != expected_predicate {
+            return Err(invalid_backup());
+        }
+    }
+    Ok(())
+}
+
+async fn validate_column_shape(
+    connection: &mut SqliteConnection,
+    table: &str,
+    column: &str,
+    not_null: bool,
+    primary_key_position: i64,
+) -> Result<(), AppError> {
+    let row = sqlx::query("SELECT \"notnull\",pk FROM pragma_table_info(?) WHERE name=?")
+        .bind(table)
+        .bind(column)
+        .fetch_optional(&mut *connection)
+        .await?
+        .ok_or_else(invalid_backup)?;
+    if (row.try_get::<i64, _>("notnull")? != 0) != not_null
+        || row.try_get::<i64, _>("pk")? != primary_key_position
+    {
+        return Err(invalid_backup());
+    }
+    Ok(())
+}
+
+async fn validate_foreign_key(
+    connection: &mut SqliteConnection,
+    table: &str,
+    column: &str,
+    target_table: &str,
+    target_column: &str,
+) -> Result<(), AppError> {
+    let found: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_foreign_key_list(?)
+         WHERE \"from\"=? AND \"table\"=? AND \"to\"=?",
+    )
+    .bind(table)
+    .bind(column)
+    .bind(target_table)
+    .bind(target_column)
+    .fetch_one(&mut *connection)
+    .await?;
+    if found != 1 {
+        return Err(invalid_backup());
+    }
+    Ok(())
+}
+
+fn compact_sql_expression(expression: &str) -> String {
+    expression
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn table_check_expressions(schema: &str) -> Result<Vec<String>, AppError> {
+    let bytes = schema.as_bytes();
+    let mut checks = Vec::new();
+    let mut cursor = 0;
+    while cursor + 5 <= bytes.len() {
+        let is_check = bytes[cursor..cursor + 5].eq_ignore_ascii_case(b"check");
+        let before_is_identifier =
+            cursor > 0 && (bytes[cursor - 1].is_ascii_alphanumeric() || bytes[cursor - 1] == b'_');
+        let after_is_identifier = cursor + 5 < bytes.len()
+            && (bytes[cursor + 5].is_ascii_alphanumeric() || bytes[cursor + 5] == b'_');
+        if !is_check || before_is_identifier || after_is_identifier {
+            cursor += 1;
+            continue;
+        }
+
+        let mut open = cursor + 5;
+        while open < bytes.len() && bytes[open].is_ascii_whitespace() {
+            open += 1;
+        }
+        if bytes.get(open) != Some(&b'(') {
+            return Err(invalid_backup());
+        }
+        let mut depth = 1usize;
+        let mut position = open + 1;
+        let mut quote = None;
+        while position < bytes.len() && depth > 0 {
+            let byte = bytes[position];
+            if let Some(delimiter) = quote {
+                if byte == delimiter {
+                    if bytes.get(position + 1) == Some(&delimiter) {
+                        position += 2;
+                        continue;
+                    }
+                    quote = None;
+                }
+            } else {
+                match byte {
+                    b'\'' | b'"' | b'`' => quote = Some(byte),
+                    b'(' => depth += 1,
+                    b')' => depth -= 1,
+                    _ => {}
+                }
+            }
+            position += 1;
+        }
+        if depth != 0 {
+            return Err(invalid_backup());
+        }
+        checks.push(compact_sql_expression(&schema[open + 1..position - 1]));
+        cursor = position;
+    }
+    Ok(checks)
+}
+
+async fn validate_table_checks(
+    connection: &mut SqliteConnection,
+    table: &str,
+    expected: &[&str],
+) -> Result<(), AppError> {
+    let schema: String =
+        sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE type='table' AND name=?")
+            .bind(table)
+            .fetch_one(&mut *connection)
+            .await?;
+    let actual = table_check_expressions(&schema)?;
+    if expected
+        .iter()
+        .map(|expression| compact_sql_expression(expression))
+        .any(|expression| !actual.contains(&expression))
+    {
+        return Err(invalid_backup());
+    }
+    Ok(())
+}
+
+async fn validate_unique_columns(
+    connection: &mut SqliteConnection,
+    table: &str,
+    expected_columns: &[&str],
+) -> Result<(), AppError> {
+    let indexes = sqlx::query("SELECT name,partial FROM pragma_index_list(?) WHERE \"unique\"=1")
+        .bind(table)
+        .fetch_all(&mut *connection)
+        .await?;
+    for index in indexes {
+        if index.try_get::<i64, _>("partial")? != 0 {
+            continue;
+        }
+        let name: String = index.try_get("name")?;
+        let columns =
+            sqlx::query("SELECT name FROM pragma_index_xinfo(?) WHERE key=1 ORDER BY seqno")
+                .bind(name)
+                .fetch_all(&mut *connection)
+                .await?
+                .into_iter()
+                .map(|row| row.try_get::<String, _>("name"))
+                .collect::<Result<Vec<_>, sqlx::Error>>()?;
+        if columns
+            == expected_columns
+                .iter()
+                .map(|column| (*column).to_string())
+                .collect::<Vec<_>>()
+        {
+            return Ok(());
+        }
+    }
+    Err(invalid_backup())
+}
+
 async fn validate_current_schema(connection: &mut SqliteConnection) -> Result<(), AppError> {
     validate_migration_history(connection).await?;
     for table in [
@@ -517,11 +784,13 @@ async fn validate_current_schema(connection: &mut SqliteConnection) -> Result<()
         "credit_card_invoices",
         "credit_card_invoice_items",
         "transaction_links",
+        "category_merge_log",
         "financial_targets",
         "financial_target_overrides",
         "csv_mapping_profiles",
         "recurring_transactions",
         "merchant_aliases",
+        "account_balance_checkpoints",
         "installment_plans",
         "transaction_installments",
     ] {
@@ -557,6 +826,15 @@ async fn validate_current_schema(connection: &mut SqliteConnection) -> Result<()
         ("transaction_links", "debit_transaction_id"),
         ("transaction_links", "credit_transaction_id"),
         ("transaction_links", "invoice_id"),
+        ("transaction_links", "previous_credit_category_id"),
+        ("transaction_links", "previous_credit_category_source"),
+        ("transaction_links", "previous_credit_rule_id"),
+        ("category_merge_log", "moved_targets"),
+        ("category_merge_log", "archived_targets"),
+        ("financial_targets", "include_descendants"),
+        ("financial_targets", "is_profile_target"),
+        ("account_balance_checkpoints", "as_of_date"),
+        ("account_balance_checkpoints", "balance_cents"),
         ("recurring_transactions", "day_of_month"),
         ("user_profiles", "income_day_rule"),
         ("user_profiles", "monthly_target_cents"),
@@ -576,6 +854,78 @@ async fn validate_current_schema(connection: &mut SqliteConnection) -> Result<()
             return Err(invalid_backup());
         }
     }
+    for (table, column, not_null, primary_key_position) in [
+        ("account_balance_checkpoints", "id", false, 1),
+        ("account_balance_checkpoints", "account_id", true, 0),
+        ("account_balance_checkpoints", "as_of_date", true, 0),
+        ("account_balance_checkpoints", "balance_cents", true, 0),
+        ("account_balance_checkpoints", "source", true, 0),
+        ("installment_plans", "id", false, 1),
+        ("installment_plans", "account_id", true, 0),
+        ("installment_plans", "first_date", true, 0),
+        ("installment_plans", "description", true, 0),
+        ("installment_plans", "total_cents", true, 0),
+        ("installment_plans", "installment_count", true, 0),
+        ("transaction_installments", "plan_id", true, 1),
+        ("transaction_installments", "installment_number", true, 2),
+        ("transaction_installments", "transaction_id", true, 0),
+        ("transaction_installments", "installment_count", true, 0),
+    ] {
+        validate_column_shape(connection, table, column, not_null, primary_key_position).await?;
+    }
+    for (table, column, target_table, target_column) in [
+        (
+            "account_balance_checkpoints",
+            "account_id",
+            "accounts",
+            "id",
+        ),
+        ("installment_plans", "account_id", "accounts", "id"),
+        ("installment_plans", "category_id", "categories", "id"),
+        (
+            "transaction_installments",
+            "plan_id",
+            "installment_plans",
+            "id",
+        ),
+        (
+            "transaction_installments",
+            "transaction_id",
+            "transactions",
+            "id",
+        ),
+    ] {
+        validate_foreign_key(connection, table, column, target_table, target_column).await?;
+    }
+    validate_table_checks(
+        connection,
+        "user_profiles",
+        &["monthly_target_cents IS NULL OR monthly_target_cents >= 0"],
+    )
+    .await?;
+    validate_table_checks(
+        connection,
+        "account_balance_checkpoints",
+        &["source IN ('manual', 'import', 'reconciliation')"],
+    )
+    .await?;
+    validate_table_checks(
+        connection,
+        "installment_plans",
+        &["total_cents > 0", "installment_count BETWEEN 2 AND 48"],
+    )
+    .await?;
+    validate_table_checks(
+        connection,
+        "transaction_installments",
+        &[
+            "installment_number BETWEEN 1 AND installment_count",
+            "installment_count BETWEEN 2 AND 48",
+        ],
+    )
+    .await?;
+    validate_unique_columns(connection, "transaction_installments", &["transaction_id"]).await?;
+
     for index in [
         "unique_external_id",
         "transaction_fingerprint",
@@ -585,8 +935,13 @@ async fn validate_current_schema(connection: &mut SqliteConnection) -> Result<()
         "transactions_recurring",
         "transactions_merchant",
         "transaction_links_invoice",
+        "category_merge_log_created_at",
         "recurring_transactions_active",
         "one_active_savings_target",
+        "financial_targets_single_profile_target",
+        "account_balance_checkpoints_account_date_unique",
+        "account_balance_checkpoints_latest",
+        "transactions_account_cleared_date",
         "installment_plans_account_date",
         "transaction_installments_plan",
     ] {
@@ -599,14 +954,19 @@ async fn validate_current_schema(connection: &mut SqliteConnection) -> Result<()
             return Err(invalid_backup());
         }
     }
-    for index in ["unique_external_id", "one_active_savings_target"] {
+    for index in [
+        "unique_external_id",
+        "one_active_savings_target",
+        "financial_targets_single_profile_target",
+        "account_balance_checkpoints_account_date_unique",
+    ] {
         let unique: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pragma_index_list(?) WHERE name=? AND \"unique\"=1",
         )
-        .bind(if index == "unique_external_id" {
-            "transactions"
-        } else {
-            "financial_targets"
+        .bind(match index {
+            "unique_external_id" => "transactions",
+            "account_balance_checkpoints_account_date_unique" => "account_balance_checkpoints",
+            _ => "financial_targets",
         })
         .bind(index)
         .fetch_one(&mut *connection)
@@ -615,6 +975,74 @@ async fn validate_current_schema(connection: &mut SqliteConnection) -> Result<()
             return Err(invalid_backup());
         }
     }
+    validate_index_definition(
+        connection,
+        "financial_targets",
+        "financial_targets_single_profile_target",
+        true,
+        &[("is_profile_target", false)],
+        Some("is_profile_target=1"),
+    )
+    .await?;
+    validate_index_definition(
+        connection,
+        "category_merge_log",
+        "category_merge_log_created_at",
+        false,
+        &[("created_at", true)],
+        None,
+    )
+    .await?;
+    validate_index_definition(
+        connection,
+        "account_balance_checkpoints",
+        "account_balance_checkpoints_account_date_unique",
+        true,
+        &[("account_id", false), ("as_of_date", false)],
+        None,
+    )
+    .await?;
+    validate_index_definition(
+        connection,
+        "account_balance_checkpoints",
+        "account_balance_checkpoints_latest",
+        false,
+        &[
+            ("account_id", false),
+            ("as_of_date", true),
+            ("created_at", true),
+            ("id", true),
+        ],
+        None,
+    )
+    .await?;
+    validate_index_definition(
+        connection,
+        "transactions",
+        "transactions_account_cleared_date",
+        false,
+        &[("account_id", false), ("date", false)],
+        Some("deleted_atisnullandstatus='cleared'"),
+    )
+    .await?;
+    validate_index_definition(
+        connection,
+        "installment_plans",
+        "installment_plans_account_date",
+        false,
+        &[("account_id", false), ("first_date", false)],
+        None,
+    )
+    .await?;
+    validate_index_definition(
+        connection,
+        "transaction_installments",
+        "transaction_installments_plan",
+        false,
+        &[("plan_id", false)],
+        None,
+    )
+    .await?;
     let migrator = sqlx::migrate!("./migrations");
     let latest = migrator.iter().last().ok_or_else(invalid_backup)?;
     let applied: Option<Vec<u8>> =
@@ -622,7 +1050,9 @@ async fn validate_current_schema(connection: &mut SqliteConnection) -> Result<()
             .bind(latest.version)
             .fetch_optional(&mut *connection)
             .await?;
-    if applied.as_deref() != Some(latest.checksum.as_ref()) {
+    if applied.as_deref() != Some(latest.checksum.as_ref())
+        && line_ending_variant_checksum(latest).as_deref() != applied.as_deref()
+    {
         return Err(invalid_backup());
     }
     Ok(())
@@ -754,6 +1184,208 @@ fn line_ending_variant_checksum(migration: &Migration) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn database_at_version(path: &Path, version: i64) -> SqliteConnection {
+        let mut connection = SqliteConnection::connect_with(
+            &SqliteConnectOptions::new()
+                .filename(path)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE _sqlx_migrations(
+               version BIGINT PRIMARY KEY,description TEXT NOT NULL,
+               installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+               success BOOLEAN NOT NULL,checksum BLOB NOT NULL,execution_time BIGINT NOT NULL
+             )",
+        )
+        .execute(&mut connection)
+        .await
+        .unwrap();
+        let migrator = sqlx::migrate!("./migrations");
+        for migration in migrator
+            .iter()
+            .filter(|migration| migration.version <= version)
+        {
+            sqlx::raw_sql(migration.sql.as_ref())
+                .execute(&mut connection)
+                .await
+                .unwrap();
+            sqlx::query(
+                "INSERT INTO _sqlx_migrations(version,description,success,checksum,execution_time)
+                 VALUES(?,?,1,?,0)",
+            )
+            .bind(migration.version)
+            .bind(migration.description.as_ref())
+            .bind(migration.checksum.as_ref())
+            .execute(&mut connection)
+            .await
+            .unwrap();
+        }
+        connection
+    }
+
+    #[tokio::test]
+    async fn real_v22_upgrade_repairs_any_non_deleted_disabled_savings_target() {
+        for (case, target_id, deleted_target, add_deleted_profile) in [
+            ("random-disabled", "random-savings", false, false),
+            ("deleted-profile", "profile-monthly-savings", true, false),
+            (
+                "random-disabled-with-deleted-profile",
+                "random-savings",
+                false,
+                true,
+            ),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join(format!("v22-{case}.db"));
+            let mut connection = database_at_version(&path, 22).await;
+            sqlx::query(
+                "INSERT INTO user_profiles(id,display_name,monthly_target_cents,onboarding_completed_at)
+                 VALUES('primary','Pessoa',45000,datetime('now'))",
+            )
+            .execute(&mut connection)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO financial_targets(id,kind,amount_cents,enabled,deleted_at)
+                 VALUES(?,'savings',10000,0,CASE WHEN ? THEN datetime('now') ELSE NULL END)",
+            )
+            .bind(target_id)
+            .bind(deleted_target)
+            .execute(&mut connection)
+            .await
+            .unwrap();
+            if add_deleted_profile {
+                sqlx::query(
+                    "INSERT INTO financial_targets(
+                       id,kind,amount_cents,enabled,deleted_at
+                     ) VALUES(
+                       'profile-monthly-savings','savings',5000,0,datetime('now')
+                     )",
+                )
+                .execute(&mut connection)
+                .await
+                .unwrap();
+            }
+            connection.close().await.unwrap();
+
+            let pool = connect(&path).await.unwrap();
+            let repaired = sqlx::query(
+                "SELECT id,amount_cents,enabled,deleted_at,is_profile_target
+                 FROM financial_targets WHERE is_profile_target=1",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(repaired.get::<String, _>("id"), target_id);
+            assert_eq!(repaired.get::<i64, _>("amount_cents"), 45_000);
+            assert_eq!(repaired.get::<i64, _>("enabled"), 1);
+            assert!(repaired.get::<Option<String>, _>("deleted_at").is_none());
+            pool.close().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn v26_upgrade_prefers_active_savings_and_deduplicates_checkpoints() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("v26.db");
+        let mut connection = database_at_version(&path, 26).await;
+        sqlx::query(
+            "INSERT INTO user_profiles(id,display_name,monthly_target_cents,onboarding_completed_at)
+             VALUES('primary','Pessoa',45000,datetime('now'))",
+        )
+        .execute(&mut connection)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO financial_targets(
+               id,kind,amount_cents,enabled,deleted_at,is_profile_target
+             ) VALUES
+               ('archived-marker','savings',10000,0,datetime('now'),1),
+               ('active-replacement','savings',20000,1,NULL,0)",
+        )
+        .execute(&mut connection)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO account_balance_checkpoints(
+               id,account_id,as_of_date,balance_cents,source,created_at
+             ) VALUES
+               ('older','default-account','2026-01-15',1000,'manual','2026-01-15 10:00:00'),
+               ('newer','default-account','2026-01-15',2000,'manual','2026-01-15 11:00:00')",
+        )
+        .execute(&mut connection)
+        .await
+        .unwrap();
+        connection.close().await.unwrap();
+
+        upgrade_and_validate_restore(&path).await.unwrap();
+        let pool = connect(&path).await.unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT id FROM financial_targets WHERE is_profile_target=1",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            "active-replacement"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT id FROM account_balance_checkpoints
+                 WHERE account_id='default-account' AND as_of_date='2026-01-15'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            "newer"
+        );
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn v26_upgrade_reuses_a_disabled_or_archived_savings_identity() {
+        for (case, deleted_at) in [("disabled", None), ("archived", Some("2026-01-01"))] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join(format!("v26-{case}.db"));
+            let mut connection = database_at_version(&path, 26).await;
+            sqlx::query(
+                "INSERT INTO financial_targets(
+                   id,kind,amount_cents,enabled,is_profile_target,deleted_at
+                 ) VALUES('legacy-savings','savings',10000,0,0,?)",
+            )
+            .bind(deleted_at)
+            .execute(&mut connection)
+            .await
+            .unwrap();
+            connection.close().await.unwrap();
+
+            let pool = connect(&path).await.unwrap();
+            assert_eq!(
+                sqlx::query_scalar::<_, String>(
+                    "SELECT id FROM financial_targets WHERE is_profile_target=1",
+                )
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+                "legacy-savings"
+            );
+            assert_eq!(
+                sqlx::query_scalar::<_, i64>(
+                    "SELECT \"notnull\" FROM pragma_table_info('category_merge_log')
+                     WHERE name='archived_targets'",
+                )
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+                1
+            );
+            pool.close().await;
+        }
+    }
+
     #[tokio::test]
     async fn migrations_create_seed_categories_and_rules() {
         let d = tempfile::tempdir().unwrap();
@@ -880,18 +1512,228 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn schema_validation_rejects_adulterated_critical_index() {
+    async fn schema_validation_rejects_adulterated_critical_index_definition() {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("schema.db");
         let pool = connect(&p).await.unwrap();
-        sqlx::query("DROP INDEX transaction_date")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::raw_sql(
+            "DROP INDEX account_balance_checkpoints_account_date_unique;
+             CREATE UNIQUE INDEX account_balance_checkpoints_account_date_unique
+             ON account_balance_checkpoints(as_of_date,account_id);",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         let mut connection = pool.acquire().await.unwrap();
         assert!(validate_current_schema(&mut connection).await.is_err());
         drop(connection);
         pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn schema_validation_rejects_adulterated_partial_index_predicate() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("predicate.db");
+        let pool = connect(&p).await.unwrap();
+        sqlx::raw_sql(
+            "DROP INDEX transactions_account_cleared_date;
+             CREATE INDEX transactions_account_cleared_date
+             ON transactions(account_id,date)
+             WHERE deleted_at IS NULL;",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut connection = pool.acquire().await.unwrap();
+        assert!(validate_current_schema(&mut connection).await.is_err());
+        drop(connection);
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn structural_validation_rejects_missing_foreign_keys_notnull_and_target_check() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("structural.db");
+        let pool = connect(&p).await.unwrap();
+        let mut connection = pool.acquire().await.unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE malformed_checkpoint(
+               id TEXT PRIMARY KEY,account_id TEXT NOT NULL,as_of_date TEXT NOT NULL,
+               balance_cents INTEGER NOT NULL,source TEXT NOT NULL
+             );
+             CREATE TABLE malformed_installments(
+               plan_id TEXT,installment_number INTEGER NOT NULL,
+               transaction_id TEXT NOT NULL,installment_count INTEGER NOT NULL,
+               PRIMARY KEY(plan_id,installment_number)
+             );
+             CREATE TABLE malformed_profile(monthly_target_cents INTEGER);",
+        )
+        .execute(&mut *connection)
+        .await
+        .unwrap();
+
+        assert!(validate_foreign_key(
+            &mut connection,
+            "malformed_checkpoint",
+            "account_id",
+            "accounts",
+            "id"
+        )
+        .await
+        .is_err());
+        assert!(validate_column_shape(
+            &mut connection,
+            "malformed_installments",
+            "plan_id",
+            true,
+            1
+        )
+        .await
+        .is_err());
+        assert!(validate_table_checks(
+            &mut connection,
+            "malformed_profile",
+            &["monthly_target_cents IS NULL OR monthly_target_cents >= 0"]
+        )
+        .await
+        .is_err());
+        drop(connection);
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn restore_validation_rejects_real_tables_with_missing_material_constraints() {
+        let cases = [
+            (
+                "checkpoint-check.db",
+                "CREATE TABLE account_balance_checkpoints_bad(
+                   id TEXT PRIMARY KEY,
+                   account_id TEXT NOT NULL REFERENCES accounts(id),
+                   as_of_date TEXT NOT NULL,
+                   balance_cents INTEGER NOT NULL,
+                   source TEXT NOT NULL,
+                   note TEXT,
+                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                 );
+                 INSERT INTO account_balance_checkpoints_bad
+                 SELECT * FROM account_balance_checkpoints;
+                 DROP TABLE account_balance_checkpoints;
+                 ALTER TABLE account_balance_checkpoints_bad RENAME TO account_balance_checkpoints;
+                 CREATE UNIQUE INDEX account_balance_checkpoints_account_date_unique
+                   ON account_balance_checkpoints(account_id,as_of_date);
+                 CREATE INDEX account_balance_checkpoints_latest
+                   ON account_balance_checkpoints(account_id,as_of_date DESC,created_at DESC,id DESC);",
+            ),
+            (
+                "plan-total-check.db",
+                "CREATE TABLE installment_plans_bad(
+                   id TEXT PRIMARY KEY,
+                   account_id TEXT NOT NULL REFERENCES accounts(id),
+                   first_date TEXT NOT NULL,
+                   description TEXT NOT NULL,
+                   total_cents INTEGER NOT NULL,
+                   installment_count INTEGER NOT NULL CHECK(installment_count BETWEEN 2 AND 48),
+                   category_id TEXT REFERENCES categories(id),
+                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                 );
+                 INSERT INTO installment_plans_bad SELECT * FROM installment_plans;
+                 DROP TABLE installment_plans;
+                 ALTER TABLE installment_plans_bad RENAME TO installment_plans;
+                 CREATE INDEX installment_plans_account_date
+                   ON installment_plans(account_id,first_date);",
+            ),
+            (
+                "plan-count-check.db",
+                "CREATE TABLE installment_plans_bad(
+                   id TEXT PRIMARY KEY,
+                   account_id TEXT NOT NULL REFERENCES accounts(id),
+                   first_date TEXT NOT NULL,
+                   description TEXT NOT NULL,
+                   total_cents INTEGER NOT NULL CHECK(total_cents > 0),
+                   installment_count INTEGER NOT NULL,
+                   category_id TEXT REFERENCES categories(id),
+                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                 );
+                 INSERT INTO installment_plans_bad SELECT * FROM installment_plans;
+                 DROP TABLE installment_plans;
+                 ALTER TABLE installment_plans_bad RENAME TO installment_plans;
+                 CREATE INDEX installment_plans_account_date
+                   ON installment_plans(account_id,first_date);",
+            ),
+            (
+                "transaction-installment-number-check.db",
+                "CREATE TABLE transaction_installments_bad(
+                   plan_id TEXT NOT NULL REFERENCES installment_plans(id),
+                   transaction_id TEXT NOT NULL UNIQUE REFERENCES transactions(id),
+                   installment_number INTEGER NOT NULL,
+                   installment_count INTEGER NOT NULL,
+                   PRIMARY KEY(plan_id,installment_number),
+                   CHECK(installment_count BETWEEN 2 AND 48)
+                 );
+                 INSERT INTO transaction_installments_bad SELECT * FROM transaction_installments;
+                 DROP TABLE transaction_installments;
+                 ALTER TABLE transaction_installments_bad RENAME TO transaction_installments;
+                 CREATE INDEX transaction_installments_plan
+                   ON transaction_installments(plan_id);",
+            ),
+            (
+                "transaction-installment-count-check.db",
+                "CREATE TABLE transaction_installments_bad(
+                   plan_id TEXT NOT NULL REFERENCES installment_plans(id),
+                   transaction_id TEXT NOT NULL UNIQUE REFERENCES transactions(id),
+                   installment_number INTEGER NOT NULL,
+                   installment_count INTEGER NOT NULL,
+                   PRIMARY KEY(plan_id,installment_number),
+                   CHECK(installment_number BETWEEN 1 AND installment_count)
+                 );
+                 INSERT INTO transaction_installments_bad SELECT * FROM transaction_installments;
+                 DROP TABLE transaction_installments;
+                 ALTER TABLE transaction_installments_bad RENAME TO transaction_installments;
+                 CREATE INDEX transaction_installments_plan
+                   ON transaction_installments(plan_id);",
+            ),
+            (
+                "transaction-installment-unique.db",
+                "CREATE TABLE transaction_installments_bad(
+                   plan_id TEXT NOT NULL REFERENCES installment_plans(id),
+                   transaction_id TEXT NOT NULL REFERENCES transactions(id),
+                   installment_number INTEGER NOT NULL,
+                   installment_count INTEGER NOT NULL,
+                   PRIMARY KEY(plan_id,installment_number),
+                   CHECK(installment_number BETWEEN 1 AND installment_count),
+                   CHECK(installment_count BETWEEN 2 AND 48)
+                 );
+                 INSERT INTO transaction_installments_bad SELECT * FROM transaction_installments;
+                 DROP TABLE transaction_installments;
+                 ALTER TABLE transaction_installments_bad RENAME TO transaction_installments;
+                 CREATE INDEX transaction_installments_plan
+                   ON transaction_installments(plan_id);",
+            ),
+        ];
+
+        for (file_name, adulteration) in cases {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join(file_name);
+            let pool = connect(&path).await.unwrap();
+            checkpoint_and_close(pool).await.unwrap();
+            let mut connection = SqliteConnection::connect_with(
+                &SqliteConnectOptions::new()
+                    .filename(&path)
+                    .foreign_keys(false),
+            )
+            .await
+            .unwrap();
+            sqlx::raw_sql(adulteration)
+                .execute(&mut connection)
+                .await
+                .unwrap();
+            connection.close().await.unwrap();
+
+            assert!(
+                upgrade_and_validate_restore(&path).await.is_err(),
+                "schema adulterado aceito: {file_name}"
+            );
+        }
     }
 
     #[test]
@@ -998,6 +1840,35 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(index_count, 1);
+        reopened.close().await;
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn rollback_recovery_preserves_live_with_latest_line_ending_checksum_variant() {
+        let d = tempfile::tempdir().unwrap();
+        seeded_database(&d.path().join(LIVE_DB), "live-alternate").await;
+        seeded_database(&d.path().join(ROLLBACK_DB), "rollback-only").await;
+        let migrator = sqlx::migrate!("./migrations");
+        let latest = migrator.iter().last().unwrap();
+        let alternate = line_ending_variant_checksum(latest).unwrap();
+        let mut connection = SqliteConnection::connect_with(
+            &SqliteConnectOptions::new().filename(d.path().join(LIVE_DB)),
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE _sqlx_migrations SET checksum=? WHERE version=?")
+            .bind(alternate)
+            .bind(latest.version)
+            .execute(&mut connection)
+            .await
+            .unwrap();
+        connection.close().await.unwrap();
+
+        let reopened = connect_app_database(d.path()).await.unwrap();
+        assert!(account_exists(&reopened, "live-alternate").await);
+        assert!(!account_exists(&reopened, "rollback-only").await);
+        assert!(!d.path().join(ROLLBACK_DB).exists());
         reopened.close().await;
     }
 

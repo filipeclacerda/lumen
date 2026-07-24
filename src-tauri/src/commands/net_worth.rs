@@ -1,7 +1,7 @@
 use chrono::{Datelike, Local, NaiveDate};
 use serde::Serialize;
 use sqlx::{Row, SqlitePool};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use tauri::State;
 
 use crate::{application::state::AppState, error::AppError};
@@ -119,20 +119,14 @@ fn month_minus(month: &str, count: i32) -> Result<String, AppError> {
     ))
 }
 
-/// Returns, for each of the last `months` months (most recent last), the end-of-month total
-/// balance (net worth) plus a breakdown per account kind.
+/// Returns one net-worth point for each of the last `months` months, most recent last, with a
+/// breakdown per account kind. Closed months use their last calendar day; the current month uses
+/// today so future-dated movements are not anticipated.
 ///
-/// # Data model
-/// Accounts have no stored `balance_cents` column — the current balance of an account is always
-/// derived as `SUM(transactions.amount_cents)` for that account (see `list_accounts` /
-/// `get_app_bootstrap` in `commands/mod.rs`, which follow the same convention). We reuse that
-/// convention here for historical points: the end-of-month balance for an account is the sum of
-/// every non-deleted transaction on that account dated on or before the last calendar day of that
-/// month. Credit card accounts are included the same way — since card purchases post as regular
-/// (negative) transactions on the `credit_card` account, a card with more purchases than payments
-/// naturally nets to a negative balance, which is exactly the liability we want reflected in the
-/// total. No separate handling of `credit_card_invoices` is needed for net worth, since invoices
-/// are just a due-date grouping over transactions that are already counted.
+/// Each account is reconstructed from its latest balance checkpoint at or before the point plus
+/// cleared, non-deleted ledger movements after that checkpoint. Without a prior checkpoint, the
+/// cleared ledger is used from its beginning. Credit-card purchases and payments remain regular
+/// signed movements on the card account, so no separate invoice balance is added.
 #[tauri::command]
 pub async fn net_worth_history(
     months: i64,
@@ -148,49 +142,105 @@ async fn net_worth_history_impl(
     let months = months.clamp(1, 60);
     let current_month = Local::now().format("%Y-%m").to_string();
     let account_rows =
-        sqlx::query("SELECT id, kind FROM accounts WHERE deleted_at IS NULL ORDER BY id")
+        sqlx::query("SELECT id,kind FROM accounts WHERE deleted_at IS NULL ORDER BY id")
             .fetch_all(db)
             .await?;
-    let mut account_balances = account_rows
+    let accounts = account_rows
         .into_iter()
-        .map(|row| (row.get("id"), (row.get("kind"), 0i128)))
-        .collect::<BTreeMap<String, (String, i128)>>();
-    let transaction_rows = sqlx::query(
-        "SELECT t.account_id, t.date, t.amount_cents
-         FROM transactions t
-         JOIN accounts a ON a.id = t.account_id AND a.deleted_at IS NULL
-         WHERE t.deleted_at IS NULL
-         ORDER BY t.date, t.id",
-    )
-    .fetch_all(db)
-    .await?;
-    let transactions = transaction_rows
-        .into_iter()
-        .map(|row| {
-            (
-                row.get::<String, _>("account_id"),
-                row.get::<String, _>("date"),
-                row.get::<i64, _>("amount_cents"),
-            )
-        })
+        .map(|row| (row.get::<String, _>("id"), row.get::<String, _>("kind")))
         .collect::<Vec<_>>();
-    let mut transaction_index = 0usize;
-    let mut points = Vec::with_capacity(months as usize);
+    let today = Local::now().date_naive();
+    let mut periods = Vec::with_capacity(months as usize);
     for offset in (0..months).rev() {
         let month = month_minus(&current_month, offset as i32)?;
-        let end_date = month_end_date(&month)?;
-        while let Some((account_id, date, amount)) = transactions.get(transaction_index) {
-            if date > &end_date {
-                break;
-            }
-            if let Some((_, balance)) = account_balances.get_mut(account_id) {
-                *balance = balance.checked_add(i128::from(*amount)).ok_or_else(|| {
-                    AppError::Validation(
-                        "O saldo da conta excede o limite monetário suportado".into(),
-                    )
-                })?;
-            }
-            transaction_index += 1;
+        let month_end = NaiveDate::parse_from_str(&month_end_date(&month)?, "%Y-%m-%d")
+            .map_err(|_| AppError::Validation("Período mensal inválido".into()))?;
+        periods.push((month, month_end.min(today).format("%Y-%m-%d").to_string()));
+    }
+    let last_cutoff = periods
+        .last()
+        .map(|(_, cutoff)| cutoff.as_str())
+        .ok_or_else(|| AppError::Validation("Período mensal inválido".into()))?;
+
+    // Load the complete ledger up to the last point once. Historical movements before
+    // the visible window are required to reconstruct accounts without a checkpoint.
+    let checkpoint_rows = sqlx::query(
+        "SELECT account_id,as_of_date,balance_cents
+         FROM account_balance_checkpoints WHERE as_of_date<=?
+         ORDER BY account_id,as_of_date,created_at,id",
+    )
+    .bind(last_cutoff)
+    .fetch_all(db)
+    .await?;
+    let transaction_rows = sqlx::query(
+        "SELECT account_id,date,amount_cents FROM transactions
+         WHERE deleted_at IS NULL AND status='cleared' AND date<=?
+         ORDER BY account_id,date,id",
+    )
+    .bind(last_cutoff)
+    .fetch_all(db)
+    .await?;
+
+    let mut checkpoints = HashMap::<String, Vec<(String, i64)>>::new();
+    for row in checkpoint_rows {
+        checkpoints
+            .entry(row.get("account_id"))
+            .or_default()
+            .push((row.get("as_of_date"), row.get("balance_cents")));
+    }
+    let mut transaction_prefixes = HashMap::<String, Vec<(String, i128)>>::new();
+    for row in transaction_rows {
+        let account_id: String = row.get("account_id");
+        let amount = i128::from(row.get::<i64, _>("amount_cents"));
+        let entries = transaction_prefixes.entry(account_id).or_default();
+        let previous = entries.last().map_or(0, |(_, total)| *total);
+        let total = previous.checked_add(amount).ok_or_else(|| {
+            AppError::Validation("O saldo da conta excede o limite monetário suportado".into())
+        })?;
+        entries.push((row.get("date"), total));
+    }
+    let prefix_at = |entries: &[(String, i128)], cutoff: &str| {
+        let count = entries.partition_point(|(date, _)| date.as_str() <= cutoff);
+        count.checked_sub(1).map_or(0, |index| entries[index].1)
+    };
+
+    let mut points = Vec::with_capacity(periods.len());
+    for (month, cutoff) in periods {
+        let mut account_balances = BTreeMap::new();
+        for (account_id, kind) in &accounts {
+            let entries = transaction_prefixes
+                .get(account_id)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            let ledger_at_cutoff = prefix_at(entries, &cutoff);
+            let balance = if let Some(account_checkpoints) = checkpoints.get(account_id) {
+                let count = account_checkpoints
+                    .partition_point(|(date, _)| date.as_str() <= cutoff.as_str());
+                if let Some((checkpoint_date, checkpoint_balance)) = count
+                    .checked_sub(1)
+                    .map(|index| &account_checkpoints[index])
+                {
+                    let after_checkpoint = ledger_at_cutoff
+                        .checked_sub(prefix_at(entries, checkpoint_date))
+                        .ok_or_else(|| {
+                            AppError::Validation(
+                                "O saldo da conta excede o limite monetário suportado".into(),
+                            )
+                        })?;
+                    i128::from(*checkpoint_balance)
+                        .checked_add(after_checkpoint)
+                        .ok_or_else(|| {
+                            AppError::Validation(
+                                "O saldo da conta excede o limite monetário suportado".into(),
+                            )
+                        })?
+                } else {
+                    ledger_at_cutoff
+                }
+            } else {
+                ledger_at_cutoff
+            };
+            account_balances.insert(account_id.clone(), (kind.clone(), balance));
         }
         let (total_in_cents, assets_in_cents, liabilities_in_cents, per_kind) =
             summarize_balances(&account_balances)?;
@@ -318,6 +368,84 @@ mod tests {
                 amount_in_cents: 150_000
             }]
         );
+    }
+
+    #[tokio::test]
+    async fn pending_entries_are_excluded_without_a_checkpoint() {
+        let (_directory, db, account_id) = setup().await;
+        let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
+        for (id, amount, status) in [("cleared", 2_000, "cleared"), ("pending", 9_000, "pending")] {
+            sqlx::query(
+                "INSERT INTO transactions(id,account_id,date,description,normalized_description,amount_cents,fingerprint,status)
+                 VALUES(?,?,?,'Movimento','MOVIMENTO',?,?,?)",
+            )
+            .bind(id)
+            .bind(&account_id)
+            .bind(&today)
+            .bind(amount)
+            .bind(format!("no-checkpoint-{id}"))
+            .bind(status)
+            .execute(&db)
+            .await
+            .unwrap();
+        }
+
+        let points = net_worth_history_impl(1, &db).await.unwrap();
+        assert_eq!(points[0].total_in_cents, 2_000);
+    }
+
+    #[tokio::test]
+    async fn checkpoint_is_eod_anchor_and_only_later_cleared_entries_are_added() {
+        let (_directory, db, account_id) = setup().await;
+        let today = Local::now().date_naive();
+        let checkpoint_date = today.pred_opt().unwrap().format("%Y-%m-%d").to_string();
+        let today = today.format("%Y-%m-%d").to_string();
+        sqlx::query(
+            "INSERT INTO account_balance_checkpoints(id,account_id,as_of_date,balance_cents,source)
+             VALUES('checkpoint',?,?,10000,'manual')",
+        )
+        .bind(&account_id)
+        .bind(checkpoint_date)
+        .execute(&db)
+        .await
+        .unwrap();
+        for (id, amount, status) in [("cleared", 2_000, "cleared"), ("pending", 9_000, "pending")] {
+            sqlx::query(
+                "INSERT INTO transactions(id,account_id,date,description,normalized_description,amount_cents,fingerprint,status)
+                 VALUES(?,?,?,'Movimento','MOVIMENTO',?,?,?)",
+            )
+            .bind(id)
+            .bind(&account_id)
+            .bind(&today)
+            .bind(amount)
+            .bind(format!("fp-{id}"))
+            .bind(status)
+            .execute(&db)
+            .await
+            .unwrap();
+        }
+        let points = net_worth_history_impl(1, &db).await.unwrap();
+        assert_eq!(points[0].total_in_cents, 12_000);
+    }
+
+    #[tokio::test]
+    async fn includes_ledger_history_older_than_the_visible_window() {
+        let (_directory, db, account_id) = setup().await;
+        let old_month = month_minus(&Local::now().format("%Y-%m").to_string(), 12).unwrap();
+        sqlx::query(
+            "INSERT INTO transactions(
+               id,account_id,date,description,normalized_description,amount_cents,fingerprint,status
+             ) VALUES('old-history',?,?,'Saldo antigo','SALDO ANTIGO',42000,'old-history-fp','cleared')",
+        )
+        .bind(account_id)
+        .bind(format!("{old_month}-10"))
+        .execute(&db)
+        .await
+        .unwrap();
+
+        let points = net_worth_history_impl(2, &db).await.unwrap();
+        assert_eq!(points.len(), 2);
+        assert!(points.iter().all(|point| point.total_in_cents == 42_000));
     }
 
     #[tokio::test]

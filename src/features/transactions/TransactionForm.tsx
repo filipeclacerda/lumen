@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight } from "lucide-react";
 import { api } from "../../shared/api";
@@ -7,10 +7,12 @@ import { MoneyInput } from "../../shared/ui/MoneyInput";
 import { CategorySelect } from "../../shared/ui/CategorySelect";
 import { DatePicker } from "../../shared/ui/CalendarPicker";
 import { useToast } from "../../shared/ui/toast";
+import { invalidateTransactionDerivedQueries } from "../../shared/queryInvalidation";
 import { money, shortDate, todayIso } from "../../shared/format";
 import { addMonthsClamped, splitInstallmentCents } from "../../shared/installments";
 import type { Transaction } from "../../shared/types";
 import { Select } from "../../shared/ui/Select";
+import { ErrorState, LoadingState } from "../../shared/ui/AsyncState";
 
 export type TransactionEntryType = "expense" | "income" | "transfer";
 type Props = { onClose: () => void; existing?: Transaction; initialType?: TransactionEntryType };
@@ -23,7 +25,12 @@ export function TransactionForm({ onClose, existing, initialType = "expense" }: 
   const editing = Boolean(existing);
   const isTransferLeg = Boolean(existing?.isTransferLeg);
   const isAccountTransfer = existing?.linkedKind === "transfer";
-  const { data: transferDetails, isLoading: transferLoading } = useQuery({
+  const {
+    data: transferDetails,
+    isLoading: transferLoading,
+    isError: transferError,
+    refetch: refetchTransfer,
+  } = useQuery({
     queryKey: ["transfer-details", existing?.id],
     queryFn: () => api.getTransferDetails(existing!.id),
     enabled: Boolean(existing?.id && isAccountTransfer),
@@ -41,6 +48,7 @@ export function TransactionForm({ onClose, existing, initialType = "expense" }: 
   const [installmentCount, setInstallmentCount] = useState(2);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const submitLock = useRef(false);
 
   useEffect(() => {
     if (!transferDetails) return;
@@ -63,15 +71,11 @@ export function TransactionForm({ onClose, existing, initialType = "expense" }: 
     toAccountId && toAccountId !== resolvedAccountId ? toAccountId : destinationAccounts[0]?.id || "";
 
   async function invalidate() {
-    await Promise.all([
-      client.invalidateQueries({ queryKey: ["transactions"] }),
-      client.invalidateQueries({ queryKey: ["summary"] }),
-      client.invalidateQueries({ queryKey: ["accounts"] }),
-      client.invalidateQueries({ queryKey: ["financial-report"] }),
-    ]);
+    await invalidateTransactionDerivedQueries(client);
   }
 
   async function submit() {
+    if (submitLock.current) return;
     setError("");
     if (!resolvedAccountId) {
       setError("Selecione uma conta.");
@@ -81,11 +85,13 @@ export function TransactionForm({ onClose, existing, initialType = "expense" }: 
       setError("Informe um valor maior que zero.");
       return;
     }
+    submitLock.current = true;
     setSaving(true);
     try {
       if (type === "transfer" && (!editing || isAccountTransfer)) {
         if (!resolvedToAccountId) {
           setError("Selecione a conta de destino.");
+          submitLock.current = false;
           setSaving(false);
           return;
         }
@@ -105,6 +111,7 @@ export function TransactionForm({ onClose, existing, initialType = "expense" }: 
       }
       if (description.trim().length < 1) {
         setError("Descreva a transação.");
+        submitLock.current = false;
         setSaving(false);
         return;
       }
@@ -139,8 +146,24 @@ export function TransactionForm({ onClose, existing, initialType = "expense" }: 
     } catch (e) {
       setError((e as { message?: string })?.message ?? "Não foi possível salvar.");
     } finally {
+      submitLock.current = false;
       setSaving(false);
     }
+  }
+
+  if (isAccountTransfer && transferLoading) {
+    return (
+      <Modal title="Editar transferência" onClose={onClose}>
+        <LoadingState variant="panel" label="Carregando transferência…" />
+      </Modal>
+    );
+  }
+  if (isAccountTransfer && transferError) {
+    return (
+      <Modal title="Editar transferência" onClose={onClose}>
+        <ErrorState message="Não foi possível carregar a transferência." onRetry={() => void refetchTransfer()} />
+      </Modal>
+    );
   }
 
   return (
@@ -264,6 +287,7 @@ export function TransactionForm({ onClose, existing, initialType = "expense" }: 
               allowEmpty
               emptyLabel="Sem categoria"
               disabled={isTransferLeg}
+              aria-label="Categoria da transação"
             />
             {canCreateInstallments && (
               <section className="installment-editor" aria-label="Parcelamento da compra">

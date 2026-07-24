@@ -56,6 +56,7 @@ import type {
   UpcomingItem,
   UserProfile,
 } from "./types";
+import { addMonthsClamped, splitInstallmentCents } from "./installments";
 
 const demoTransactions: Transaction[] = [
   {
@@ -114,6 +115,48 @@ const demoTransactions: Transaction[] = [
     isTransferLeg: false,
   },
 ];
+const demoCheckpoints = new Map<string, BalanceCheckpoint>();
+let demoSequence = 0;
+const nextDemoId = (prefix: string) => `${prefix}-${Date.now()}-${++demoSequence}`;
+const demoAccountBaseBalances: Record<string, number> = { demo: 549526, card: -31740 };
+const demoAccounts: Account[] = [
+  { id: "demo", name: "Conta principal", kind: "checking", balanceInCents: 549526 },
+  { id: "card", name: "Cartão principal", kind: "credit_card", balanceInCents: -31740 },
+];
+
+function normalizeDemoDescription(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleUpperCase("pt-BR")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function localTodayIso() {
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+}
+
+function validateDemoCheckpoint(input: BalanceCheckpointInput) {
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(input.asOfDate)
+    ? new Date(`${input.asOfDate}T00:00:00Z`)
+    : new Date(Number.NaN);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== input.asOfDate)
+    throw new Error("Data de conciliação inválida.");
+  if (input.asOfDate > localTodayIso()) throw new Error("A data de conciliação não pode estar no futuro.");
+  if (!["manual", "import", "reconciliation"].includes(input.source))
+    throw new Error("Origem do saldo informado inválida.");
+  if (!demoAccounts.some((account) => account.id === input.accountId)) throw new Error("Conta não encontrada.");
+}
+
+function latestDemoCheckpoint(accountId: string, asOfDate?: string) {
+  return [...demoCheckpoints.values()]
+    .filter((checkpoint) => checkpoint.accountId === accountId && (!asOfDate || checkpoint.asOfDate <= asOfDate))
+    .sort((left, right) => right.asOfDate.localeCompare(left.asOfDate))[0];
+}
+
 const demoCategories: Category[] = [
   { id: "income", name: "Receitas", color: "#22835f", kind: "income", sortOrder: 10, isSystem: true },
   {
@@ -252,9 +295,9 @@ const demoMerchants: MerchantPage["items"] = Object.values(
 ).sort((a, b) => b.transactionCount - a.transactionCount || a.originalName.localeCompare(b.originalName));
 
 const isTauri = () => "__TAURI_INTERNALS__" in window;
-const demoProfile = (): UserProfile | undefined => {
+const demoProfile = (): UserProfile | null => {
   const stored = localStorage.getItem("financa-demo-profile");
-  return stored ? (JSON.parse(stored) as UserProfile) : undefined;
+  return stored ? (JSON.parse(stored) as UserProfile) : null;
 };
 export const api = {
   bootstrap: async (): Promise<AppBootstrap> => {
@@ -268,12 +311,15 @@ export const api = {
       hasImports: false,
     };
   },
-  profile: async (): Promise<UserProfile | undefined> => (isTauri() ? invoke("get_profile") : demoProfile()),
+  profile: async (): Promise<UserProfile | null> => (isTauri() ? invoke("get_profile") : demoProfile()),
   completeOnboarding: async (input: OnboardingInput): Promise<OnboardingResult> => {
     if (isTauri()) return invoke("complete_onboarding", { input });
     const profile: UserProfile = {
       displayName: input.displayName,
-      monthlyTargetInCents: input.monthlyTargetInCents,
+      monthlyIncomeInCents: null,
+      monthlyTargetInCents: input.monthlyTargetInCents ?? null,
+      incomeDay: null,
+      incomeDayRule: null,
       financialGoal: input.financialGoal,
       onboardingStartMode: input.onboardingStartMode,
       onboardingCompletedAt: new Date().toISOString(),
@@ -283,33 +329,39 @@ export const api = {
   },
   saveProfile: async (input: ProfileInput): Promise<UserProfile> => {
     if (isTauri()) return invoke("save_profile", { input });
-    const profile = {
-      ...input,
-      onboardingStartMode: demoProfile()?.onboardingStartMode,
-      onboardingCompletedAt: demoProfile()?.onboardingCompletedAt ?? new Date().toISOString(),
+    const current = demoProfile();
+    const profile: UserProfile = {
+      displayName: input.displayName,
+      monthlyIncomeInCents: input.monthlyIncomeInCents ?? null,
+      monthlyTargetInCents: input.monthlyTargetInCents ?? null,
+      incomeDay: input.incomeDay ?? null,
+      incomeDayRule: input.incomeDayRule ?? null,
+      financialGoal: input.financialGoal ?? null,
+      onboardingStartMode: current?.onboardingStartMode ?? null,
+      onboardingCompletedAt: current?.onboardingCompletedAt ?? new Date().toISOString(),
     };
     localStorage.setItem("financa-demo-profile", JSON.stringify(profile));
     return profile;
   },
-  accounts: async (): Promise<Account[]> =>
-    isTauri()
-      ? invoke("list_accounts")
-      : [{ id: "demo", name: "Conta principal", kind: "checking", balanceInCents: 549526 }],
-  accountBalanceSummaries: async (): Promise<AccountBalanceSummary[]> =>
-    isTauri()
-      ? invoke("list_account_balance_summaries")
-      : [
-          {
-            accountId: "demo",
-            realizedBalanceInCents: 549526,
-            pendingBalanceInCents: 549526,
-            forecastBalanceInCents: 549526,
-            minimumBalanceInCents: 549526,
-            scheduledCount: 0,
-            lastReconciledAt: "2026-06-30",
-            needsReconciliation: false,
-          },
-        ],
+  accounts: async (): Promise<Account[]> => (isTauri() ? invoke("list_accounts") : demoAccounts),
+  accountBalanceSummaries: async (): Promise<AccountBalanceSummary[]> => {
+    if (isTauri()) return invoke("list_account_balance_summaries");
+    return ["demo"].map((accountId) => {
+      const checkpoint = latestDemoCheckpoint(accountId);
+      const balance = checkpoint?.balanceInCents ?? demoAccountBaseBalances[accountId];
+      return {
+        accountId,
+        realizedBalanceInCents: balance,
+        pendingBalanceInCents: balance,
+        forecastBalanceInCents: balance,
+        minimumBalanceInCents: balance,
+        minimumBalanceDate: null,
+        scheduledCount: 0,
+        lastReconciledAt: checkpoint?.asOfDate ?? null,
+        needsReconciliation: !checkpoint,
+      };
+    });
+  },
   dataQualityReview: async (): Promise<DataQualityReview> =>
     isTauri()
       ? invoke("get_data_quality_review")
@@ -320,22 +372,36 @@ export const api = {
           accountReconciliations: { totalCount: 0, items: [] },
           cardPaymentReconciliations: { totalCount: 0, items: [] },
         },
-  reconciliationPreview: async (input: BalanceCheckpointInput): Promise<ReconciliationPreview> =>
-    isTauri()
-      ? invoke("get_reconciliation_preview", { input })
-      : {
-          accountId: input.accountId,
-          asOfDate: input.asOfDate,
-          reportedBalanceInCents: input.balanceInCents,
-          calculatedBalanceInCents: 549526,
-          differenceInCents: input.balanceInCents - 549526,
-        },
-  recordBalanceCheckpoint: async (input: BalanceCheckpointInput): Promise<BalanceCheckpoint> =>
-    isTauri()
-      ? invoke("record_balance_checkpoint", { input })
-      : { ...input, id: crypto.randomUUID(), createdAt: new Date().toISOString() },
-  transactions: async (month?: string): Promise<Transaction[]> =>
-    isTauri() ? invoke("list_transactions", { month: month || null }) : demoTransactions,
+  reconciliationPreview: async (input: BalanceCheckpointInput): Promise<ReconciliationPreview> => {
+    if (isTauri()) return invoke("get_reconciliation_preview", { input });
+    validateDemoCheckpoint(input);
+    const latestCheckpoint = latestDemoCheckpoint(input.accountId, input.asOfDate);
+    const calculatedBalanceInCents = latestCheckpoint?.balanceInCents ?? demoAccountBaseBalances[input.accountId] ?? 0;
+    return {
+      accountId: input.accountId,
+      asOfDate: input.asOfDate,
+      reportedBalanceInCents: input.balanceInCents,
+      calculatedBalanceInCents,
+      differenceInCents: input.balanceInCents - calculatedBalanceInCents,
+      latestCheckpoint: latestCheckpoint ?? null,
+    };
+  },
+  recordBalanceCheckpoint: async (input: BalanceCheckpointInput): Promise<BalanceCheckpoint> => {
+    if (isTauri()) return invoke("record_balance_checkpoint", { input });
+    validateDemoCheckpoint(input);
+    const key = `${input.accountId}:${input.asOfDate}`;
+    const checkpoint: BalanceCheckpoint = {
+      ...input,
+      id: demoCheckpoints.get(key)?.id ?? nextDemoId("demo-checkpoint"),
+      createdAt: new Date().toISOString(),
+    };
+    demoCheckpoints.set(key, checkpoint);
+    return checkpoint;
+  },
+  transactions: async (month?: string): Promise<Transaction[]> => {
+    if (isTauri()) return invoke("list_transactions", { month: month || null });
+    return month ? demoTransactions.filter((transaction) => transaction.date.startsWith(month)) : demoTransactions;
+  },
   listTransactions: async (filter: TransactionFilter): Promise<TransactionPage> => {
     if (isTauri()) return invoke("list_transactions_page", { filter });
     const items = demoTransactions.filter(
@@ -421,22 +487,68 @@ export const api = {
     invoke("update_transaction_category", { transactionId, categoryId: categoryId || null }),
   updateTransactionAmount: (transactionId: string, amountInCents: number): Promise<void> =>
     invoke("update_transaction_amount", { transactionId, amountInCents }),
+  setTransactionStatus: (transactionId: string, status: "pending" | "cleared"): Promise<void> =>
+    invoke("set_transaction_status", { transactionId, status }),
   bulkUpdateTransactionCategory: (transactionIds: string[], categoryId?: string): Promise<number> =>
     invoke("bulk_update_transaction_category", { transactionIds, categoryId: categoryId || null }),
   deleteTransactions: (transactionIds: string[]): Promise<number> => invoke("delete_transactions", { transactionIds }),
   restoreTransactions: (transactionIds: string[]): Promise<number> =>
     invoke("restore_transactions", { transactionIds }),
   createTransaction: (input: TransactionInput): Promise<string> => invoke("create_transaction", { input }),
-  createCreditCardInstallments: (input: InstallmentPlanInput): Promise<InstallmentPlanResult> =>
-    isTauri()
-      ? invoke("create_credit_card_installments", { input })
-      : Promise.resolve({
-          planId: `demo-installments-${Date.now()}`,
-          transactionIds: Array.from(
-            { length: input.installmentCount },
-            (_, index) => `demo-installment-${Date.now()}-${index + 1}`,
-          ),
-        }),
+  createCreditCardInstallments: async (input: InstallmentPlanInput): Promise<InstallmentPlanResult> => {
+    if (isTauri()) return invoke("create_credit_card_installments", { input });
+    const description = input.description.trim();
+    if (Array.from(description).length < 1 || Array.from(description).length > 190)
+      throw new Error("A descrição deve ter entre 1 e 190 caracteres.");
+    const parts = splitInstallmentCents(input.totalAmountInCents, input.installmentCount);
+    if (parts.length !== input.installmentCount) throw new Error("Parcelamento inválido.");
+    const account = demoAccounts.find((candidate) => candidate.id === input.accountId);
+    if (!account || account.kind !== "credit_card") throw new Error("Selecione uma conta de cartão de crédito.");
+    const category = input.categoryId
+      ? demoCategories.find((candidate) => candidate.id === input.categoryId)
+      : undefined;
+    if (input.categoryId && (!category || !["expense", "investment"].includes(category.kind)))
+      throw new Error("A categoria não é compatível com este lançamento.");
+
+    const generated = parts.map((amount, index) => {
+      const date = addMonthsClamped(input.firstDate, index);
+      if (!date) throw new Error("Data da primeira parcela inválida.");
+      return {
+        date,
+        amountInCents: -amount,
+        description: `${description} (${index + 1}/${input.installmentCount})`,
+      };
+    });
+    const duplicate = generated.some((candidate) =>
+      demoTransactions.some(
+        (transaction) =>
+          transaction.accountId === account.id &&
+          transaction.date === candidate.date &&
+          normalizeDemoDescription(transaction.description) === normalizeDemoDescription(candidate.description) &&
+          transaction.amountInCents === candidate.amountInCents,
+      ),
+    );
+    if (duplicate) throw new Error("Já existe um parcelamento idêntico neste cartão.");
+
+    const planId = nextDemoId("demo-installments");
+    const transactionIds = generated.map((candidate) => {
+      const id = nextDemoId("demo-installment");
+      demoTransactions.push({
+        id,
+        accountId: account.id,
+        accountName: account.name,
+        accountKind: account.kind,
+        ...candidate,
+        categoryId: input.categoryId,
+        category: category?.name,
+        categorySource: input.categoryId ? "manual" : undefined,
+        status: "cleared",
+        isTransferLeg: false,
+      });
+      return id;
+    });
+    return { planId, transactionIds };
+  },
   createTransfer: (input: TransferInput): Promise<string[]> => invoke("create_transfer", { input }),
   getTransferDetails: (transactionId: string): Promise<TransferDetails> =>
     invoke("get_transfer_details", { transactionId }),
@@ -803,6 +915,6 @@ export const api = {
   },
   budgetOverview: async (month: string): Promise<BudgetOverview> => {
     if (isTauri()) return invoke("budget_overview", { month });
-    return { categories: [], totals: { limitInCents: 0, spentInCents: 0 } };
+    return { categories: [], totals: { limitInCents: 0, spentInCents: 0 }, hasOverlappingScopes: false };
   },
 };

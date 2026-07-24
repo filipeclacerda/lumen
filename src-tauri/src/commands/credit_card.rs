@@ -318,6 +318,34 @@ pub async fn preview_mapped_credit_card_import(
     .await
 }
 
+fn validate_import_category_choice(
+    is_payment: bool,
+    category_id: Option<&str>,
+    category_kind: Option<&str>,
+    amount_in_cents: i64,
+) -> Result<(), AppError> {
+    if is_payment && category_id != Some("credit-card-payment") {
+        return Err(AppError::Validation(
+            "Pagamentos de fatura mantêm a categoria protegida".into(),
+        ));
+    }
+    if !is_payment && category_id == Some("credit-card-payment") {
+        return Err(AppError::Validation(
+            "A categoria de pagamento de fatura é protegida".into(),
+        ));
+    }
+    if !is_payment
+        && category_kind.is_some_and(|kind| {
+            !category_compatible(kind, amount_in_cents, SuggestionContext::CreditCard, false)
+        })
+    {
+        return Err(AppError::Validation(
+            "A categoria não é compatível com este item da fatura".into(),
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn update_credit_card_import(
     session_id: String,
@@ -361,23 +389,12 @@ pub async fn update_credit_card_import(
             "Um lançamento duplicado não pode ser incluído".into(),
         ));
     }
-    if item.is_payment && category_id.as_deref() != Some("credit-card-payment") {
-        return Err(AppError::Validation(
-            "Pagamentos de fatura mantêm a categoria protegida".into(),
-        ));
-    }
-    if category.as_ref().is_some_and(|(_, kind)| {
-        !category_compatible(
-            kind,
-            item.candidate.amount_in_cents,
-            SuggestionContext::CreditCard,
-            false,
-        )
-    }) {
-        return Err(AppError::Validation(
-            "A categoria não é compatível com este item da fatura".into(),
-        ));
-    }
+    validate_import_category_choice(
+        item.is_payment,
+        category_id.as_deref(),
+        category.as_ref().map(|(_, kind)| kind.as_str()),
+        item.candidate.amount_in_cents,
+    )?;
     item.included = included;
     item.candidate.suggested_category_id = category_id;
     item.candidate.suggested_category_name = category.map(|(name, _)| name);
@@ -1554,6 +1571,27 @@ pub async fn set_credit_card_invoice_deleted(
 mod tests {
     use super::*;
     use crate::domain::credit_card::CreditCardLineKind;
+
+    #[test]
+    fn protected_payment_category_is_required_only_for_payments() {
+        assert!(validate_import_category_choice(
+            true,
+            Some("credit-card-payment"),
+            Some("transfer"),
+            10_000,
+        )
+        .is_ok());
+        assert!(
+            validate_import_category_choice(true, Some("food"), Some("expense"), 10_000).is_err()
+        );
+        assert!(validate_import_category_choice(
+            false,
+            Some("credit-card-payment"),
+            Some("transfer"),
+            -10_000,
+        )
+        .is_err());
+    }
     use crate::domain::import::{DuplicateStatus, ImportCandidate};
 
     fn card_item(description: &str, external_id: Option<&str>) -> CreditCardImportItem {

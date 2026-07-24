@@ -233,6 +233,7 @@ export function RecurringTransactions() {
                   movementType={type}
                   allowEmpty
                   emptyLabel="Sem categoria"
+                  aria-label="Categoria da recorrência"
                 />
               </label>
             </div>

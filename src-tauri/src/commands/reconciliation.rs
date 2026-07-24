@@ -63,8 +63,13 @@ pub struct AccountBalanceSummary {
 }
 
 fn validate_checkpoint_input(input: &BalanceCheckpointInput) -> Result<(), AppError> {
-    NaiveDate::parse_from_str(&input.as_of_date, "%Y-%m-%d")
+    let as_of_date = NaiveDate::parse_from_str(&input.as_of_date, "%Y-%m-%d")
         .map_err(|_| AppError::Validation("Data de conciliação inválida".into()))?;
+    if as_of_date > Local::now().date_naive() {
+        return Err(AppError::Validation(
+            "A data de conciliação não pode estar no futuro".into(),
+        ));
+    }
     if !["manual", "import", "reconciliation"].contains(&input.source.as_str()) {
         return Err(AppError::Validation(
             "Origem do saldo informado inválida".into(),
@@ -200,32 +205,30 @@ pub(crate) async fn record_balance_checkpoint_impl(
     db: &SqlitePool,
 ) -> Result<BalanceCheckpoint, AppError> {
     validate_checkpoint_input(&input)?;
-    ensure_active_account(db, &input.account_id).await?;
     let note = input
         .note
         .map(|note| note.trim().to_string())
         .filter(|note| !note.is_empty());
     let id = Uuid::new_v4().to_string();
-    sqlx::query(
+    let row = sqlx::query(
         "INSERT INTO account_balance_checkpoints(
            id,account_id,as_of_date,balance_cents,source,note
-         ) VALUES(?,?,?,?,?,?)",
+         )
+         SELECT ?,id,?,?,?,? FROM accounts
+         WHERE id=? AND deleted_at IS NULL
+         ON CONFLICT(account_id,as_of_date) DO UPDATE SET
+           balance_cents=excluded.balance_cents,source=excluded.source,note=excluded.note
+         RETURNING id,account_id,as_of_date,balance_cents,source,note,created_at",
     )
     .bind(&id)
-    .bind(&input.account_id)
     .bind(&input.as_of_date)
     .bind(input.balance_in_cents)
     .bind(&input.source)
     .bind(&note)
-    .execute(db)
-    .await?;
-    let row = sqlx::query(
-        "SELECT id,account_id,as_of_date,balance_cents,source,note,created_at
-         FROM account_balance_checkpoints WHERE id=?",
-    )
-    .bind(&id)
-    .fetch_one(db)
-    .await?;
+    .bind(&input.account_id)
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(|| AppError::Validation("Conta não encontrada".into()))?;
     Ok(checkpoint_from_row(&row))
 }
 
@@ -667,5 +670,63 @@ mod tests {
 
         assert_eq!(summary.realized_balance_in_cents, 7_000);
         assert_eq!(summary.forecast_balance_in_cents, 7_000);
+    }
+
+    #[tokio::test]
+    async fn rejects_future_dates_and_upserts_same_day_without_changing_id() {
+        let (_directory, db) = setup().await;
+        let future = (Local::now().date_naive() + Days::new(1))
+            .format("%Y-%m-%d")
+            .to_string();
+        assert!(matches!(
+            reconciliation_preview_impl(&input(&future, 100), &db).await,
+            Err(AppError::Validation(_))
+        ));
+        assert!(matches!(
+            record_balance_checkpoint_impl(input(&future, 100), &db).await,
+            Err(AppError::Validation(_))
+        ));
+
+        let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
+        let first = record_balance_checkpoint_impl(input(&today, 100), &db)
+            .await
+            .unwrap();
+        let second = record_balance_checkpoint_impl(input(&today, 250), &db)
+            .await
+            .unwrap();
+        assert_eq!(first.id, second.id);
+        assert_eq!(second.balance_in_cents, 250);
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM account_balance_checkpoints WHERE account_id='acc' AND as_of_date=?",
+            )
+            .bind(today)
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn checkpoint_insert_rejects_a_soft_deleted_account_atomically() {
+        let (_directory, db) = setup().await;
+        sqlx::query("UPDATE accounts SET deleted_at=datetime('now') WHERE id='acc'")
+            .execute(&db)
+            .await
+            .unwrap();
+        let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
+
+        assert!(matches!(
+            record_balance_checkpoint_impl(input(&today, 100), &db).await,
+            Err(AppError::Validation(message)) if message == "Conta não encontrada"
+        ));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM account_balance_checkpoints")
+                .fetch_one(&db)
+                .await
+                .unwrap(),
+            0
+        );
     }
 }

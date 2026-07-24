@@ -46,6 +46,8 @@ function review(overrides: Partial<DataQualityReview> = {}): DataQualityReview {
           id: "account-1",
           title: "Conta principal",
           description: "Saldo ainda não conferido",
+          date: null,
+          amountInCents: null,
           actionPath: "/accounts",
           actionLabel: "Conferir saldo",
         },
@@ -77,6 +79,9 @@ describe("ReviewCenter", () => {
     expect(screen.getByText("Mais 5 para ver depois")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Escolher categoria" }).getAttribute("href")).toBe(
       "/transactions?uncategorized=1",
+    );
+    expect(screen.getByRole("link", { name: "Revisar lançamento" }).getAttribute("href")).toBe(
+      "/transactions?status=pending&focus=tx-2",
     );
     expect(screen.getByRole("link", { name: "Conferir saldo" }).getAttribute("href")).toBe("/accounts");
     expect(screen.getByText("Nenhuma pendência aqui")).toBeTruthy();

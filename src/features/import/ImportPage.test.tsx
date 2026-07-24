@@ -231,6 +231,9 @@ describe("prévia da fatura", () => {
     expect(details?.open).toBe(false);
     expect(screen.getByRole("checkbox", { name: "Incluir Pagamento de fatura" })).toBeTruthy();
     expect(screen.getByRole("checkbox", { name: "Incluir Pagamento de fatura" })).toHaveProperty("checked", true);
+    expect(screen.getByRole("button", { name: "Categoria da importação na linha 1" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Categoria da importação na linha 2" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Categoria da importação na linha 3" })).toHaveProperty("disabled", true);
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Incluir Pagamento de fatura" }));
 
@@ -398,7 +401,6 @@ describe("ImportReviewGroups", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Escolher categoria para A MERCADO" }));
     fireEvent.click(screen.getByRole("option", { name: "Alimentacao" }));
-    fireEvent.click(screen.getByRole("option", { name: "Alimentacao" }));
     await waitFor(() => expect(onApply).toHaveBeenCalledWith([31], "food", first));
 
     const undoChoice = {
@@ -450,7 +452,6 @@ describe("ImportReviewGroups", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Escolher categoria para ULTIMA LOJA" }));
-    fireEvent.click(screen.getByRole("option", { name: "Alimentacao" }));
     fireEvent.click(screen.getByRole("option", { name: "Alimentacao" }));
     await waitFor(() => expect(onApply).toHaveBeenCalledOnce());
     view.rerender(
@@ -589,7 +590,6 @@ describe("ImportReviewGroups", () => {
     scroller.scrollTop = 360;
 
     fireEvent.click(screen.getByRole("button", { name: "Escolher categoria para A LOJA" }));
-    fireEvent.click(screen.getByRole("option", { name: "Alimentacao" }));
     fireEvent.click(screen.getByRole("option", { name: "Alimentacao" }));
     await waitFor(() => expect(onApply).toHaveBeenCalledWith([61], "food", first));
     scroller.scrollTop = 0;

@@ -88,8 +88,8 @@ function draftFromProfile(profile: UserProfile): ProfileDraft {
     name: profile.displayName,
     incomeInCents: profile.monthlyIncomeInCents ?? null,
     targetInCents: profile.monthlyTargetInCents ?? null,
-    day: incomeDaySelection(profile.incomeDay, profile.incomeDayRule),
-    goal: profile.financialGoal,
+    day: incomeDaySelection(profile.incomeDay ?? undefined, profile.incomeDayRule ?? undefined),
+    goal: profile.financialGoal ?? undefined,
   };
 }
 

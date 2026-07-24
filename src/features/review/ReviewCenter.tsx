@@ -14,6 +14,12 @@ type ReviewLoader = () => Promise<DataQualityReview>;
 
 const loadReviewFromApi: ReviewLoader = () => api.dataQualityReview();
 
+function reviewActionPath(section: (typeof sectionDefinitions)[number]["key"], item: ReviewItem) {
+  if (section !== "pendingTransactions") return item.actionPath;
+  const separator = item.actionPath.includes("?") ? "&" : "?";
+  return `${item.actionPath}${separator}focus=${encodeURIComponent(item.id)}`;
+}
+
 const sectionDefinitions = [
   {
     key: "uncategorized",
@@ -113,15 +119,15 @@ export function ReviewCenter({ loadReview = loadReviewFromApi }: { loadReview?: 
                             <div className="review-item__main">
                               <strong>{item.title}</strong>
                               <span>{item.description}</span>
-                              {(item.date || item.amountInCents !== undefined) && (
+                              {(item.date || item.amountInCents !== null) && (
                                 <small>
                                   {item.date && shortDate(item.date)}
-                                  {item.date && item.amountInCents !== undefined && " · "}
-                                  {item.amountInCents !== undefined && money(item.amountInCents)}
+                                  {item.date && item.amountInCents !== null && " · "}
+                                  {item.amountInCents !== null && money(item.amountInCents)}
                                 </small>
                               )}
                             </div>
-                            <Link className="secondary review-item__action" to={item.actionPath}>
+                            <Link className="secondary review-item__action" to={reviewActionPath(key, item)}>
                               {item.actionLabel}
                             </Link>
                           </li>

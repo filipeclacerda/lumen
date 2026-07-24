@@ -126,6 +126,7 @@ pub fn run() {
             commands::apply_rules_retroactive,
             commands::update_transaction_category,
             commands::update_transaction_amount,
+            commands::set_transaction_status,
             commands::bulk_update_transaction_category,
             commands::delete_transactions,
             commands::restore_transactions,

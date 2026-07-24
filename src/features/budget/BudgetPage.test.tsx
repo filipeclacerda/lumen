@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BudgetPage } from "./BudgetPage";
+import type { BudgetOverview } from "../../shared/types";
 
 const mocks = vi.hoisted(() => ({
   categories: vi.fn(),
@@ -57,6 +58,12 @@ function renderBudget() {
   );
 }
 
+const emptyOverview = {
+  categories: [],
+  totals: { limitInCents: 0, spentInCents: 0 },
+  hasOverlappingScopes: false,
+} satisfies BudgetOverview;
+
 const expenseCategory = {
   id: "home",
   name: "Casa",
@@ -70,10 +77,7 @@ describe("BudgetPage category scope", () => {
     vi.clearAllMocks();
     mocks.categories.mockResolvedValue([expenseCategory]);
     mocks.financialTargets.mockResolvedValue([]);
-    mocks.budgetOverview.mockResolvedValue({
-      categories: [],
-      totals: { limitInCents: 0, spentInCents: 0 },
-    });
+    mocks.budgetOverview.mockResolvedValue(emptyOverview);
     mocks.saveFinancialTarget.mockResolvedValue("target-home");
     mocks.saveFinancialTargetOverride.mockResolvedValue(undefined);
     mocks.deleteFinancialTarget.mockResolvedValue(undefined);
@@ -137,10 +141,40 @@ describe("BudgetPage category scope", () => {
         },
       ],
       totals: { limitInCents: 100_000, spentInCents: 30_000 },
-    });
+      hasOverlappingScopes: false,
+    } satisfies BudgetOverview);
 
     renderBudget();
 
     expect(await screen.findByText("Inclui as subcategorias")).toBeTruthy();
+  });
+
+  it("does not present an aggregated available envelope when scopes overlap", async () => {
+    const overlapOverview = {
+      categories: [
+        {
+          targetId: "target-home",
+          categoryId: "home",
+          categoryName: "Casa",
+          includeDescendants: true,
+          limitInCents: 100_000,
+          spentInCents: 30_000,
+          remainingInCents: 70_000,
+          progressPercent: 30,
+          projectedInCents: 45_000,
+          status: "ok",
+        },
+      ],
+      totals: { limitInCents: 100_000, spentInCents: 30_000 },
+      hasOverlappingScopes: true,
+    } satisfies BudgetOverview;
+    mocks.budgetOverview.mockResolvedValue(overlapOverview);
+
+    renderBudget();
+
+    expect(await screen.findByText("Casa")).toBeTruthy();
+    expect(screen.queryByText("Disponível")).toBeNull();
+    expect(screen.getByRole("status").textContent).toContain("não é somado");
+    expect(screen.getByText((content) => content.includes("700,00 restantes"))).toBeTruthy();
   });
 });

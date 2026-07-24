@@ -28,6 +28,7 @@ import { api } from "../../shared/api";
 import { money, shortDate, suggestRulePattern } from "../../shared/format";
 import { currentMonth } from "../../shared/period";
 import { useQuickStartGuide } from "../../shared/quickStartGuide";
+import { invalidateTransactionDerivedQueries } from "../../shared/queryInvalidation";
 import { CategorySelect } from "../../shared/ui/CategorySelect";
 import { DatePicker, MonthPicker } from "../../shared/ui/CalendarPicker";
 import { MoneyInput } from "../../shared/ui/MoneyInput";
@@ -99,6 +100,7 @@ export function Transactions() {
   const endMonthFilter = searchParams.get("endMonth") ?? "";
   const startDateFilter = searchParams.get("startDate") ?? "";
   const endDateFilter = searchParams.get("endDate") ?? "";
+  const focusParam = searchParams.get("focus");
   const statusParam = searchParams.get("status");
   const statusFilter = statusParam === "cleared" || statusParam === "pending" ? statusParam : "";
   const movementParam = searchParams.get("movementType");
@@ -142,7 +144,11 @@ export function Transactions() {
     | { kind: "delete"; ids: string[] }
     | { kind: "transfer-delete"; transactionId: string }
     | { kind: "categorize"; previous: { id: string; categoryId?: string }[] }
+    | { kind: "status"; transactionId: string }
   >();
+  const [statusChanging, setStatusChanging] = useState<string>();
+  const [actionBusy, setActionBusy] = useState<string>();
+  const actionLocks = useRef(new Set<string>());
   const [notice, setNotice] = useState("");
   const client = useQueryClient();
 
@@ -387,7 +393,9 @@ export function Transactions() {
       }
     });
   }
-  const selectableRows = rows.filter((transaction) => !transaction.isTransferLeg);
+  const isProtectedFromGenericMutations = (transaction: Transaction) =>
+    transaction.isTransferLeg || transaction.linkedKind === "credit_card_payment";
+  const selectableRows = rows.filter((transaction) => !isProtectedFromGenericMutations(transaction));
   const allVisibleSelected =
     selectableRows.length > 0 && selectableRows.every((transaction) => selected.has(transaction.id));
   function toggle(id: string) {
@@ -449,10 +457,31 @@ export function Transactions() {
     }
   }
   async function refresh() {
-    await Promise.all([
-      client.invalidateQueries({ queryKey: ["transactions"] }),
-      client.invalidateQueries({ queryKey: ["summary"] }),
-    ]);
+    await invalidateTransactionDerivedQueries(client);
+  }
+  async function confirmPending(transaction: Transaction) {
+    const lockKey = `status:${transaction.id}`;
+    if (
+      actionLocks.current.has(lockKey) ||
+      statusChanging ||
+      transaction.status !== "pending" ||
+      isProtectedFromGenericMutations(transaction)
+    )
+      return;
+    actionLocks.current.add(lockKey);
+    setStatusChanging(transaction.id);
+    try {
+      await api.setTransactionStatus(transaction.id, "cleared");
+      setUndo({ kind: "status", transactionId: transaction.id });
+      setNotice("Lançamento confirmado.");
+      toast("Lançamento confirmado.");
+      await refresh();
+    } catch (error: any) {
+      toast(`Não foi possível confirmar o lançamento: ${error?.message || error}`, "error");
+    } finally {
+      actionLocks.current.delete(lockKey);
+      setStatusChanging(undefined);
+    }
   }
   async function changeCategory(transaction: Transaction, categoryId?: string) {
     await api.updateTransactionCategory(transaction.id, categoryId || undefined);
@@ -460,29 +489,52 @@ export function Transactions() {
     if (categoryId) setLearning({ transaction, categoryId, pattern: suggestRulePattern(transaction.description) });
   }
   async function deleteOne(transaction: Transaction) {
-    if (transaction.linkedKind === "transfer") {
-      await api.setTransferDeleted(transaction.id, true);
-      setUndo({ kind: "transfer-delete", transactionId: transaction.id });
-      setNotice("Transferência movida para a lixeira com os dois lançamentos.");
-      setDeletingTransfer(undefined);
-    } else {
-      const count = await api.deleteTransactions([transaction.id]);
-      setUndo({ kind: "delete", ids: [transaction.id] });
-      setNotice(`${count} transação movida para a lixeira.`);
+    const lockKey = `delete:${transaction.id}`;
+    if (actionLocks.current.has(lockKey)) return;
+    actionLocks.current.add(lockKey);
+    setActionBusy(lockKey);
+    try {
+      if (transaction.linkedKind === "transfer") {
+        await api.setTransferDeleted(transaction.id, true);
+        setUndo({ kind: "transfer-delete", transactionId: transaction.id });
+        setNotice("Transferência movida para a lixeira com os dois lançamentos.");
+        setDeletingTransfer(undefined);
+      } else {
+        const count = await api.deleteTransactions([transaction.id]);
+        setUndo({ kind: "delete", ids: [transaction.id] });
+        setNotice(`${count} transação movida para a lixeira.`);
+      }
+      setSelected((current) => {
+        const next = new Set(current);
+        next.delete(transaction.id);
+        return next;
+      });
+      await refresh();
+    } catch (error: unknown) {
+      toast((error as { message?: string })?.message ?? "Não foi possível excluir o lançamento.", "error");
+    } finally {
+      actionLocks.current.delete(lockKey);
+      setActionBusy(undefined);
     }
-    setSelected((current) => {
-      const next = new Set(current);
-      next.delete(transaction.id);
-      return next;
-    });
-    await refresh();
   }
   async function unlinkTransfer() {
     if (!unlinking) return;
-    await api.unlinkTransfer(unlinking.id);
-    setUnlinking(undefined);
-    setNotice("Vínculo removido. As categorias anteriores dos dois lançamentos foram restauradas.");
-    await refresh();
+    const snapshot = unlinking;
+    const lockKey = `unlink:${snapshot.id}`;
+    if (actionLocks.current.has(lockKey)) return;
+    actionLocks.current.add(lockKey);
+    setActionBusy(lockKey);
+    try {
+      await api.unlinkTransfer(snapshot.id);
+      setUnlinking(undefined);
+      setNotice("Vínculo removido. As categorias anteriores dos dois lançamentos foram restauradas.");
+      await refresh();
+    } catch (error: unknown) {
+      toast((error as { message?: string })?.message ?? "Não foi possível desvincular a transferência.", "error");
+    } finally {
+      actionLocks.current.delete(lockKey);
+      setActionBusy(undefined);
+    }
   }
   async function createRule() {
     if (!learning) return;
@@ -530,24 +582,39 @@ export function Transactions() {
   }
   async function undoLast() {
     if (!undo) return;
-    if (undo.kind === "delete") {
-      const count = await api.restoreTransactions(undo.ids);
-      setNotice(`${count} transações restauradas.`);
-    } else if (undo.kind === "transfer-delete") {
-      await api.setTransferDeleted(undo.transactionId, false);
-      setNotice("Transferência restaurada com os dois lançamentos.");
-    } else {
-      const groups = new Map<string | undefined, string[]>();
-      undo.previous.forEach((p) => {
-        const list = groups.get(p.categoryId) ?? [];
-        list.push(p.id);
-        groups.set(p.categoryId, list);
-      });
-      for (const [categoryId, ids] of groups) await api.bulkUpdateTransactionCategory(ids, categoryId);
-      setNotice(`${undo.previous.length} transações voltaram às categorias anteriores.`);
+    const snapshot = undo;
+    const lockKey = `undo:${snapshot.kind}`;
+    if (actionLocks.current.has(lockKey)) return;
+    actionLocks.current.add(lockKey);
+    setActionBusy(lockKey);
+    try {
+      if (snapshot.kind === "delete") {
+        const count = await api.restoreTransactions(snapshot.ids);
+        setNotice(`${count} transações restauradas.`);
+      } else if (snapshot.kind === "status") {
+        await api.setTransactionStatus(snapshot.transactionId, "pending");
+        setNotice("Lançamento voltou a ficar pendente.");
+      } else if (snapshot.kind === "transfer-delete") {
+        await api.setTransferDeleted(snapshot.transactionId, false);
+        setNotice("Transferência restaurada com os dois lançamentos.");
+      } else {
+        const groups = new Map<string | undefined, string[]>();
+        snapshot.previous.forEach((p) => {
+          const list = groups.get(p.categoryId) ?? [];
+          list.push(p.id);
+          groups.set(p.categoryId, list);
+        });
+        for (const [categoryId, ids] of groups) await api.bulkUpdateTransactionCategory(ids, categoryId);
+        setNotice(`${snapshot.previous.length} transações voltaram às categorias anteriores.`);
+      }
+      setUndo(undefined);
+      await refresh();
+    } catch (error: unknown) {
+      toast((error as { message?: string })?.message ?? "Não foi possível desfazer a ação.", "error");
+    } finally {
+      actionLocks.current.delete(lockKey);
+      setActionBusy(undefined);
     }
-    setUndo(undefined);
-    await refresh();
   }
   const rangeStart = totalCount === 0 ? 0 : page * pageSize + 1;
   const rangeEnd = Math.min(totalCount, page * pageSize + rows.length);
@@ -555,6 +622,14 @@ export function Transactions() {
     if (!data) return;
     setPage((currentPage) => Math.min(currentPage, Math.max(0, Math.ceil(totalCount / pageSize) - 1)));
   }, [data, totalCount, pageSize]);
+  useEffect(() => {
+    if (!focusParam || !data?.items.some((item) => item.id === focusParam)) return;
+    const row = [...document.querySelectorAll<HTMLElement>("[data-transaction-id]")].find(
+      (candidate) => candidate.dataset.transactionId === focusParam,
+    );
+    row?.scrollIntoView({ block: "center" });
+    row?.focus({ preventScroll: true });
+  }, [data, focusParam]);
 
   return (
     <section data-tutorial="transactions">
@@ -609,11 +684,11 @@ export function Transactions() {
       {showNew && <TransactionForm initialType={newTransactionType} onClose={() => setShowNew(false)} />}
       {editing && <TransactionForm existing={editing} onClose={() => setEditing(undefined)} />}
       {notice && (
-        <div className="notice notice-action">
+        <div className="notice notice-action" role="status" aria-live="polite">
           <span>{notice}</span>
           {undo && (
-            <button className="text-button" onClick={undoLast}>
-              <Undo2 size={15} /> Desfazer
+            <button className="text-button" onClick={undoLast} disabled={actionBusy?.startsWith("undo:")}>
+              <Undo2 size={15} /> {actionBusy?.startsWith("undo:") ? "Desfazendo…" : "Desfazer"}
             </button>
           )}
         </div>
@@ -652,6 +727,7 @@ export function Transactions() {
                 categories={categories}
                 allowEmpty
                 emptyLabel="Sem categoria"
+                aria-label="Categoria das transações selecionadas"
               />
               <button className="secondary" onClick={applyBulkCategory}>
                 <Tags size={15} /> Categorizar
@@ -780,6 +856,7 @@ export function Transactions() {
                 categories={categories}
                 allowEmpty
                 emptyLabel="Todas as categorias"
+                aria-label="Filtrar transações por categoria"
               />
             </div>
             <label className="check-label filter-check">
@@ -883,14 +960,19 @@ export function Transactions() {
                 </tr>
               )}
               {rows.map((t) => (
-                <tr key={t.id} className={selected.has(t.id) ? "selected-row" : ""}>
+                <tr
+                  key={t.id}
+                  data-transaction-id={t.id}
+                  tabIndex={focusParam === t.id ? -1 : undefined}
+                  className={selected.has(t.id) ? "selected-row" : ""}
+                >
                   <td className="select-cell">
                     <input
                       type="checkbox"
                       aria-label={`Selecionar ${t.description}`}
                       checked={selected.has(t.id)}
-                      disabled={t.isTransferLeg}
-                      title={t.isTransferLeg ? "Use as ações próprias deste vínculo" : undefined}
+                      disabled={isProtectedFromGenericMutations(t)}
+                      title={isProtectedFromGenericMutations(t) ? "Use as ações próprias deste vínculo" : undefined}
                       onChange={() => toggle(t.id)}
                     />
                   </td>
@@ -942,7 +1024,8 @@ export function Transactions() {
                       categories={categories}
                       allowEmpty
                       emptyLabel="Sem categoria"
-                      disabled={t.isTransferLeg}
+                      disabled={isProtectedFromGenericMutations(t)}
+                      aria-label={`Categoria de ${t.description} em ${shortDate(t.date)}`}
                     />
                     {t.categorySource && (
                       <small className="source-label" style={{ marginTop: "6px" }}>
@@ -958,24 +1041,35 @@ export function Transactions() {
                     <span className={t.status === "cleared" ? "badge" : "badge status-warning"}>
                       {t.status === "cleared" ? "Confirmada" : "Pendente"}
                     </span>
+                    {t.status === "pending" && !t.isTransferLeg && t.linkedKind !== "credit_card_payment" && (
+                      <button
+                        className="text-button"
+                        disabled={statusChanging === t.id}
+                        onClick={() => void confirmPending(t)}
+                      >
+                        {statusChanging === t.id ? "Confirmando…" : "Confirmar lançamento"}
+                      </button>
+                    )}
                   </td>
                   <td className="amount">
                     <span className={t.amountInCents > 0 ? "positive" : ""}>{money(t.amountInCents)}</span>
                   </td>
                   <td>
                     <div className="row-actions">
-                      <button
-                        className="icon-button"
-                        title={t.linkedKind === "transfer" ? "Editar transferência completa" : "Editar transação"}
-                        aria-label={
-                          t.linkedKind === "transfer"
-                            ? `Editar transferência ${t.description}`
-                            : `Editar ${t.description}`
-                        }
-                        onClick={() => setEditing(t)}
-                      >
-                        <Pencil size={14} />
-                      </button>
+                      {t.linkedKind !== "credit_card_payment" && (
+                        <button
+                          className="icon-button"
+                          title={t.linkedKind === "transfer" ? "Editar transferência completa" : "Editar transação"}
+                          aria-label={
+                            t.linkedKind === "transfer"
+                              ? `Editar transferência ${t.description}`
+                              : `Editar ${t.description}`
+                          }
+                          onClick={() => setEditing(t)}
+                        >
+                          <Pencil size={14} />
+                        </button>
+                      )}
                       {t.linkedKind === "transfer" && (
                         <button
                           className="icon-button"
@@ -986,18 +1080,20 @@ export function Transactions() {
                           <Unlink size={15} />
                         </button>
                       )}
-                      <button
-                        className="danger icon-button"
-                        title={t.linkedKind === "transfer" ? "Excluir transferência completa" : "Excluir transação"}
-                        aria-label={
-                          t.linkedKind === "transfer"
-                            ? `Excluir transferência ${t.description}`
-                            : `Excluir ${t.description}`
-                        }
-                        onClick={() => (t.linkedKind === "transfer" ? setDeletingTransfer(t) : void deleteOne(t))}
-                      >
-                        <Trash2 size={15} />
-                      </button>
+                      {t.linkedKind !== "credit_card_payment" && (
+                        <button
+                          className="danger icon-button"
+                          title={t.linkedKind === "transfer" ? "Excluir transferência completa" : "Excluir transação"}
+                          aria-label={
+                            t.linkedKind === "transfer"
+                              ? `Excluir transferência ${t.description}`
+                              : `Excluir ${t.description}`
+                          }
+                          onClick={() => (t.linkedKind === "transfer" ? setDeletingTransfer(t) : void deleteOne(t))}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -1046,8 +1142,8 @@ export function Transactions() {
               <button className="secondary" onClick={() => setUnlinking(undefined)}>
                 Cancelar
               </button>
-              <button onClick={unlinkTransfer}>
-                <Unlink size={15} /> Desvincular
+              <button onClick={unlinkTransfer} disabled={actionBusy === `unlink:${unlinking.id}`}>
+                <Unlink size={15} /> {actionBusy === `unlink:${unlinking.id}` ? "Desvinculando…" : "Desvincular"}
               </button>
             </div>
           </article>
@@ -1065,8 +1161,13 @@ export function Transactions() {
               <button className="secondary" onClick={() => setDeletingTransfer(undefined)}>
                 Cancelar
               </button>
-              <button className="danger" onClick={() => void deleteOne(deletingTransfer)}>
-                <Trash2 size={15} /> Mover os dois lançamentos
+              <button
+                className="danger"
+                onClick={() => void deleteOne(deletingTransfer)}
+                disabled={actionBusy === `delete:${deletingTransfer.id}`}
+              >
+                <Trash2 size={15} />{" "}
+                {actionBusy === `delete:${deletingTransfer.id}` ? "Movendo…" : "Mover os dois lançamentos"}
               </button>
             </div>
           </article>

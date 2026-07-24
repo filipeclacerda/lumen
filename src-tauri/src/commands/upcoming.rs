@@ -75,7 +75,27 @@ async fn upcoming_items_impl(days: i64, db: &SqlitePool) -> Result<Vec<UpcomingI
         });
     }
 
-    // (b) Active recurring transactions with a pending (not-yet-generated) occurrence in the
+    // (b) Future installments use their persisted transaction date; no invoice dates are inferred.
+    let installment_rows = sqlx::query(
+        "SELECT t.date,t.description,t.amount_cents
+         FROM transaction_installments i
+         JOIN transactions t ON t.id=i.transaction_id
+         WHERE t.deleted_at IS NULL AND t.date BETWEEN ? AND ?",
+    )
+    .bind(&today_str)
+    .bind(&end_str)
+    .fetch_all(db)
+    .await?;
+    for row in installment_rows {
+        items.push(UpcomingItem {
+            date: row.get("date"),
+            label: row.get("description"),
+            amount_in_cents: row.get("amount_cents"),
+            kind: "installment".into(),
+        });
+    }
+
+    // (c) Active recurring transactions with a pending (not-yet-generated) occurrence in the
     // window. `sync_recurring_transactions` (see commands/recurring.rs) generates occurrences up
     // to and including the current month once the configured day has arrived, so "pending" means:
     // any month after `last_generated_month` (or from `start_month` if never generated), bounded by
@@ -236,5 +256,46 @@ mod tests {
                 .any(|i| i.label == "Assinatura" && i.amount_in_cents == -2990),
             "expected a pending recurring occurrence, got {recurring:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn includes_future_installment_using_its_persisted_date() {
+        let (_directory, db, account_id) = setup().await;
+        let date = (Local::now().date_naive() + chrono::Duration::days(5))
+            .format("%Y-%m-%d")
+            .to_string();
+        sqlx::query(
+            "INSERT INTO installment_plans(id,account_id,first_date,description,total_cents,installment_count)
+             VALUES('plan',? ,?,'Notebook',20000,2)",
+        )
+        .bind(&account_id)
+        .bind(&date)
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO transactions(id,account_id,date,description,normalized_description,amount_cents,fingerprint)
+             VALUES('installment',? ,?,'Notebook (1/2)','NOTEBOOK 1 2',-10000,'installment-fp')",
+        )
+        .bind(account_id)
+        .bind(&date)
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO transaction_installments(plan_id,transaction_id,installment_number,installment_count)
+             VALUES('plan','installment',1,2)",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+
+        let items = upcoming_items_impl(10, &db).await.unwrap();
+        let installment = items
+            .iter()
+            .find(|item| item.kind == "installment")
+            .unwrap();
+        assert_eq!(installment.date, date);
+        assert_eq!(installment.amount_in_cents, -10_000);
     }
 }

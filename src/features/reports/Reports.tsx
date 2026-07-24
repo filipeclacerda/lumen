@@ -44,6 +44,7 @@ import {
   SpendingBarsChart,
 } from "../../shared/ui/Charts";
 import { useToast } from "../../shared/ui/toast";
+import { invalidateFinancialTargetQueries } from "../../shared/queryInvalidation";
 import { MoneyInput } from "../../shared/ui/MoneyInput";
 import { Select } from "../../shared/ui/Select";
 import { summarizeNetWorth } from "./netWorth";
@@ -124,15 +125,13 @@ export function Reports() {
       setStartMonth(shiftMonth(currentMonth, -count + 1));
     }
   }
-  async function refresh() {
-    await Promise.all([
-      client.invalidateQueries({ queryKey: ["financial-report"] }),
-      client.invalidateQueries({ queryKey: ["financial-targets"] }),
-    ]);
+  async function refresh(includeProfile = false) {
+    await invalidateFinancialTargetQueries(client, includeProfile);
   }
   async function removeTarget(id: string) {
+    const includeProfile = targets.find((target) => target.id === id)?.kind === "savings";
     await api.deleteFinancialTarget(id);
-    await refresh();
+    await refresh(includeProfile);
   }
   async function exportPdf() {
     if (!("__TAURI_INTERNALS__" in window)) {
@@ -256,7 +255,7 @@ export function Reports() {
         <ReportContent
           report={report}
           filter={filter}
-          profileIncome={profile?.monthlyIncomeInCents}
+          profileIncome={profile?.monthlyIncomeInCents ?? undefined}
           targets={targets}
           compareWithPreviousMonth={preset === "1"}
           onEdit={setEditing}
@@ -270,9 +269,9 @@ export function Reports() {
           month={endMonth}
           categories={categories.filter((c) => c.kind === "expense")}
           onClose={() => setEditing(undefined)}
-          onSaved={async () => {
+          onSaved={async (savedKind) => {
             setEditing(undefined);
-            await refresh();
+            await refresh(savedKind === "savings");
           }}
         />
       )}
@@ -309,6 +308,7 @@ function ReportContent({
   } = useQuery({
     queryKey: ["net-worth-history", 13],
     queryFn: () => api.netWorthHistory(13),
+    enabled: activeTab === "wealth",
   });
   const summary = report.summary;
   const topCategory = report.categories[0];
@@ -1020,7 +1020,7 @@ function TargetEditor({
   month: string;
   categories: Awaited<ReturnType<typeof api.categories>>;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (kind: "savings" | "category") => void;
 }) {
   const [kind, setKind] = useState<"savings" | "category">(target.kind);
   const [categoryId, setCategoryId] = useState(target.categoryId ?? "");
@@ -1044,7 +1044,7 @@ function TargetEditor({
           enabled: true,
           includeDescendants: kind === "category" ? target.includeDescendants : false,
         });
-      onSaved();
+      onSaved(kind);
     } catch (e: any) {
       setError(e?.message || String(e));
     }
@@ -1059,6 +1059,7 @@ function TargetEditor({
           <Select
             value={kind}
             onChange={(value) => setKind(value as typeof kind)}
+            disabled={Boolean(target.id)}
             options={[
               { value: "category", label: "Limite por categoria" },
               { value: "savings", label: "Economia mensal" },
@@ -1073,6 +1074,7 @@ function TargetEditor({
             kind="expense"
             allowEmpty
             emptyLabel="Selecione"
+            aria-label="Categoria da meta financeira"
           />
         )}
         <label>

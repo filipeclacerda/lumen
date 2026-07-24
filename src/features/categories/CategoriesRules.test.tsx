@@ -6,6 +6,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CategoriesRules } from "./CategoriesRules";
 import { api } from "../../shared/api";
+import type { CategoryMergeImpact } from "../../shared/types";
 
 const mocks = vi.hoisted(() => ({
   listMerchantsPage: vi.fn(),
@@ -33,6 +34,14 @@ vi.mock("../../shared/api", () => ({
   },
 }));
 vi.mock("../../shared/ui/toast", () => ({ useToast: () => mocks.toast }));
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 function renderPage(initialEntry = "/categories") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -76,6 +85,7 @@ describe("CategoriesRules merchants", () => {
       movedRules: 1,
       movedRecurring: 1,
       movedTargets: 0,
+      archivedTargets: 0,
       movedChildren: 0,
     });
     mocks.mergeCategory.mockResolvedValue({
@@ -87,6 +97,7 @@ describe("CategoriesRules merchants", () => {
       movedRules: 1,
       movedRecurring: 1,
       movedTargets: 0,
+      archivedTargets: 0,
       movedChildren: 0,
     });
   });
@@ -117,7 +128,9 @@ describe("CategoriesRules merchants", () => {
     expect(document.querySelectorAll(".category-tree-node")).toHaveLength(1);
   });
 
-  it("offers a short merge flow when an in-use category cannot be archived", async () => {
+  it("offers a short merge flow and locks rapid destructive confirmation clicks", async () => {
+    const merge = deferred<CategoryMergeImpact>();
+    mocks.mergeCategory.mockReturnValueOnce(merge.promise);
     vi.mocked(api.categories).mockResolvedValueOnce([
       {
         id: "category-1",
@@ -142,13 +155,113 @@ describe("CategoriesRules merchants", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Categoria de destino" }));
     fireEvent.click(screen.getByRole("option", { name: "Mercado" }));
-    fireEvent.click(screen.getByRole("option", { name: "Mercado" }));
     await waitFor(() => expect(mocks.previewCategoryMerge).toHaveBeenCalledWith("category-1", "category-2"));
     await waitFor(() => expect(screen.getByRole("status").textContent).toContain("4 lançamento(s)"));
 
-    fireEvent.click(screen.getByRole("button", { name: "Unir categorias" }));
+    const confirm = screen.getByRole("button", { name: "Unir categorias" });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
     await waitFor(() => expect(mocks.mergeCategory).toHaveBeenCalledWith("category-1", "category-2"));
+    expect(mocks.mergeCategory).toHaveBeenCalledTimes(1);
+    expect((screen.getByRole("button", { name: "Unindo…" }) as HTMLButtonElement).disabled).toBe(true);
+    merge.resolve({
+      sourceCategoryId: "category-1",
+      sourceCategoryName: "Mercado antigo",
+      targetCategoryId: "category-2",
+      targetCategoryName: "Mercado",
+      movedTransactions: 4,
+      movedRules: 1,
+      movedRecurring: 1,
+      movedTargets: 0,
+      archivedTargets: 0,
+      movedChildren: 0,
+    });
     expect(await screen.findByText(/Mercado antigo foi unida a Mercado/)).toBeTruthy();
+  });
+
+  it("keeps only the latest merge preview and confirms its exact snapshot", async () => {
+    vi.mocked(api.categories).mockResolvedValueOnce([
+      { id: "category-1", name: "Antiga", kind: "expense", sortOrder: 0, isSystem: false },
+      { id: "category-2", name: "Destino A", kind: "expense", sortOrder: 10, isSystem: false },
+      { id: "category-3", name: "Destino B", kind: "expense", sortOrder: 20, isSystem: false },
+    ]);
+    mocks.archiveCategory.mockRejectedValueOnce(new Error("em uso"));
+    const first = deferred<CategoryMergeImpact>();
+    const second = deferred<CategoryMergeImpact>();
+    mocks.previewCategoryMerge.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    renderPage("/categories?tab=categories");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Arquivar Antiga" }));
+    await screen.findByRole("heading", { name: "Para onde vão os lançamentos?" });
+    fireEvent.click(screen.getByRole("button", { name: "Categoria de destino" }));
+    fireEvent.click(screen.getByRole("option", { name: "Destino A" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Categoria de destino/ }));
+    fireEvent.click(screen.getByRole("option", { name: "Destino B" }));
+
+    second.resolve({
+      sourceCategoryId: "category-1",
+      sourceCategoryName: "Antiga",
+      targetCategoryId: "category-3",
+      targetCategoryName: "Destino B",
+      movedTransactions: 2,
+      movedRules: 0,
+      movedRecurring: 0,
+      movedTargets: 1,
+      archivedTargets: 1,
+      movedChildren: 0,
+    });
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Destino B"));
+    expect(screen.getByRole("alert").textContent).toContain("1 meta(s) conflitante(s)");
+
+    first.resolve({
+      sourceCategoryId: "category-1",
+      sourceCategoryName: "Antiga",
+      targetCategoryId: "category-2",
+      targetCategoryName: "Destino A",
+      movedTransactions: 99,
+      movedRules: 0,
+      movedRecurring: 0,
+      movedTargets: 0,
+      archivedTargets: 0,
+      movedChildren: 0,
+    });
+    await waitFor(() => expect(screen.getByRole("status").textContent).not.toContain("Destino A"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Unir categorias" }));
+    await waitFor(() => expect(mocks.mergeCategory).toHaveBeenCalledWith("category-1", "category-3"));
+  });
+
+  it("invalidates an outstanding preview when the merge modal closes", async () => {
+    vi.mocked(api.categories).mockResolvedValueOnce([
+      { id: "category-1", name: "Antiga", kind: "expense", sortOrder: 0, isSystem: false },
+      { id: "category-2", name: "Destino", kind: "expense", sortOrder: 10, isSystem: false },
+    ]);
+    mocks.archiveCategory.mockRejectedValueOnce(new Error("em uso"));
+    const pending = deferred<CategoryMergeImpact>();
+    mocks.previewCategoryMerge.mockReturnValueOnce(pending.promise);
+    renderPage("/categories?tab=categories");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Arquivar Antiga" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Categoria de destino" }));
+    fireEvent.click(screen.getByRole("option", { name: "Destino" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(screen.queryByRole("dialog", { name: "Unir categoria" })).toBeNull();
+
+    pending.resolve({
+      sourceCategoryId: "category-1",
+      sourceCategoryName: "Antiga",
+      targetCategoryId: "category-2",
+      targetCategoryName: "Destino",
+      movedTransactions: 1,
+      movedRules: 0,
+      movedRecurring: 0,
+      movedTargets: 0,
+      archivedTargets: 0,
+      movedChildren: 0,
+    });
+    await Promise.resolve();
+    expect(screen.queryByRole("dialog", { name: "Unir categoria" })).toBeNull();
+    expect(mocks.mergeCategory).not.toHaveBeenCalled();
   });
 
   async function openMerchants() {

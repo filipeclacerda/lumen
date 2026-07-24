@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useBackupReminder } from "../../shared/backupReminder";
 import { useUiPreferences } from "../../shared/uiPreferences";
 import { useMaintenanceRestart } from "../../shared/maintenanceRestart";
+import type { UserProfile } from "../../shared/types";
 import { SettingsPage } from "./SettingsPage";
 
 const mocks = vi.hoisted(() => ({
@@ -89,8 +90,13 @@ describe("SettingsPage", () => {
     mocks.profile.mockResolvedValue({
       displayName: "Filipe",
       monthlyIncomeInCents: 600000,
+      monthlyTargetInCents: null,
+      incomeDay: null,
+      incomeDayRule: null,
+      financialGoal: null,
+      onboardingStartMode: null,
       onboardingCompletedAt: "2026-01-01",
-    });
+    } satisfies UserProfile);
     mocks.saveProfile.mockImplementation(async (input) => ({ ...input, onboardingCompletedAt: "2026-01-01" }));
     mocks.restoreDatabase.mockResolvedValue(undefined);
     mocks.resetDatabase.mockResolvedValue(undefined);

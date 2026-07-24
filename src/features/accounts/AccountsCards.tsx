@@ -13,13 +13,14 @@ import {
   Undo2,
   Unlink,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../../shared/api";
 import { money, shortDate, todayIso } from "../../shared/format";
 import { Modal } from "../../shared/ui/Modal";
 import { MoneyInput } from "../../shared/ui/MoneyInput";
 import { useToast } from "../../shared/ui/toast";
+import { invalidateCheckpointQueries, invalidateTransactionDerivedQueries } from "../../shared/queryInvalidation";
 import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/AsyncState";
 import { Pagination, type PaginationSize } from "../../shared/ui/Pagination";
 import { Select } from "../../shared/ui/Select";
@@ -176,12 +177,8 @@ export function AccountsCards() {
     await Promise.all([
       client.invalidateQueries({ queryKey: ["credit-card-invoices"] }),
       client.invalidateQueries({ queryKey: ["credit-card-invoice-items"] }),
-      client.invalidateQueries({ queryKey: ["transactions"] }),
-      client.invalidateQueries({ queryKey: ["summary"] }),
-      client.invalidateQueries({ queryKey: ["accounts"] }),
-      client.invalidateQueries({ queryKey: ["account-balance-summaries"] }),
-      client.invalidateQueries({ queryKey: ["financial-report"] }),
       client.invalidateQueries({ queryKey: ["card-payment-reconciliations"] }),
+      invalidateTransactionDerivedQueries(client),
     ]);
   }
   async function confirmReconciliation(reconciliation: CardPaymentReconciliation) {
@@ -808,10 +805,7 @@ export function AccountsCards() {
           onClose={() => setBalanceReconciliationAccount(undefined)}
           onSaved={async () => {
             setBalanceReconciliationAccount(undefined);
-            await Promise.all([
-              client.invalidateQueries({ queryKey: ["account-balance-summaries"] }),
-              client.invalidateQueries({ queryKey: ["accounts"] }),
-            ]);
+            await invalidateCheckpointQueries(client);
             toast("Saldo conferido com sucesso.");
           }}
         />
@@ -839,8 +833,10 @@ function BalanceReconciliationModal({
   const toast = useToast();
   const [asOfDate, setAsOfDate] = useState(todayIso);
   const [balanceInCents, setBalanceInCents] = useState<number | null>(null);
-  const [preview, setPreview] = useState<ReconciliationPreview>();
+  const [preview, setPreview] = useState<{ data: ReconciliationPreview; input: BalanceCheckpointInput }>();
   const [loadingPreview, setLoadingPreview] = useState(false);
+  const previewToken = useRef(0);
+  const savingLock = useRef(false);
   const [saving, setSaving] = useState(false);
 
   function checkpointInput(): BalanceCheckpointInput | undefined {
@@ -853,22 +849,34 @@ function BalanceReconciliationModal({
     };
   }
 
+  function invalidatePreview() {
+    previewToken.current += 1;
+    setPreview(undefined);
+    setLoadingPreview(false);
+  }
+
   async function loadPreview() {
     const input = checkpointInput();
     if (!input) return;
+    const token = ++previewToken.current;
+    setPreview(undefined);
     setLoadingPreview(true);
     try {
-      setPreview(await api.reconciliationPreview(input));
+      const data = await api.reconciliationPreview(input);
+      if (token !== previewToken.current) return;
+      setPreview({ data, input });
     } catch (error) {
+      if (token !== previewToken.current) return;
       toast((error as { message?: string })?.message ?? "Não foi possível calcular a diferença.", "error");
     } finally {
-      setLoadingPreview(false);
+      if (token === previewToken.current) setLoadingPreview(false);
     }
   }
 
   async function confirmCheckpoint() {
-    const input = checkpointInput();
-    if (!input || !preview) return;
+    if (!preview || savingLock.current) return;
+    savingLock.current = true;
+    const input = preview.input;
     setSaving(true);
     try {
       await api.recordBalanceCheckpoint(input);
@@ -876,12 +884,19 @@ function BalanceReconciliationModal({
     } catch (error) {
       toast((error as { message?: string })?.message ?? "Não foi possível conferir o saldo.", "error");
     } finally {
+      savingLock.current = false;
       setSaving(false);
     }
   }
 
   return (
-    <Modal title={`Conferir saldo de ${account.name}`} onClose={onClose}>
+    <Modal
+      title={`Conferir saldo de ${account.name}`}
+      onClose={() => {
+        invalidatePreview();
+        onClose();
+      }}
+    >
       <div className="modal-form">
         <p className="muted">
           Compare o saldo informado com os lançamentos confirmados. A diferença é apenas informativa e não cria receita,
@@ -897,7 +912,7 @@ function BalanceReconciliationModal({
             value={asOfDate}
             onChange={(event) => {
               setAsOfDate(event.target.value);
-              setPreview(undefined);
+              invalidatePreview();
             }}
           />
         </label>
@@ -908,7 +923,7 @@ function BalanceReconciliationModal({
             aria-label="Saldo informado"
             onChange={(value) => {
               setBalanceInCents(value);
-              setPreview(undefined);
+              invalidatePreview();
             }}
           />
         </label>
@@ -916,20 +931,27 @@ function BalanceReconciliationModal({
           <div className="cards" aria-label="Prévia da conferência">
             <div>
               <small>Saldo informado</small>
-              <strong>{money(preview.reportedBalanceInCents)}</strong>
+              <strong>{money(preview.data.reportedBalanceInCents)}</strong>
             </div>
             <div>
               <small>Saldo calculado</small>
-              <strong>{money(preview.calculatedBalanceInCents)}</strong>
+              <strong>{money(preview.data.calculatedBalanceInCents)}</strong>
             </div>
             <div>
               <small>Diferença</small>
-              <strong>{money(preview.differenceInCents)}</strong>
+              <strong>{money(preview.data.differenceInCents)}</strong>
             </div>
           </div>
         )}
         <div className="editor-actions">
-          <button className="secondary" onClick={onClose} disabled={saving}>
+          <button
+            className="secondary"
+            onClick={() => {
+              invalidatePreview();
+              onClose();
+            }}
+            disabled={saving}
+          >
             Cancelar
           </button>
           {!preview ? (

@@ -110,17 +110,25 @@ export function BudgetPage() {
             <span>Gasto</span>
             <strong>{money(overview.totals.spentInCents)}</strong>
           </article>
-          <article>
-            <span>Disponível</span>
-            <strong
-              className={
-                overview.totals.limitInCents - overview.totals.spentInCents >= 0 ? "positive" : "budget-negative"
-              }
-            >
-              {money(overview.totals.limitInCents - overview.totals.spentInCents)}
-            </strong>
-          </article>
+          {!overview.hasOverlappingScopes && (
+            <article>
+              <span>Disponível</span>
+              <strong
+                className={
+                  overview.totals.limitInCents - overview.totals.spentInCents >= 0 ? "positive" : "budget-negative"
+                }
+              >
+                {money(overview.totals.limitInCents - overview.totals.spentInCents)}
+              </strong>
+            </article>
+          )}
         </div>
+      )}
+      {overview?.hasOverlappingScopes && (
+        <p className="notice" role="status">
+          Algumas linhas incluem categorias que também têm limite próprio. Por isso, o disponível total não é somado;
+          acompanhe o restante em cada linha abaixo.
+        </p>
       )}
 
       {isLoading && <LoadingState variant="panel" label="Calculando seu orçamento…" />}
@@ -266,6 +274,7 @@ function AddBudgetModal({
                 kind="expense"
                 allowEmpty
                 emptyLabel="Selecione"
+                aria-label="Categoria da meta de orçamento"
               />
             </label>
             <label>

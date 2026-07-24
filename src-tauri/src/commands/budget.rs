@@ -38,6 +38,7 @@ pub struct BudgetTotals {
 pub struct BudgetOverview {
     categories: Vec<BudgetCategory>,
     totals: BudgetTotals,
+    has_overlapping_scopes: bool,
 }
 
 /// Budget status thresholds: 100%+ spent is "over", 80%+ is "warning", otherwise "ok".
@@ -106,6 +107,7 @@ async fn budget_overview_impl(month: String, db: &SqlitePool) -> Result<BudgetOv
     let mut totals = BudgetTotals::default();
     let mut covered_category_ids = HashSet::new();
     let mut total_spent = 0i128;
+    let mut has_overlapping_scopes = false;
     for target in targets
         .into_iter()
         .filter(|t| t.enabled && t.kind == "category")
@@ -142,6 +144,9 @@ async fn budget_overview_impl(month: String, db: &SqlitePool) -> Result<BudgetOv
         };
         totals.limit_in_cents =
             budget_i64(i128::from(totals.limit_in_cents) + i128::from(limit_in_cents))?;
+        if scope.iter().any(|id| covered_category_ids.contains(id)) {
+            has_overlapping_scopes = true;
+        }
         for covered_id in &scope {
             if covered_category_ids.insert(covered_id.clone()) {
                 total_spent = total_spent
@@ -168,7 +173,11 @@ async fn budget_overview_impl(month: String, db: &SqlitePool) -> Result<BudgetOv
     totals.spent_in_cents = budget_i64(total_spent)?.max(0);
     categories.sort_by(|a, b| b.progress_percent.partial_cmp(&a.progress_percent).unwrap());
 
-    Ok(BudgetOverview { categories, totals })
+    Ok(BudgetOverview {
+        categories,
+        totals,
+        has_overlapping_scopes,
+    })
 }
 
 #[cfg(test)]
@@ -376,6 +385,7 @@ mod tests {
             .unwrap();
         assert_eq!(home.spent_in_cents, 10_000);
         assert!(!home.include_descendants);
+        assert!(!default_overview.has_overlapping_scopes);
 
         sqlx::query("UPDATE financial_targets SET include_descendants=1 WHERE id='goal-home'")
             .execute(&db)
@@ -388,6 +398,7 @@ mod tests {
             .find(|category| category.category_id == "budget-family")
             .unwrap();
         assert_eq!(home.spent_in_cents, 30_000);
+        assert!(overlapping_overview.has_overlapping_scopes);
         assert_eq!(
             overlapping_overview.totals.spent_in_cents, 30_000,
             "a subcategoria coberta por dois limites não pode ser somada duas vezes no total"

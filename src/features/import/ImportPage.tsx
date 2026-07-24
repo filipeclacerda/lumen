@@ -271,6 +271,7 @@ function CreditCardItemsTable({
                   categories={categories}
                   kind={compatibleCategoryKinds(item.candidate, categories, true)}
                   disabled={payments}
+                  aria-label={`Categoria da importação na linha ${item.candidate.sourceRow}`}
                   onChange={(value) => onUpdate(item.candidate.sourceRow, item.included, value)}
                 />
               </td>
@@ -1493,6 +1494,7 @@ export function ImportPage() {
                           value={candidate.suggestedCategoryId}
                           categories={categories}
                           kind={compatibleCategoryKinds(candidate, categories, false)}
+                          aria-label={`Categoria da importação na linha ${candidate.sourceRow}`}
                           onChange={(value) => changeBankCategory(candidate.sourceRow, value)}
                         />
                       </td>

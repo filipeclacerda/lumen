@@ -543,6 +543,13 @@ pub async fn save_financial_target(
     input: FinancialTargetInput,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
+    save_financial_target_impl(input, &state.db).await
+}
+
+async fn save_financial_target_impl(
+    input: FinancialTargetInput,
+    db: &SqlitePool,
+) -> Result<String, AppError> {
     if input.amount_in_cents <= 0 || !["savings", "category"].contains(&input.kind.as_str()) {
         return Err(AppError::Validation(
             "Tipo e valor positivo são obrigatórios".into(),
@@ -557,7 +564,7 @@ pub async fn save_financial_target(
             "SELECT kind FROM categories WHERE id=? AND deleted_at IS NULL",
         )
         .bind(id)
-        .fetch_optional(&state.db)
+        .fetch_optional(db)
         .await?
         .ok_or_else(|| AppError::Validation("Categoria não encontrada".into()))?;
         if kind != "expense" {
@@ -575,33 +582,72 @@ pub async fn save_financial_target(
             "A opção de incluir subcategorias só vale para limites por categoria".into(),
         ));
     }
-    if input.kind == "savings" {
-        let other:i64=sqlx::query_scalar(
-            "SELECT COUNT(*) FROM financial_targets WHERE kind='savings' AND deleted_at IS NULL AND id!=?"
-        ).bind(input.id.as_deref().unwrap_or("")).fetch_one(&state.db).await?;
-        if other > 0 {
+    if input.kind == "category" && input.id.is_some() {
+        let marked: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM financial_targets WHERE id=? AND is_profile_target=1",
+        )
+        .bind(input.id.as_deref())
+        .fetch_one(db)
+        .await?;
+        if marked > 0 {
             return Err(AppError::Validation(
-                "Já existe uma meta recorrente de economia".into(),
+                "A meta canônica do perfil não pode virar meta de categoria".into(),
             ));
         }
     }
-    let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
+    if input.kind == "savings" {
+        if let Some(requested_id) = input.id.as_deref() {
+            let existing_marker = sqlx::query_scalar::<_, i64>(
+                "SELECT is_profile_target FROM financial_targets WHERE id=?",
+            )
+            .bind(requested_id)
+            .fetch_optional(db)
+            .await?;
+            if existing_marker == Some(0) {
+                return Err(AppError::Validation(
+                    "O identificador informado pertence a outra meta".into(),
+                ));
+            }
+        }
+    }
+    let mut tx = db.begin().await?;
+    let id = if input.kind == "savings" {
+        sqlx::query_scalar::<_, String>(
+            "SELECT id FROM financial_targets WHERE is_profile_target=1 LIMIT 1",
+        )
+        .fetch_optional(&mut *tx)
+        .await?
+        .or(input.id)
+        .unwrap_or_else(|| "profile-monthly-savings".into())
+    } else {
+        input.id.unwrap_or_else(|| Uuid::new_v4().to_string())
+    };
     sqlx::query(
         "INSERT INTO financial_targets(
-           id,kind,category_id,amount_cents,enabled,include_descendants
-         ) VALUES(?,?,?,?,?,?)
+           id,kind,category_id,amount_cents,enabled,include_descendants,is_profile_target
+         ) VALUES(?,?,?,?,?,?,?)
          ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,category_id=excluded.category_id,
-         amount_cents=excluded.amount_cents,enabled=excluded.enabled,
-         include_descendants=excluded.include_descendants,updated_at=datetime('now')",
+         amount_cents=excluded.amount_cents,enabled=excluded.enabled,deleted_at=NULL,
+         include_descendants=excluded.include_descendants,
+         is_profile_target=MAX(financial_targets.is_profile_target,excluded.is_profile_target),
+         updated_at=datetime('now')",
     )
     .bind(&id)
-    .bind(input.kind)
-    .bind(input.category_id)
+    .bind(&input.kind)
+    .bind(&input.category_id)
     .bind(input.amount_in_cents)
     .bind(input.enabled as i64)
     .bind(input.include_descendants as i64)
-    .execute(&state.db)
+    .bind((input.kind == "savings") as i64)
+    .execute(&mut *tx)
     .await?;
+    if input.kind == "savings" {
+        sqlx::query("UPDATE user_profiles SET monthly_target_cents=?,updated_at=datetime('now') WHERE id='primary'")
+            .bind(if input.enabled { input.amount_in_cents } else { 0 })
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
     Ok(id)
 }
 
@@ -631,10 +677,27 @@ pub async fn delete_financial_target(
     id: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
+    delete_financial_target_impl(id, &state.db).await
+}
+
+async fn delete_financial_target_impl(id: String, db: &SqlitePool) -> Result<(), AppError> {
+    let mut tx = db.begin().await?;
+    let is_profile_target: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(is_profile_target),0) FROM financial_targets WHERE id=?",
+    )
+    .bind(&id)
+    .fetch_one(&mut *tx)
+    .await?;
     sqlx::query("UPDATE financial_targets SET deleted_at=datetime('now'),enabled=0 WHERE id=?")
         .bind(id)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
+    if is_profile_target != 0 {
+        sqlx::query("UPDATE user_profiles SET monthly_target_cents=0,updated_at=datetime('now') WHERE id='primary'")
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
     Ok(())
 }
 
@@ -1342,6 +1405,151 @@ mod tests {
             .await
             .unwrap();
         (directory, db, "acc".into())
+    }
+
+    #[tokio::test]
+    async fn savings_target_rejects_category_ids_and_preserves_canonical_identity_on_delete() {
+        let (_directory, db, _account_id) = setup().await;
+        sqlx::query(
+            "INSERT INTO user_profiles(id,display_name,onboarding_completed_at,monthly_target_cents)
+             VALUES('primary','Pessoa',datetime('now'),0)",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        let canonical = save_financial_target_impl(
+            FinancialTargetInput {
+                id: None,
+                kind: "savings".into(),
+                category_id: None,
+                amount_in_cents: 30_000,
+                enabled: true,
+                include_descendants: false,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO financial_targets(id,kind,category_id,amount_cents)
+             VALUES('category-target','category','food',10000)",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+
+        let invalid = save_financial_target_impl(
+            FinancialTargetInput {
+                id: Some("category-target".into()),
+                kind: "savings".into(),
+                category_id: None,
+                amount_in_cents: 20_000,
+                enabled: true,
+                include_descendants: false,
+            },
+            &db,
+        )
+        .await;
+        assert!(matches!(invalid, Err(AppError::Validation(_))));
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT kind FROM financial_targets WHERE id='category-target'",
+            )
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+            "category"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT amount_cents FROM financial_targets WHERE id=?",)
+                .bind(&canonical)
+                .fetch_one(&db)
+                .await
+                .unwrap(),
+            30_000
+        );
+
+        delete_financial_target_impl(canonical.clone(), &db)
+            .await
+            .unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT is_profile_target FROM financial_targets WHERE id=? AND deleted_at IS NOT NULL",
+            )
+            .bind(&canonical)
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+            1
+        );
+        let restored = save_financial_target_impl(
+            FinancialTargetInput {
+                id: Some(canonical.clone()),
+                kind: "savings".into(),
+                category_id: None,
+                amount_in_cents: 40_000,
+                enabled: true,
+                include_descendants: false,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+        assert_eq!(restored, canonical);
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM financial_targets
+                 WHERE kind='savings' AND enabled=1 AND deleted_at IS NULL",
+            )
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn savings_report_edit_reuses_the_marked_active_target() {
+        let (_directory, db, _account_id) = setup().await;
+        sqlx::query(
+            "INSERT INTO user_profiles(id,display_name,onboarding_completed_at,monthly_target_cents)
+             VALUES('primary','Pessoa',datetime('now'),20000)",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO financial_targets(
+               id,kind,amount_cents,enabled,is_profile_target
+             ) VALUES('active-replacement','savings',20000,1,1)",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+
+        let saved = save_financial_target_impl(
+            FinancialTargetInput {
+                id: None,
+                kind: "savings".into(),
+                category_id: None,
+                amount_in_cents: 55_000,
+                enabled: true,
+                include_descendants: false,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+        assert_eq!(saved, "active-replacement");
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT amount_cents FROM financial_targets WHERE id='active-replacement'",
+            )
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+            55_000
+        );
     }
 
     async fn insert_expense(

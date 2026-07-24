@@ -18,7 +18,7 @@ import {
   TestTube2,
   X,
 } from "lucide-react";
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useRef, useState, useEffect } from "react";
 import type { ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../../shared/api";
@@ -39,6 +39,7 @@ import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/AsyncState
 import { Pagination, type PaginationSize } from "../../shared/ui/Pagination";
 import { Select } from "../../shared/ui/Select";
 import { useToast } from "../../shared/ui/toast";
+import { invalidateCategoryMergeQueries } from "../../shared/queryInvalidation";
 
 const emptyRule: RuleInput = {
   name: "",
@@ -85,7 +86,11 @@ export function CategoriesRules() {
     sourceId: string;
     targetId: string;
     impact?: CategoryMergeImpact;
+    loading: boolean;
   }>();
+  const mergePreviewToken = useRef(0);
+  const mergeConfirmLock = useRef(false);
+  const [mergeSubmitting, setMergeSubmitting] = useState(false);
   const [categoryDraft, setCategoryDraft] = useState<{
     id?: string;
     parentId?: string;
@@ -182,29 +187,46 @@ export function CategoriesRules() {
       await api.archiveCategory(id);
       await client.invalidateQueries({ queryKey: ["categories"] });
     } catch {
-      setMergeDraft({ sourceId: id, targetId: "" });
+      mergePreviewToken.current += 1;
+      setMergeDraft({ sourceId: id, targetId: "", loading: false });
       setMessage("Esta categoria está em uso. Você pode uni-la a outra categoria do mesmo tipo.");
     }
   }
+  function closeMergeCategory() {
+    mergePreviewToken.current += 1;
+    setMergeDraft(undefined);
+  }
   async function previewMergeCategory(targetId: string) {
-    if (!mergeDraft || !targetId) {
-      if (mergeDraft) setMergeDraft({ ...mergeDraft, targetId, impact: undefined });
+    if (!mergeDraft) return;
+    const sourceId = mergeDraft.sourceId;
+    const token = ++mergePreviewToken.current;
+    if (!targetId) {
+      setMergeDraft({ sourceId, targetId, loading: false });
       return;
     }
-    const next = { ...mergeDraft, targetId, impact: undefined };
-    setMergeDraft(next);
+    setMergeDraft({ sourceId, targetId, loading: true });
     try {
-      const impact = await api.previewCategoryMerge(mergeDraft.sourceId, targetId);
-      setMergeDraft({ ...next, impact });
+      const impact = await api.previewCategoryMerge(sourceId, targetId);
+      if (token !== mergePreviewToken.current) return;
+      setMergeDraft((current) =>
+        current?.sourceId === sourceId && current.targetId === targetId
+          ? { sourceId, targetId, impact, loading: false }
+          : current,
+      );
     } catch (error: any) {
+      if (token !== mergePreviewToken.current) return;
+      setMergeDraft((current) => (current ? { ...current, loading: false } : current));
       setMessage(error?.message || String(error));
     }
   }
   async function confirmMergeCategory() {
-    if (!mergeDraft?.targetId) return;
+    const snapshot = mergeDraft?.impact;
+    if (!snapshot || mergeDraft.loading || mergeConfirmLock.current) return;
+    mergeConfirmLock.current = true;
+    setMergeSubmitting(true);
     try {
-      const impact = await api.mergeCategory(mergeDraft.sourceId, mergeDraft.targetId);
-      setMergeDraft(undefined);
+      const impact = await api.mergeCategory(snapshot.sourceCategoryId, snapshot.targetCategoryId);
+      closeMergeCategory();
       setMessage(
         `${impact.sourceCategoryName} foi unida a ${impact.targetCategoryName}. ${impact.movedTransactions} lançamento(s) foram preservados.`,
       );
@@ -213,10 +235,13 @@ export function CategoriesRules() {
         client.invalidateQueries({ queryKey: ["rules"] }),
         client.invalidateQueries({ queryKey: ["transactions"] }),
         client.invalidateQueries({ queryKey: ["financial-targets"] }),
-        client.invalidateQueries({ queryKey: ["budget-overview"] }),
+        invalidateCategoryMergeQueries(client),
       ]);
     } catch (error: any) {
       setMessage(error?.message || String(error));
+    } finally {
+      mergeConfirmLock.current = false;
+      setMergeSubmitting(false);
     }
   }
   function categoryOrderInput(category: Category, sortOrder: number): Partial<Category> {
@@ -421,6 +446,7 @@ export function CategoriesRules() {
               movementType={rule.movementType}
               allowEmpty
               emptyLabel="Selecione…"
+              aria-label="Categoria da regra"
             />
             {rule.categoryId &&
               rule.movementType !== "any" &&
@@ -775,7 +801,7 @@ export function CategoriesRules() {
       )}
       {tab === "merchants" && <MerchantsTab />}
       {mergeDraft && (
-        <Modal title="Unir categoria" onClose={() => setMergeDraft(undefined)}>
+        <Modal title="Unir categoria" onClose={closeMergeCategory}>
           <article className="modal">
             <h2>Para onde vão os lançamentos?</h2>
             <p className="muted">
@@ -794,19 +820,30 @@ export function CategoriesRules() {
                 aria-label="Categoria de destino"
               />
             </label>
-            {mergeDraft.impact && (
+            {mergeDraft.loading && <LoadingState variant="panel" label="Calculando impacto da união…" />}
+            {mergeDraft.impact && !mergeDraft.loading && (
               <div className="notice" role="status">
                 <strong>{mergeDraft.impact.movedTransactions} lançamento(s)</strong>, {mergeDraft.impact.movedRules}{" "}
-                regra(s) e {mergeDraft.impact.movedRecurring} recorrência(s) serão movidos para{" "}
+                regra(s), {mergeDraft.impact.movedRecurring} recorrência(s), {mergeDraft.impact.movedChildren}{" "}
+                subcategoria(s) e {mergeDraft.impact.movedTargets} meta(s) serão movidos para{" "}
                 {mergeDraft.impact.targetCategoryName}.
+                {mergeDraft.impact.archivedTargets > 0 && (
+                  <p className="form-error" role="alert">
+                    Atenção: {mergeDraft.impact.archivedTargets} meta(s) conflitante(s) serão arquivadas para evitar
+                    limites duplicados.
+                  </p>
+                )}
               </div>
             )}
             <div className="editor-actions">
-              <button className="secondary" onClick={() => setMergeDraft(undefined)}>
+              <button className="secondary" onClick={closeMergeCategory} disabled={mergeSubmitting}>
                 Cancelar
               </button>
-              <button disabled={!mergeDraft.impact} onClick={confirmMergeCategory}>
-                <GitMerge size={16} /> Unir categorias
+              <button
+                disabled={!mergeDraft.impact || mergeDraft.loading || mergeSubmitting}
+                onClick={confirmMergeCategory}
+              >
+                <GitMerge size={16} /> {mergeSubmitting ? "Unindo…" : "Unir categorias"}
               </button>
             </div>
           </article>

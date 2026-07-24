@@ -1,18 +1,26 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, HardDrive, Menu, Moon, Sun } from "lucide-react";
-import { Dashboard } from "../features/dashboard/Dashboard";
-import { Transactions } from "../features/transactions/Transactions";
-import { ImportPage } from "../features/import/ImportPage";
-import { CategoriesRules } from "../features/categories/CategoriesRules";
 import { Onboarding } from "../features/onboarding/Onboarding";
-import { SettingsPage } from "../features/settings/SettingsPage";
-import { AccountsCards } from "../features/accounts/AccountsCards";
-import { Reports } from "../features/reports/Reports";
-import { RecurringTransactions } from "../features/recurring/RecurringTransactions";
-import { ReviewCenter } from "../features/review/ReviewCenter";
-import { BudgetPage } from "../features/budget/BudgetPage";
+import { Dashboard } from "../features/dashboard/Dashboard";
+const Transactions = lazy(() =>
+  import("../features/transactions/Transactions").then((m) => ({ default: m.Transactions })),
+);
+const ImportPage = lazy(() => import("../features/import/ImportPage").then((m) => ({ default: m.ImportPage })));
+const CategoriesRules = lazy(() =>
+  import("../features/categories/CategoriesRules").then((m) => ({ default: m.CategoriesRules })),
+);
+const SettingsPage = lazy(() => import("../features/settings/SettingsPage").then((m) => ({ default: m.SettingsPage })));
+const AccountsCards = lazy(() =>
+  import("../features/accounts/AccountsCards").then((m) => ({ default: m.AccountsCards })),
+);
+const Reports = lazy(() => import("../features/reports/Reports").then((m) => ({ default: m.Reports })));
+const RecurringTransactions = lazy(() =>
+  import("../features/recurring/RecurringTransactions").then((m) => ({ default: m.RecurringTransactions })),
+);
+const ReviewCenter = lazy(() => import("../features/review/ReviewCenter").then((m) => ({ default: m.ReviewCenter })));
+const BudgetPage = lazy(() => import("../features/budget/BudgetPage").then((m) => ({ default: m.BudgetPage })));
 import { api } from "../shared/api";
 import { UpdateNotice } from "../shared/ui/UpdateNotice";
 import { APP_VERSION } from "../shared/version";
@@ -25,6 +33,7 @@ import { useMaintenanceRestart } from "../shared/maintenanceRestart";
 import { MaintenanceRestartNotice } from "../shared/ui/MaintenanceRestartNotice";
 import { BackupReminderNotice } from "../shared/ui/BackupReminderNotice";
 import { QuickStartGuide } from "../shared/ui/QuickStartGuide";
+import { LazyErrorBoundary } from "../shared/ui/LazyErrorBoundary";
 
 export function App() {
   const client = useQueryClient();
@@ -230,19 +239,23 @@ export function App() {
         <BackupReminderNotice enabled={bootstrap.onboardingCompleted} />
         {!maintenanceRestartRequired && <CommandPalette />}
         <div className="route-view" key={location.pathname}>
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/transactions" element={<Transactions />} />
-            <Route path="/recurring" element={<RecurringTransactions />} />
-            <Route path="/review" element={<ReviewCenter />} />
-            <Route path="/budget" element={<BudgetPage />} />
-            <Route path="/import" element={<ImportPage />} />
-            <Route path="/accounts" element={<AccountsCards />} />
-            <Route path="/categories" element={<CategoriesRules />} />
-            <Route path="/reports" element={<Reports />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="*" element={<Empty />} />
-          </Routes>
+          <LazyErrorBoundary variant="page" message="Não foi possível carregar esta tela.">
+            <Suspense fallback={<LoadingState variant="page" label="Carregando tela…" />}>
+              <Routes>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/transactions" element={<Transactions />} />
+                <Route path="/recurring" element={<RecurringTransactions />} />
+                <Route path="/review" element={<ReviewCenter />} />
+                <Route path="/budget" element={<BudgetPage />} />
+                <Route path="/import" element={<ImportPage />} />
+                <Route path="/accounts" element={<AccountsCards />} />
+                <Route path="/categories" element={<CategoriesRules />} />
+                <Route path="/reports" element={<Reports />} />
+                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="*" element={<Empty />} />
+              </Routes>
+            </Suspense>
+          </LazyErrorBoundary>
         </div>
       </main>
       <QuickStartGuide hasTransactions={bootstrap.hasTransactions} />

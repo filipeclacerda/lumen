@@ -58,8 +58,6 @@ type Props = {
 };
 
 const ORDER: CategoryKind[] = ["income", "expense", "investment", "transfer"];
-const PAGE_SIZE = 3;
-const FAMILY_CHILDREN_PAGE_SIZE = 2;
 const ICONS: Record<string, LucideIcon> = {
   "arrow-left-right": ArrowLeftRight,
   "arrow-up-right": ArrowUpRight,
@@ -180,6 +178,7 @@ export function CategorySelect({
   }, [filtered]);
 
   const selected = useMemo(() => categories.find((c) => c.id === value), [categories, value]);
+  const accessibleLabel = selected ? `${ariaLabel}: ${categoryPath(categories, selected)}` : ariaLabel;
 
   // Category selects use the rich dropdown by default so color and icon metadata
   // remain visible in import, transactions, and the other category surfaces.
@@ -191,7 +190,7 @@ export function CategorySelect({
         onChange={(nextValue) => onChange(nextValue || undefined)}
         disabled={disabled}
         id={id}
-        aria-label={ariaLabel}
+        ariaLabel={accessibleLabel}
         options={[
           ...(allowEmpty ? [{ value: "", label: emptyLabel }] : []),
           ...groups.flatMap((group) =>
@@ -216,7 +215,7 @@ export function CategorySelect({
       emptyLabel={emptyLabel}
       disabled={disabled}
       id={id}
-      ariaLabel={ariaLabel}
+      ariaLabel={accessibleLabel}
       className={className}
     />
   );
@@ -251,11 +250,6 @@ function CategoryDropdown({
 }: DropdownProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [browseMode, setBrowseMode] = useState<"roots" | "family">("roots");
-  const [familyId, setFamilyId] = useState<string>();
-  const [rootPage, setRootPage] = useState(0);
-  const [familyPage, setFamilyPage] = useState(0);
-  const [searchPage, setSearchPage] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -274,6 +268,15 @@ function CategoryDropdown({
         setOpen(false);
       }
     }
+    function onFocus(e: FocusEvent) {
+      if (
+        rootRef.current &&
+        !rootRef.current.contains(e.target as Node) &&
+        !panelRef.current?.contains(e.target as Node)
+      ) {
+        setOpen(false);
+      }
+    }
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
         setOpen(false);
@@ -281,9 +284,11 @@ function CategoryDropdown({
       }
     }
     document.addEventListener("mousedown", onDoc);
+    document.addEventListener("focusin", onFocus);
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("focusin", onFocus);
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
@@ -292,11 +297,6 @@ function CategoryDropdown({
     if (!open) return;
 
     setQuery("");
-    setBrowseMode("roots");
-    setFamilyId(undefined);
-    setRootPage(0);
-    setFamilyPage(0);
-    setSearchPage(0);
 
     const focusFrame = requestAnimationFrame(() => {
       inputRef.current?.focus({ preventScroll: true });
@@ -352,31 +352,6 @@ function CategoryDropdown({
 
   const allItems = useMemo(() => groups.flatMap((group) => group.items), [groups]);
   const filteredIds = useMemo(() => new Set(allItems.map((category) => category.id)), [allItems]);
-  const roots = useMemo(
-    () => allItems.filter((category) => !category.parentId || !filteredIds.has(category.parentId)),
-    [allItems, filteredIds],
-  );
-  const selectedRootId = useMemo(() => {
-    let current = selected;
-    const visited = new Set<string>();
-    while (current?.parentId && filteredIds.has(current.parentId) && !visited.has(current.parentId)) {
-      visited.add(current.parentId);
-      current = allItems.find((category) => category.id === current!.parentId);
-    }
-    return current?.id;
-  }, [allItems, filteredIds, selected]);
-  const orderedRoots = useMemo(
-    () =>
-      selectedRootId
-        ? [...roots].sort((a, b) => Number(b.id === selectedRootId) - Number(a.id === selectedRootId))
-        : roots,
-    [roots, selectedRootId],
-  );
-  const family = familyId ? allItems.find((category) => category.id === familyId) : undefined;
-  const familyChildren = useMemo(
-    () => (family ? allItems.filter((category) => category.parentId === family.id) : []),
-    [allItems, family],
-  );
   const normalizedQuery = normalizeCategorySearch(query);
   const searchResults = useMemo(
     () =>
@@ -387,31 +362,40 @@ function CategoryDropdown({
         : [],
     [allItems, categories, normalizedQuery],
   );
+  // A single depth-first list keeps every category selectable, including parents.
+  // The visited set also makes malformed imported trees safe to render.
+  const treeItems = useMemo(() => {
+    const children = new Map<string | undefined, Category[]>();
+    allItems.forEach((item) => {
+      const key = item.parentId && filteredIds.has(item.parentId) ? item.parentId : undefined;
+      const list = children.get(key) ?? [];
+      list.push(item);
+      children.set(key, list);
+    });
+    const result: Category[] = [];
+    const rendered = new Set<string>();
+    const visit = (items: Category[], ancestors: Set<string>) => {
+      items.forEach((item) => {
+        if (ancestors.has(item.id) || rendered.has(item.id)) return;
+        rendered.add(item.id);
+        result.push(item);
+        const next = new Set(ancestors).add(item.id);
+        visit(children.get(item.id) ?? [], next);
+      });
+    };
+    visit(children.get(undefined) ?? [], new Set());
+    // Cycles are invalid, but imported/corrupt data must not make real options disappear.
+    allItems.forEach((item) => {
+      if (!rendered.has(item.id)) visit([item], new Set());
+    });
+    return result;
+  }, [allItems, filteredIds]);
   const showClearOption = allowEmpty && Boolean(value);
-  const rootOptionsPerPage = showClearOption ? PAGE_SIZE - 1 : PAGE_SIZE;
-  const rootPageCount = Math.max(1, Math.ceil(orderedRoots.length / rootOptionsPerPage));
-  const familyPageCount = Math.max(1, Math.ceil(familyChildren.length / FAMILY_CHILDREN_PAGE_SIZE));
-  const searchPageCount = Math.max(1, Math.ceil(searchResults.length / PAGE_SIZE));
-  const safeRootPage = Math.min(rootPage, rootPageCount - 1);
-  const safeFamilyPage = Math.min(familyPage, familyPageCount - 1);
-  const safeSearchPage = Math.min(searchPage, searchPageCount - 1);
-  const visibleRoots = orderedRoots.slice(safeRootPage * rootOptionsPerPage, (safeRootPage + 1) * rootOptionsPerPage);
-  const visibleFamilyChildren = familyChildren.slice(
-    safeFamilyPage * FAMILY_CHILDREN_PAGE_SIZE,
-    (safeFamilyPage + 1) * FAMILY_CHILDREN_PAGE_SIZE,
-  );
-  const visibleSearchResults = searchResults.slice(safeSearchPage * PAGE_SIZE, (safeSearchPage + 1) * PAGE_SIZE);
 
   function select(id?: string) {
     setOpen(false);
     onChange(id);
     requestAnimationFrame(() => triggerRef.current?.focus({ preventScroll: true }));
-  }
-
-  function openFamily(id: string) {
-    setFamilyId(id);
-    setFamilyPage(0);
-    setBrowseMode("family");
   }
 
   function focusListOption(position: "first" | "last" | "next" | "previous", current?: HTMLElement) {
@@ -444,6 +428,7 @@ function CategoryDropdown({
     const parent = category.parentId ? categories.find((candidate) => candidate.id === category.parentId) : undefined;
     const path = categoryPath(categories, category);
     const isSelected = category.id === value;
+    const hasHomonym = categories.some((candidate) => candidate.id !== category.id && candidate.name === category.name);
 
     return (
       <button
@@ -459,7 +444,7 @@ function CategoryDropdown({
         onKeyDown={handleOptionKeyDown}
         title={path}
         role="option"
-        aria-label={displayPath ? path : category.name}
+        aria-label={displayPath || hasHomonym ? path : category.name}
         aria-selected={isSelected}
       >
         <span
@@ -482,37 +467,6 @@ function CategoryDropdown({
           {!displayPath && parent && <small className="category-dropdown-parent-label">em {parent.name}</small>}
         </span>
       </button>
-    );
-  }
-
-  function renderPagination(page: number, pageCount: number, setPage: (nextPage: number) => void, label: string) {
-    if (pageCount <= 1) return null;
-    return (
-      <div className="category-dropdown-pagination" aria-label={label}>
-        <button
-          type="button"
-          className="category-dropdown-pagination-button"
-          onClick={() => setPage(Math.max(0, page - 1))}
-          onKeyDown={handleOptionKeyDown}
-          disabled={page === 0}
-          aria-label={`${label}: página anterior`}
-        >
-          ‹
-        </button>
-        <span>
-          Página {page + 1} de {pageCount}
-        </span>
-        <button
-          type="button"
-          className="category-dropdown-pagination-button"
-          onClick={() => setPage(Math.min(pageCount - 1, page + 1))}
-          onKeyDown={handleOptionKeyDown}
-          disabled={page === pageCount - 1}
-          aria-label={`${label}: próxima página`}
-        >
-          ›
-        </button>
-      </div>
     );
   }
 
@@ -578,7 +532,6 @@ function CategoryDropdown({
                 value={query}
                 onChange={(e) => {
                   setQuery(e.target.value);
-                  setSearchPage(0);
                 }}
                 onKeyDown={(e) => {
                   if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -591,7 +544,7 @@ function CategoryDropdown({
               />
             </div>
             <div className="category-dropdown-list" id={listboxId} role="listbox" aria-label={ariaLabel}>
-              {!normalizedQuery && browseMode === "roots" && showClearOption && (
+              {!normalizedQuery && showClearOption && (
                 <button
                   type="button"
                   className="category-dropdown-option"
@@ -607,84 +560,19 @@ function CategoryDropdown({
                 </button>
               )}
 
-              {!normalizedQuery && browseMode === "roots" && (
+              {!normalizedQuery && (
                 <>
-                  <div className="category-dropdown-group" role="group" aria-label="Famílias de categorias">
-                    {visibleRoots.map((root) => {
-                      const childCount = allItems.filter((category) => category.parentId === root.id).length;
-                      return (
-                        <button
-                          key={root.id}
-                          type="button"
-                          className={`category-dropdown-option category-dropdown-option--${root.kind}`}
-                          data-kind={root.kind}
-                          onClick={() => openFamily(root.id)}
-                          onKeyDown={handleOptionKeyDown}
-                          title={root.name}
-                          role="option"
-                          aria-label={root.name}
-                          aria-selected={false}
-                        >
-                          <span
-                            className="category-dropdown-swatch"
-                            data-kind={root.kind}
-                            style={root.color ? { background: root.color } : undefined}
-                            aria-hidden
-                          />
-                          <span className="category-dropdown-icon" data-kind={root.kind} aria-hidden>
-                            <CategoryIcon name={root.icon} kind={root.kind} />
-                          </span>
-                          <span className="category-dropdown-option-copy">
-                            <span className="category-dropdown-name">{root.name}</span>
-                            <small className="category-dropdown-parent-label">
-                              {childCount === 1 ? "1 subcategoria" : `${childCount} subcategorias`}
-                            </small>
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {orderedRoots.length === 0 && (
-                    <p className="category-dropdown-empty">Nenhuma categoria encontrada.</p>
-                  )}
-                  {renderPagination(safeRootPage, rootPageCount, setRootPage, "Famílias")}
-                </>
-              )}
-
-              {!normalizedQuery && browseMode === "family" && (
-                <>
-                  <button
-                    type="button"
-                    className="category-dropdown-option category-dropdown-option--back"
-                    onKeyDown={handleOptionKeyDown}
-                    onClick={() => setBrowseMode("roots")}
-                  >
-                    <span aria-hidden>‹</span>
-                    <span className="category-dropdown-name">Todas as famílias</span>
-                  </button>
-                  {family && (
-                    <div
-                      className={`category-dropdown-group category-dropdown-group--${family.kind}`}
-                      data-kind={family.kind}
-                      role="group"
-                      aria-label={`Família ${family.name}`}
-                    >
-                      <div className="category-dropdown-group-label">{family.name}</div>
-                      {renderCategoryOption(family)}
-                      {visibleFamilyChildren.map((category) => renderCategoryOption(category))}
-                    </div>
-                  )}
-                  {renderPagination(safeFamilyPage, familyPageCount, setFamilyPage, "Subcategorias")}
+                  {treeItems.map((category) => renderCategoryOption(category, false))}
+                  {treeItems.length === 0 && <p className="category-dropdown-empty">Nenhuma categoria encontrada.</p>}
                 </>
               )}
 
               {normalizedQuery && (
                 <>
-                  {visibleSearchResults.map((category) => renderCategoryOption(category, true))}
+                  {searchResults.map((category) => renderCategoryOption(category, true))}
                   {searchResults.length === 0 && (
                     <p className="category-dropdown-empty">Nenhuma categoria encontrada.</p>
                   )}
-                  {renderPagination(safeSearchPage, searchPageCount, setSearchPage, "Resultados")}
                 </>
               )}
             </div>

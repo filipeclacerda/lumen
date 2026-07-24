@@ -18,7 +18,7 @@ export type ReconciliationPreview = {
   reportedBalanceInCents: number;
   calculatedBalanceInCents: number;
   differenceInCents: number;
-  latestCheckpoint?: BalanceCheckpoint;
+  latestCheckpoint: BalanceCheckpoint | null;
 };
 export type AccountBalanceSummary = {
   accountId: string;
@@ -26,17 +26,17 @@ export type AccountBalanceSummary = {
   pendingBalanceInCents: number;
   forecastBalanceInCents: number;
   minimumBalanceInCents: number;
-  minimumBalanceDate?: string;
+  minimumBalanceDate: string | null;
   scheduledCount: number;
-  lastReconciledAt?: string;
+  lastReconciledAt: string | null;
   needsReconciliation: boolean;
 };
 export type ReviewItem = {
   id: string;
   title: string;
   description: string;
-  date?: string;
-  amountInCents?: number;
+  date: string | null;
+  amountInCents: number | null;
   actionPath: string;
   actionLabel: string;
 };
@@ -56,12 +56,12 @@ export type OnboardingStartMode = "import" | "manual" | "tour";
 export type IncomeDayRule = "fifth_business_day";
 export type UserProfile = {
   displayName: string;
-  monthlyIncomeInCents?: number;
-  monthlyTargetInCents?: number;
-  incomeDay?: number;
-  incomeDayRule?: IncomeDayRule;
-  financialGoal?: FinancialGoal;
-  onboardingStartMode?: OnboardingStartMode;
+  monthlyIncomeInCents: number | null;
+  monthlyTargetInCents: number | null;
+  incomeDay: number | null;
+  incomeDayRule: IncomeDayRule | null;
+  financialGoal: FinancialGoal | null;
+  onboardingStartMode: OnboardingStartMode | null;
   onboardingCompletedAt: string;
 };
 export type ProfileInput = {
@@ -79,9 +79,9 @@ export type OnboardingInput = {
   onboardingStartMode: OnboardingStartMode;
 };
 export type AppBootstrap = {
-  profile?: UserProfile;
+  profile: UserProfile | null;
   onboardingCompleted: boolean;
-  account?: Account;
+  account: Account | null;
   hasTransactions: boolean;
   hasImports: boolean;
 };
@@ -156,7 +156,7 @@ export type TransferDetails = {
   toAccountId: string;
   date: string;
   amountInCents: number;
-  description?: string;
+  description: string | null;
 };
 export type CategoryKind = "income" | "expense" | "transfer" | "investment";
 export type Category = {
@@ -178,6 +178,7 @@ export type CategoryMergeImpact = {
   movedRules: number;
   movedRecurring: number;
   movedTargets: number;
+  archivedTargets: number;
   movedChildren: number;
 };
 export type RuleOperator = "contains" | "starts_with" | "regex";
@@ -502,7 +503,12 @@ export type NetWorthPoint = {
   liabilitiesInCents: number;
   perKind: NetWorthKindAmount[];
 };
-export type UpcomingItem = { date: string; label: string; amountInCents: number; kind: "invoice" | "recurring" };
+export type UpcomingItem = {
+  date: string;
+  label: string;
+  amountInCents: number;
+  kind: "invoice" | "recurring" | "installment";
+};
 export type BudgetStatus = "ok" | "warning" | "over";
 export type BudgetCategory = {
   targetId: string;
@@ -517,7 +523,11 @@ export type BudgetCategory = {
   projectedInCents: number;
   status: BudgetStatus;
 };
-export type BudgetOverview = { categories: BudgetCategory[]; totals: { limitInCents: number; spentInCents: number } };
+export type BudgetOverview = {
+  categories: BudgetCategory[];
+  totals: { limitInCents: number; spentInCents: number };
+  hasOverlappingScopes: boolean;
+};
 export type RecurringTransaction = {
   id: string;
   accountId: string;

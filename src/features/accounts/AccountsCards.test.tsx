@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountsCards } from "./AccountsCards";
+import type { BalanceCheckpoint, ReconciliationPreview } from "../../shared/types";
 
 const mocks = vi.hoisted(() => ({
   accounts: vi.fn(),
@@ -29,6 +30,14 @@ vi.mock("../../shared/api", () => ({
   },
 }));
 vi.mock("../../shared/ui/toast", () => ({ useToast: () => mocks.toast }));
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 function LocationProbe() {
   const location = useLocation();
@@ -229,7 +238,9 @@ describe("AccountsCards balance reconciliation", () => {
     );
   }
 
-  it("mostra uma prévia sem diferença e confirma o checkpoint", async () => {
+  it("mostra uma prévia sem diferença e bloqueia cliques rápidos ao confirmar", async () => {
+    const checkpoint = deferred<BalanceCheckpoint>();
+    mocks.recordBalanceCheckpoint.mockReturnValueOnce(checkpoint.promise);
     await fillAndPreview(0);
 
     expect(screen.getByText("Precisa conferir")).toBeTruthy();
@@ -239,7 +250,9 @@ describe("AccountsCards balance reconciliation", () => {
     expect(preview.textContent).toContain("Diferença");
     expect(preview.textContent).toContain("R$ 0,00");
 
-    fireEvent.click(screen.getByRole("button", { name: "Confirmar conferência" }));
+    const confirm = screen.getByRole("button", { name: "Confirmar conferência" });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
     await waitFor(() =>
       expect(mocks.recordBalanceCheckpoint).toHaveBeenCalledWith({
         accountId: "bank-1",
@@ -248,6 +261,16 @@ describe("AccountsCards balance reconciliation", () => {
         source: "reconciliation",
       }),
     );
+    expect(mocks.recordBalanceCheckpoint).toHaveBeenCalledTimes(1);
+    expect((screen.getByRole("button", { name: "Confirmando…" }) as HTMLButtonElement).disabled).toBe(true);
+    checkpoint.resolve({
+      id: "checkpoint-1",
+      accountId: "bank-1",
+      asOfDate: "2026-07-10",
+      balanceInCents: 100_000,
+      source: "reconciliation",
+      createdAt: "2026-07-10T12:00:00Z",
+    });
     await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith("Saldo conferido com sucesso."));
   });
 
@@ -271,6 +294,53 @@ describe("AccountsCards balance reconciliation", () => {
     expect(preview.textContent).toContain("R$ 25,00");
     expect(screen.queryByRole("button", { name: /ajuste/i })).toBeNull();
     expect(screen.getByText(/A diferença é apenas informativa e não cria receita, despesa ou ajuste/i)).toBeTruthy();
+  });
+
+  it("ignora respostas fora de ordem e confirma exatamente o snapshot exibido", async () => {
+    const first = deferred<ReconciliationPreview>();
+    const second = deferred<ReconciliationPreview>();
+    mocks.reconciliationPreview.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    renderAccounts();
+    fireEvent.click(await screen.findByRole("button", { name: "Conferir saldo" }));
+
+    const date = screen.getByLabelText("Data do saldo");
+    const balance = screen.getByLabelText("Saldo informado");
+    fireEvent.change(date, { target: { value: "2026-07-10" } });
+    fireEvent.change(balance, { target: { value: "1000,00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ver diferença" }));
+
+    fireEvent.change(date, { target: { value: "2026-07-11" } });
+    fireEvent.change(balance, { target: { value: "1200,00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ver diferença" }));
+    second.resolve({
+      accountId: "bank-1",
+      asOfDate: "2026-07-11",
+      reportedBalanceInCents: 120_000,
+      calculatedBalanceInCents: 110_000,
+      differenceInCents: 10_000,
+      latestCheckpoint: null,
+    });
+    expect((await screen.findByLabelText("Prévia da conferência")).textContent).toContain("R$ 100,00");
+
+    first.resolve({
+      accountId: "bank-1",
+      asOfDate: "2026-07-10",
+      reportedBalanceInCents: 100_000,
+      calculatedBalanceInCents: 99_999,
+      differenceInCents: 1,
+      latestCheckpoint: null,
+    });
+    await waitFor(() => expect(screen.getByLabelText("Prévia da conferência").textContent).not.toContain("R$ 0,01"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar conferência" }));
+    await waitFor(() =>
+      expect(mocks.recordBalanceCheckpoint).toHaveBeenCalledWith({
+        accountId: "bank-1",
+        asOfDate: "2026-07-11",
+        balanceInCents: 120_000,
+        source: "reconciliation",
+      }),
+    );
   });
 
   it("mostra a projeção de 30 dias e alerta quando o saldo mínimo pode ficar negativo", async () => {

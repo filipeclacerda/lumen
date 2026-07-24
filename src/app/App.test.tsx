@@ -19,16 +19,17 @@ vi.mock("../shared/api", () => ({
   },
 }));
 vi.mock("../features/dashboard/Dashboard", () => ({ Dashboard: () => <div>Dashboard</div> }));
+vi.mock("../features/transactions/Transactions", () => ({ Transactions: () => <div>Rota de transações lazy</div> }));
 vi.mock("../shared/ui/CommandPalette", () => ({ CommandPalette: () => null }));
 vi.mock("../shared/ui/UpdateNotice", () => ({ UpdateNotice: () => null }));
 vi.mock("../shared/ui/BackupReminderNotice", () => ({ BackupReminderNotice: () => null }));
 vi.mock("../shared/ui/QuickStartGuide", () => ({ QuickStartGuide: () => null }));
 
-function renderApp() {
+function renderApp(initialEntry = "/") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[initialEntry]}>
         <App />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -67,6 +68,13 @@ describe("App sidebar", () => {
     expect(within(navigation).getByRole("heading", { name: "Planejar" })).toBeTruthy();
     expect(within(navigation).queryByRole("link", { name: "Configurações" })).toBeNull();
     expect(screen.getByRole("link", { name: "Configurações" })).toBeTruthy();
+  });
+
+  it("loads a feature route through the lazy route boundary", async () => {
+    renderApp("/transactions");
+
+    expect(await screen.findByText("Rota de transações lazy")).toBeTruthy();
+    expect(screen.queryByText("Dashboard")).toBeNull();
   });
 
   it("persists the collapsed preference and restores it after remounting", async () => {

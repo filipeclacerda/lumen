@@ -1,5 +1,5 @@
 import { PageHeader } from "../../shared/ui/PageHeader";
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -11,23 +11,32 @@ import {
   PiggyBank,
   Plus,
   TrendingUp,
+  CreditCard,
+  Repeat,
+  Receipt,
 } from "lucide-react";
 import { api } from "../../shared/api";
 import { money, shortDate } from "../../shared/format";
 import { currentMonth, monthTitle, shiftMonth } from "../../shared/period";
 import { MonthNavigator } from "../../shared/ui/MonthNavigator";
-import { CategoryBarsChart } from "../../shared/ui/Charts";
 import { TransactionForm } from "../transactions/TransactionForm";
-import { CashFlowChart } from "./CashFlowChart";
-import { MonthlySurplusChart } from "./MonthlySurplusChart";
 import { ErrorState, LoadingState } from "../../shared/ui/AsyncState";
+import { LazyErrorBoundary } from "../../shared/ui/LazyErrorBoundary";
 import type { DashboardSummary, FinancialGoal, FinancialReport, Transaction } from "../../shared/types";
+
+const CategoryBarsChart = lazy(() =>
+  import("../../shared/ui/Charts").then((module) => ({ default: module.CategoryBarsChart })),
+);
+const CashFlowChart = lazy(() => import("./CashFlowChart").then((module) => ({ default: module.CashFlowChart })));
+const MonthlySurplusChart = lazy(() =>
+  import("./MonthlySurplusChart").then((module) => ({ default: module.MonthlySurplusChart })),
+);
 
 /// Picks the single personalized highlight for the onboarding `financialGoal`, using whatever
 /// data is already loaded on the dashboard. Returns undefined when the goal is unset or the
 /// relevant data is empty, so the caller renders nothing in that case.
 function buildGoalHighlight(
-  goal: FinancialGoal | undefined,
+  goal: FinancialGoal | null | undefined,
   data: { summary: DashboardSummary; report?: FinancialReport; transactions: Transaction[] },
 ): { text: string; to: string } | undefined {
   const { summary, report, transactions } = data;
@@ -61,6 +70,21 @@ function buildGoalHighlight(
   return undefined;
 }
 
+function upcomingKindPresentation(kind: "invoice" | "installment" | "recurring") {
+  switch (kind) {
+    case "invoice":
+      return { label: "Fatura", icon: <CreditCard size={18} /> };
+    case "installment":
+      return { label: "Parcela", icon: <Receipt size={18} /> };
+    case "recurring":
+      return { label: "Recorrente", icon: <Repeat size={18} /> };
+    default: {
+      const exhaustive: never = kind;
+      return exhaustive;
+    }
+  }
+}
+
 export function Dashboard() {
   const [month, setMonth] = useState(currentMonth());
   const [showForm, setShowForm] = useState(false);
@@ -70,7 +94,12 @@ export function Dashboard() {
     isError: summaryError,
     refetch: refetchSummary,
   } = useQuery({ queryKey: ["summary", month], queryFn: () => api.summary(month) });
-  const { data: transactions = [] } = useQuery({
+  const {
+    data: transactions = [],
+    isLoading: transactionsLoading,
+    isError: transactionsError,
+    refetch: refetchTransactions,
+  } = useQuery({
     queryKey: ["transactions", month],
     queryFn: () => api.transactions(month),
   });
@@ -80,7 +109,12 @@ export function Dashboard() {
     queryKey: ["financial-report", cashFlowFilter],
     queryFn: () => api.financialReport(cashFlowFilter),
   });
-  const { data: upcoming = [] } = useQuery({
+  const {
+    data: upcoming = [],
+    isLoading: upcomingLoading,
+    isError: upcomingError,
+    refetch: refetchUpcoming,
+  } = useQuery({
     queryKey: ["upcoming-items", 15],
     queryFn: () => api.upcomingItems(15),
   });
@@ -105,9 +139,10 @@ export function Dashboard() {
     sharePercent: categoryTotal ? (category.amountInCents / categoryTotal) * 100 : 0,
   }));
   const netIncomeInCents = summary.incomeInCents - summary.expensesInCents;
-  const incomeProgress = profile?.monthlyIncomeInCents
-    ? Math.round((summary.incomeInCents / profile.monthlyIncomeInCents) * 100)
-    : undefined;
+  const incomeProgress =
+    profile?.monthlyIncomeInCents != null && profile.monthlyIncomeInCents > 0
+      ? Math.round((summary.incomeInCents / profile.monthlyIncomeInCents) * 100)
+      : undefined;
   const goalHighlight = buildGoalHighlight(profile?.financialGoal, { summary, report, transactions });
 
   return (
@@ -206,7 +241,11 @@ export function Dashboard() {
             <h2>Fluxo de caixa</h2>
             <span>Últimos 6 meses</span>
           </div>
-          <CashFlowChart monthly={report.monthly} />
+          <LazyErrorBoundary variant="panel" message="Não foi possível carregar o gráfico de fluxo de caixa.">
+            <Suspense fallback={<LoadingState variant="panel" label="Carregando gráfico de fluxo de caixa…" />}>
+              <CashFlowChart monthly={report.monthly} />
+            </Suspense>
+          </LazyErrorBoundary>
         </article>
       )}
       {budget && budget.categories.length > 0 && (
@@ -241,7 +280,11 @@ export function Dashboard() {
             <h2>Sobra mensal</h2>
             <span>Receitas menos gastos e investimentos</span>
           </div>
-          <MonthlySurplusChart monthly={report.monthly} />
+          <LazyErrorBoundary variant="panel" message="Não foi possível carregar o gráfico de sobra mensal.">
+            <Suspense fallback={<LoadingState variant="panel" label="Carregando gráfico de sobra mensal…" />}>
+              <MonthlySurplusChart monthly={report.monthly} />
+            </Suspense>
+          </LazyErrorBoundary>
         </article>
       )}
       <div className="grid">
@@ -253,7 +296,11 @@ export function Dashboard() {
           {summary.byCategory.length === 0 ? (
             <p className="muted">Nenhum gasto categorizado neste mês ainda.</p>
           ) : (
-            <CategoryBarsChart categories={categoryBars} onSelect={() => {}} />
+            <LazyErrorBoundary variant="panel" message="Não foi possível carregar o gráfico por categoria.">
+              <Suspense fallback={<LoadingState variant="panel" label="Carregando gráfico por categoria…" />}>
+                <CategoryBarsChart categories={categoryBars} onSelect={() => {}} />
+              </Suspense>
+            </LazyErrorBoundary>
           )}
         </article>
         <article className="panel">
@@ -261,37 +308,65 @@ export function Dashboard() {
             <h2>Últimas transações</h2>
             <Link to="/transactions">Ver todas →</Link>
           </div>
-          {transactions.slice(0, 4).map((t) => (
-            <div className="transaction" key={t.id}>
-              <div className="tx-icon">{t.description[0]}</div>
-              <div>
-                <b>{t.description}</b>
-                <small>
-                  {shortDate(t.date)} · {t.category ?? "Sem categoria"}
-                </small>
+          {transactionsLoading ? (
+            <LoadingState variant="panel" label="Carregando últimas transações…" />
+          ) : transactionsError ? (
+            <ErrorState
+              variant="panel"
+              message="Não foi possível carregar as últimas transações."
+              onRetry={() => void refetchTransactions()}
+            />
+          ) : transactions.length === 0 ? (
+            <p className="muted">Nenhuma transação neste mês ainda.</p>
+          ) : (
+            transactions.slice(0, 4).map((t) => (
+              <div className="transaction" key={t.id}>
+                <div className="tx-icon">{t.description[0]}</div>
+                <div>
+                  <b>{t.description}</b>
+                  <small>
+                    {shortDate(t.date)} · {t.category ?? "Sem categoria"}
+                  </small>
+                </div>
+                <strong className={t.amountInCents > 0 ? "positive" : ""}>{money(t.amountInCents)}</strong>
               </div>
-              <strong className={t.amountInCents > 0 ? "positive" : ""}>{money(t.amountInCents)}</strong>
-            </div>
-          ))}
+            ))
+          )}
         </article>
         <article className="panel">
           <div className="panel-title">
             <h2>Próximos vencimentos</h2>
             <span>Próximos 15 dias</span>
           </div>
-          {upcoming.length === 0 && <p className="muted">Nada vence nos próximos 15 dias.</p>}
-          {upcoming.slice(0, 6).map((item, i) => (
-            <div className="transaction" key={`${item.kind}-${item.date}-${i}`}>
-              <div className="tx-icon">{item.kind === "invoice" ? "F" : "R"}</div>
-              <div>
-                <b>{item.label}</b>
-                <small>
-                  {shortDate(item.date)} · {item.kind === "invoice" ? "Fatura" : "Recorrente"}
-                </small>
-              </div>
-              <strong>{money(item.amountInCents)}</strong>
-            </div>
-          ))}
+          {upcomingLoading ? (
+            <LoadingState variant="panel" label="Carregando próximos vencimentos…" />
+          ) : upcomingError ? (
+            <ErrorState
+              variant="panel"
+              message="Não foi possível carregar os próximos vencimentos."
+              onRetry={() => void refetchUpcoming()}
+            />
+          ) : upcoming.length === 0 ? (
+            <p className="muted">Nada vence nos próximos 15 dias.</p>
+          ) : (
+            upcoming.slice(0, 6).map((item, i) => {
+              const presentation = upcomingKindPresentation(item.kind);
+              return (
+                <div className="transaction" key={`${item.kind}-${item.date}-${i}`}>
+                  <div className="tx-icon" aria-hidden="true">
+                    {presentation.icon}
+                  </div>
+                  <div>
+                    <b>{item.label}</b>
+                    <small>
+                      {shortDate(item.date)} · {presentation.label}
+                    </small>
+                  </div>
+                  <strong>{money(item.amountInCents)}</strong>
+                </div>
+              );
+            })
+          )}
         </article>
       </div>
     </section>
