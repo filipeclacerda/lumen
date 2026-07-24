@@ -16,18 +16,22 @@ import {
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../../shared/api";
-import { money, shortDate } from "../../shared/format";
+import { money, shortDate, todayIso } from "../../shared/format";
 import { Modal } from "../../shared/ui/Modal";
+import { MoneyInput } from "../../shared/ui/MoneyInput";
 import { useToast } from "../../shared/ui/toast";
 import { EmptyState, ErrorState, LoadingState } from "../../shared/ui/AsyncState";
 import { Pagination, type PaginationSize } from "../../shared/ui/Pagination";
 import { Select } from "../../shared/ui/Select";
 import type {
   Account,
+  AccountBalanceSummary,
   AccountType,
+  BalanceCheckpointInput,
   CardPaymentReconciliation,
   CreditCardInvoice,
   PaymentMatchCandidate,
+  ReconciliationPreview,
 } from "../../shared/types";
 
 export function AccountsCards() {
@@ -35,6 +39,7 @@ export function AccountsCards() {
   const client = useQueryClient();
   const toast = useToast();
   const [accountModal, setAccountModal] = useState<{ mode: "new" | "edit"; account?: Account }>();
+  const [balanceReconciliationAccount, setBalanceReconciliationAccount] = useState<Account>();
   const [archiving, setArchiving] = useState<Account>();
   const [expanded, setExpanded] = useState<string>();
   const [deletingTransaction, setDeletingTransaction] = useState<string>();
@@ -59,6 +64,11 @@ export function AccountsCards() {
     isError: accountsError,
     refetch: refetchAccounts,
   } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
+  const { data: accountBalanceSummaries = [] } = useQuery({
+    queryKey: ["account-balance-summaries"],
+    queryFn: api.accountBalanceSummaries,
+  });
+  const balanceSummaryByAccount = new Map(accountBalanceSummaries.map((summary) => [summary.accountId, summary]));
   const {
     data: invoicePageData,
     isLoading: invoicesLoading,
@@ -114,6 +124,22 @@ export function AccountsCards() {
     document.getElementById(match ? `account-${match.id}` : "")?.scrollIntoView?.({ block: "center" });
   }, [accountQuery, accounts]);
   useEffect(() => {
+    const requestedAccountId = searchParams.get("balance");
+    if (requestedAccountId === null || accountsLoading || accountsError) return;
+    const account = accounts.find(
+      (candidate) => candidate.id === requestedAccountId && candidate.kind !== "credit_card",
+    );
+    if (account) setBalanceReconciliationAccount(account);
+    setSearchParams(
+      (params) => {
+        const next = new URLSearchParams(params);
+        next.delete("balance");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [accounts, accountsError, accountsLoading, searchParams, setSearchParams]);
+  useEffect(() => {
     const requestedReconciliation = searchParams.get("reconcile");
     if (requestedReconciliation === null || reconciliationsLoading || reconciliationsError) return;
     const reconciliation =
@@ -153,6 +179,7 @@ export function AccountsCards() {
       client.invalidateQueries({ queryKey: ["transactions"] }),
       client.invalidateQueries({ queryKey: ["summary"] }),
       client.invalidateQueries({ queryKey: ["accounts"] }),
+      client.invalidateQueries({ queryKey: ["account-balance-summaries"] }),
       client.invalidateQueries({ queryKey: ["financial-report"] }),
       client.invalidateQueries({ queryKey: ["card-payment-reconciliations"] }),
     ]);
@@ -275,42 +302,79 @@ export function AccountsCards() {
       )}
       {!accountsLoading && !accountsError && accounts.length > 0 && (
         <div className="account-grid">
-          {accounts.map((account) => (
-            <article
-              id={`account-${account.id}`}
-              className={`account-card${accountQuery && account.name.toLocaleLowerCase("pt-BR") === accountQuery.toLocaleLowerCase("pt-BR") ? " command-target" : ""}`}
-              key={account.id}
-            >
-              <div className={`metric-icon ${account.kind === "credit_card" ? "red" : "green"}`}>
-                {account.kind === "credit_card" ? <CreditCard /> : <Landmark />}
-              </div>
-              <div>
-                <small>{account.kind === "credit_card" ? "Cartão de crédito" : "Conta"}</small>
-                <h3>{account.name}</h3>
-              </div>
-              <div className="account-card-right">
-                <strong>{money(account.balanceInCents)}</strong>
-                <div className="account-actions">
-                  <button
-                    className="icon-button"
-                    title="Renomear conta"
-                    aria-label={`Renomear ${account.name}`}
-                    onClick={() => setAccountModal({ mode: "edit", account })}
-                  >
-                    <Pencil size={13} />
-                  </button>
-                  <button
-                    className="icon-button"
-                    title="Arquivar conta"
-                    aria-label={`Arquivar ${account.name}`}
-                    onClick={() => setArchiving(account)}
-                  >
-                    <Archive size={13} />
-                  </button>
+          {accounts.map((account) => {
+            const balanceSummary = balanceSummaryByAccount.get(account.id);
+            return (
+              <article
+                id={`account-${account.id}`}
+                className={`account-card${accountQuery && account.name.toLocaleLowerCase("pt-BR") === accountQuery.toLocaleLowerCase("pt-BR") ? " command-target" : ""}`}
+                key={account.id}
+              >
+                <div className={`metric-icon ${account.kind === "credit_card" ? "red" : "green"}`}>
+                  {account.kind === "credit_card" ? <CreditCard /> : <Landmark />}
                 </div>
-              </div>
-            </article>
-          ))}
+                <div>
+                  <small>{account.kind === "credit_card" ? "Cartão de crédito" : "Conta"}</small>
+                  <h3>{account.name}</h3>
+                  {account.kind !== "credit_card" && (
+                    <small>
+                      {balanceSummary && !balanceSummary.needsReconciliation && balanceSummary.lastReconciledAt
+                        ? `Conferido em ${dayMonth(balanceSummary.lastReconciledAt)}`
+                        : "Precisa conferir"}
+                    </small>
+                  )}
+                </div>
+                <div className="account-card-right">
+                  <strong>{money(balanceSummary?.realizedBalanceInCents ?? account.balanceInCents)}</strong>
+                  {account.kind !== "credit_card" && balanceSummary && (
+                    <>
+                      <small>
+                        Em 30 dias: {money(balanceSummary.forecastBalanceInCents)}
+                        {balanceSummary.scheduledCount > 0
+                          ? ` · ${balanceSummary.scheduledCount} ${balanceSummary.scheduledCount === 1 ? "previsto" : "previstos"}`
+                          : ""}
+                      </small>
+                      {balanceSummary.minimumBalanceInCents < 0 && (
+                        <small className="negative">
+                          Atenção: saldo pode ficar negativo
+                          {balanceSummary.minimumBalanceDate
+                            ? ` em ${dayMonth(balanceSummary.minimumBalanceDate)}`
+                            : ""}
+                          .
+                        </small>
+                      )}
+                    </>
+                  )}
+                  {account.kind !== "credit_card" && (
+                    <button
+                      className="text-button account-balance-button"
+                      onClick={() => setBalanceReconciliationAccount(account)}
+                    >
+                      Conferir saldo
+                    </button>
+                  )}
+                  <div className="account-actions">
+                    <button
+                      className="icon-button"
+                      title="Renomear conta"
+                      aria-label={`Renomear ${account.name}`}
+                      onClick={() => setAccountModal({ mode: "edit", account })}
+                    >
+                      <Pencil size={13} />
+                    </button>
+                    <button
+                      className="icon-button"
+                      title="Arquivar conta"
+                      aria-label={`Arquivar ${account.name}`}
+                      onClick={() => setArchiving(account)}
+                    >
+                      <Archive size={13} />
+                    </button>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
         </div>
       )}
       {reconciliationsLoading && <LoadingState variant="panel" label="Carregando conciliações…" />}
@@ -737,7 +801,152 @@ export function AccountsCards() {
           </div>
         </Modal>
       )}
+      {balanceReconciliationAccount && (
+        <BalanceReconciliationModal
+          account={balanceReconciliationAccount}
+          summary={balanceSummaryByAccount.get(balanceReconciliationAccount.id)}
+          onClose={() => setBalanceReconciliationAccount(undefined)}
+          onSaved={async () => {
+            setBalanceReconciliationAccount(undefined);
+            await Promise.all([
+              client.invalidateQueries({ queryKey: ["account-balance-summaries"] }),
+              client.invalidateQueries({ queryKey: ["accounts"] }),
+            ]);
+            toast("Saldo conferido com sucesso.");
+          }}
+        />
+      )}
     </section>
+  );
+}
+
+function dayMonth(value: string) {
+  const [, month, day] = value.split("-");
+  return `${day}/${month}`;
+}
+
+function BalanceReconciliationModal({
+  account,
+  summary,
+  onClose,
+  onSaved,
+}: {
+  account: Account;
+  summary?: AccountBalanceSummary;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const toast = useToast();
+  const [asOfDate, setAsOfDate] = useState(todayIso);
+  const [balanceInCents, setBalanceInCents] = useState<number | null>(null);
+  const [preview, setPreview] = useState<ReconciliationPreview>();
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  function checkpointInput(): BalanceCheckpointInput | undefined {
+    if (!asOfDate || balanceInCents === null) return undefined;
+    return {
+      accountId: account.id,
+      asOfDate,
+      balanceInCents,
+      source: "reconciliation",
+    };
+  }
+
+  async function loadPreview() {
+    const input = checkpointInput();
+    if (!input) return;
+    setLoadingPreview(true);
+    try {
+      setPreview(await api.reconciliationPreview(input));
+    } catch (error) {
+      toast((error as { message?: string })?.message ?? "Não foi possível calcular a diferença.", "error");
+    } finally {
+      setLoadingPreview(false);
+    }
+  }
+
+  async function confirmCheckpoint() {
+    const input = checkpointInput();
+    if (!input || !preview) return;
+    setSaving(true);
+    try {
+      await api.recordBalanceCheckpoint(input);
+      await onSaved();
+    } catch (error) {
+      toast((error as { message?: string })?.message ?? "Não foi possível conferir o saldo.", "error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal title={`Conferir saldo de ${account.name}`} onClose={onClose}>
+      <div className="modal-form">
+        <p className="muted">
+          Compare o saldo informado com os lançamentos confirmados. A diferença é apenas informativa e não cria receita,
+          despesa ou ajuste.
+        </p>
+        {summary?.lastReconciledAt && (
+          <p className="muted">Última conferência em {shortDate(summary.lastReconciledAt)}.</p>
+        )}
+        <label>
+          Data do saldo
+          <input
+            type="date"
+            value={asOfDate}
+            onChange={(event) => {
+              setAsOfDate(event.target.value);
+              setPreview(undefined);
+            }}
+          />
+        </label>
+        <label htmlFor="reconciliation-balance">
+          Saldo informado
+          <MoneyInput
+            id="reconciliation-balance"
+            aria-label="Saldo informado"
+            onChange={(value) => {
+              setBalanceInCents(value);
+              setPreview(undefined);
+            }}
+          />
+        </label>
+        {preview && (
+          <div className="cards" aria-label="Prévia da conferência">
+            <div>
+              <small>Saldo informado</small>
+              <strong>{money(preview.reportedBalanceInCents)}</strong>
+            </div>
+            <div>
+              <small>Saldo calculado</small>
+              <strong>{money(preview.calculatedBalanceInCents)}</strong>
+            </div>
+            <div>
+              <small>Diferença</small>
+              <strong>{money(preview.differenceInCents)}</strong>
+            </div>
+          </div>
+        )}
+        <div className="editor-actions">
+          <button className="secondary" onClick={onClose} disabled={saving}>
+            Cancelar
+          </button>
+          {!preview ? (
+            <button
+              onClick={() => void loadPreview()}
+              disabled={!asOfDate || balanceInCents === null || loadingPreview}
+            >
+              {loadingPreview ? "Calculando…" : "Ver diferença"}
+            </button>
+          ) : (
+            <button onClick={() => void confirmCheckpoint()} disabled={saving}>
+              {saving ? "Confirmando…" : "Confirmar conferência"}
+            </button>
+          )}
+        </div>
+      </div>
+    </Modal>
   );
 }
 

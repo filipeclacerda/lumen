@@ -8,6 +8,7 @@ import {
   ArrowUp,
   Check,
   CornerDownRight,
+  GitMerge,
   Pencil,
   Plus,
   RotateCcw,
@@ -23,6 +24,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../../shared/api";
 import type {
   Category,
+  CategoryMergeImpact,
   CategoryKind,
   CategorizationRule,
   MovementType,
@@ -79,6 +81,11 @@ export function CategoriesRules() {
   const [impact, setImpact] = useState<RuleImpact>();
   const [historyImpact, setHistoryImpact] = useState<RuleImpact>();
   const [message, setMessage] = useState("");
+  const [mergeDraft, setMergeDraft] = useState<{
+    sourceId: string;
+    targetId: string;
+    impact?: CategoryMergeImpact;
+  }>();
   const [categoryDraft, setCategoryDraft] = useState<{
     id?: string;
     parentId?: string;
@@ -175,7 +182,41 @@ export function CategoriesRules() {
       await api.archiveCategory(id);
       await client.invalidateQueries({ queryKey: ["categories"] });
     } catch {
-      setMessage("Esta categoria está em uso e não pode ser arquivada ainda.");
+      setMergeDraft({ sourceId: id, targetId: "" });
+      setMessage("Esta categoria está em uso. Você pode uni-la a outra categoria do mesmo tipo.");
+    }
+  }
+  async function previewMergeCategory(targetId: string) {
+    if (!mergeDraft || !targetId) {
+      if (mergeDraft) setMergeDraft({ ...mergeDraft, targetId, impact: undefined });
+      return;
+    }
+    const next = { ...mergeDraft, targetId, impact: undefined };
+    setMergeDraft(next);
+    try {
+      const impact = await api.previewCategoryMerge(mergeDraft.sourceId, targetId);
+      setMergeDraft({ ...next, impact });
+    } catch (error: any) {
+      setMessage(error?.message || String(error));
+    }
+  }
+  async function confirmMergeCategory() {
+    if (!mergeDraft?.targetId) return;
+    try {
+      const impact = await api.mergeCategory(mergeDraft.sourceId, mergeDraft.targetId);
+      setMergeDraft(undefined);
+      setMessage(
+        `${impact.sourceCategoryName} foi unida a ${impact.targetCategoryName}. ${impact.movedTransactions} lançamento(s) foram preservados.`,
+      );
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["categories"] }),
+        client.invalidateQueries({ queryKey: ["rules"] }),
+        client.invalidateQueries({ queryKey: ["transactions"] }),
+        client.invalidateQueries({ queryKey: ["financial-targets"] }),
+        client.invalidateQueries({ queryKey: ["budget-overview"] }),
+      ]);
+    } catch (error: any) {
+      setMessage(error?.message || String(error));
     }
   }
   function categoryOrderInput(category: Category, sortOrder: number): Partial<Category> {
@@ -733,6 +774,44 @@ export function CategoriesRules() {
         </div>
       )}
       {tab === "merchants" && <MerchantsTab />}
+      {mergeDraft && (
+        <Modal title="Unir categoria" onClose={() => setMergeDraft(undefined)}>
+          <article className="modal">
+            <h2>Para onde vão os lançamentos?</h2>
+            <p className="muted">
+              Escolha uma categoria parecida. O Lumen preserva lançamentos, regras, recorrências e subcategorias.
+            </p>
+            <label>
+              Categoria de destino
+              <CategorySelect
+                value={mergeDraft.targetId || undefined}
+                onChange={(id) => void previewMergeCategory(id ?? "")}
+                categories={categories.filter((category) => {
+                  const source = categoryMap.get(mergeDraft.sourceId);
+                  return category.id !== mergeDraft.sourceId && category.kind === source?.kind;
+                })}
+                emptyLabel="Escolher categoria"
+                aria-label="Categoria de destino"
+              />
+            </label>
+            {mergeDraft.impact && (
+              <div className="notice" role="status">
+                <strong>{mergeDraft.impact.movedTransactions} lançamento(s)</strong>, {mergeDraft.impact.movedRules}{" "}
+                regra(s) e {mergeDraft.impact.movedRecurring} recorrência(s) serão movidos para{" "}
+                {mergeDraft.impact.targetCategoryName}.
+              </div>
+            )}
+            <div className="editor-actions">
+              <button className="secondary" onClick={() => setMergeDraft(undefined)}>
+                Cancelar
+              </button>
+              <button disabled={!mergeDraft.impact} onClick={confirmMergeCategory}>
+                <GitMerge size={16} /> Unir categorias
+              </button>
+            </div>
+          </article>
+        </Modal>
+      )}
       {historyImpact && (
         <Modal title="Aplicar regras ao histórico?" onClose={() => setHistoryImpact(undefined)}>
           <article className="modal">
@@ -1086,9 +1165,10 @@ function CategoryTreeNode({
           </button>
           <button
             className="icon-button category-action-button category-action-button--square"
-            title="Arquivar"
+            title={category.isSystem ? "Categoria essencial do Lumen" : "Arquivar"}
             onClick={onArchive}
             aria-label={`Arquivar ${category.name}`}
+            disabled={category.isSystem}
           >
             <Archive size={14} />
           </button>

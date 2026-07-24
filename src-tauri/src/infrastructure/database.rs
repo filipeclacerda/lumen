@@ -522,6 +522,8 @@ async fn validate_current_schema(connection: &mut SqliteConnection) -> Result<()
         "csv_mapping_profiles",
         "recurring_transactions",
         "merchant_aliases",
+        "installment_plans",
+        "transaction_installments",
     ] {
         let n: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?")
@@ -560,6 +562,8 @@ async fn validate_current_schema(connection: &mut SqliteConnection) -> Result<()
         ("user_profiles", "monthly_target_cents"),
         ("user_profiles", "onboarding_start_mode"),
         ("_sqlx_migrations", "checksum"),
+        ("installment_plans", "installment_count"),
+        ("transaction_installments", "installment_number"),
     ];
     for (table, column) in critical_columns {
         let found: i64 =
@@ -583,6 +587,8 @@ async fn validate_current_schema(connection: &mut SqliteConnection) -> Result<()
         "transaction_links_invoice",
         "recurring_transactions_active",
         "one_active_savings_target",
+        "installment_plans_account_date",
+        "transaction_installments_plan",
     ] {
         let found: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?")

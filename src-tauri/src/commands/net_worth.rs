@@ -1,6 +1,7 @@
 use chrono::{Datelike, Local, NaiveDate};
 use serde::Serialize;
 use sqlx::{Row, SqlitePool};
+use std::collections::BTreeMap;
 use tauri::State;
 
 use crate::{application::state::AppState, error::AppError};
@@ -17,7 +18,78 @@ pub struct NetWorthKindAmount {
 pub struct NetWorthPoint {
     month: String,
     total_in_cents: i64,
+    assets_in_cents: i64,
+    liabilities_in_cents: i64,
     per_kind: Vec<NetWorthKindAmount>,
+}
+
+fn checked_i64(value: i128, label: &str) -> Result<i64, AppError> {
+    i64::try_from(value).map_err(|_| {
+        AppError::Validation(format!(
+            "O valor calculado de {label} excede o limite monetário suportado"
+        ))
+    })
+}
+
+#[cfg(test)]
+fn aggregate_balances(
+    entries: impl IntoIterator<Item = (String, String, i64)>,
+) -> Result<(i64, i64, i64, Vec<NetWorthKindAmount>), AppError> {
+    let mut account_balances = BTreeMap::<String, (String, i128)>::new();
+    for (account_id, kind, amount) in entries {
+        let (_, balance) = account_balances
+            .entry(account_id)
+            .or_insert_with(|| (kind, 0));
+        *balance = balance.checked_add(i128::from(amount)).ok_or_else(|| {
+            AppError::Validation("O saldo da conta excede o limite monetário suportado".into())
+        })?;
+    }
+    summarize_balances(&account_balances)
+}
+
+fn summarize_balances(
+    account_balances: &BTreeMap<String, (String, i128)>,
+) -> Result<(i64, i64, i64, Vec<NetWorthKindAmount>), AppError> {
+    let mut assets = 0i128;
+    let mut liabilities = 0i128;
+    let mut per_kind = BTreeMap::<String, i128>::new();
+    for (kind, balance) in account_balances.values() {
+        if *balance >= 0 {
+            assets = assets.checked_add(*balance).ok_or_else(|| {
+                AppError::Validation("O total de ativos excede o limite monetário suportado".into())
+            })?;
+        } else {
+            liabilities = liabilities.checked_add(*balance).ok_or_else(|| {
+                AppError::Validation(
+                    "O total de passivos excede o limite monetário suportado".into(),
+                )
+            })?;
+        }
+        let kind_balance = per_kind.entry(kind.clone()).or_default();
+        *kind_balance = kind_balance.checked_add(*balance).ok_or_else(|| {
+            AppError::Validation(
+                "O total por tipo de conta excede o limite monetário suportado".into(),
+            )
+        })?;
+    }
+    let total = assets.checked_add(liabilities).ok_or_else(|| {
+        AppError::Validation("O patrimônio líquido excede o limite monetário suportado".into())
+    })?;
+    let per_kind = per_kind
+        .into_iter()
+        .map(|(kind, amount)| {
+            Ok(NetWorthKindAmount {
+                kind,
+                amount_in_cents: checked_i64(amount, "tipo de conta")?,
+            })
+        })
+        .collect::<Result<Vec<_>, AppError>>()?;
+    Ok((
+        checked_i64(total, "patrimônio líquido")?,
+        checked_i64(assets, "ativos")?,
+        checked_i64(liabilities, "passivos")?,
+        per_kind,
+    ))
 }
 
 /// Last day (as "YYYY-MM-DD") of a "YYYY-MM" month.
@@ -75,37 +147,58 @@ async fn net_worth_history_impl(
 ) -> Result<Vec<NetWorthPoint>, AppError> {
     let months = months.clamp(1, 60);
     let current_month = Local::now().format("%Y-%m").to_string();
+    let account_rows =
+        sqlx::query("SELECT id, kind FROM accounts WHERE deleted_at IS NULL ORDER BY id")
+            .fetch_all(db)
+            .await?;
+    let mut account_balances = account_rows
+        .into_iter()
+        .map(|row| (row.get("id"), (row.get("kind"), 0i128)))
+        .collect::<BTreeMap<String, (String, i128)>>();
+    let transaction_rows = sqlx::query(
+        "SELECT t.account_id, t.date, t.amount_cents
+         FROM transactions t
+         JOIN accounts a ON a.id = t.account_id AND a.deleted_at IS NULL
+         WHERE t.deleted_at IS NULL
+         ORDER BY t.date, t.id",
+    )
+    .fetch_all(db)
+    .await?;
+    let transactions = transaction_rows
+        .into_iter()
+        .map(|row| {
+            (
+                row.get::<String, _>("account_id"),
+                row.get::<String, _>("date"),
+                row.get::<i64, _>("amount_cents"),
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut transaction_index = 0usize;
     let mut points = Vec::with_capacity(months as usize);
     for offset in (0..months).rev() {
         let month = month_minus(&current_month, offset as i32)?;
         let end_date = month_end_date(&month)?;
-        let rows = sqlx::query(
-            "SELECT a.kind kind, COALESCE(SUM(t.amount_cents), 0) amount
-             FROM accounts a
-             LEFT JOIN transactions t
-                ON t.account_id = a.id AND t.deleted_at IS NULL AND t.date <= ?
-             WHERE a.deleted_at IS NULL
-             GROUP BY a.kind
-             ORDER BY a.kind",
-        )
-        .bind(&end_date)
-        .fetch_all(db)
-        .await?;
-        let mut total_in_cents = 0i64;
-        let per_kind = rows
-            .into_iter()
-            .map(|row| {
-                let amount: i64 = row.get("amount");
-                total_in_cents += amount;
-                NetWorthKindAmount {
-                    kind: row.get("kind"),
-                    amount_in_cents: amount,
-                }
-            })
-            .collect();
+        while let Some((account_id, date, amount)) = transactions.get(transaction_index) {
+            if date > &end_date {
+                break;
+            }
+            if let Some((_, balance)) = account_balances.get_mut(account_id) {
+                *balance = balance.checked_add(i128::from(*amount)).ok_or_else(|| {
+                    AppError::Validation(
+                        "O saldo da conta excede o limite monetário suportado".into(),
+                    )
+                })?;
+            }
+            transaction_index += 1;
+        }
+        let (total_in_cents, assets_in_cents, liabilities_in_cents, per_kind) =
+            summarize_balances(&account_balances)?;
         points.push(NetWorthPoint {
             month,
             total_in_cents,
+            assets_in_cents,
+            liabilities_in_cents,
             per_kind,
         });
     }
@@ -148,6 +241,46 @@ mod tests {
         assert_eq!(month_end_date("2026-12").unwrap(), "2026-12-31");
     }
 
+    #[test]
+    fn aggregates_assets_and_liabilities_without_losing_signs() {
+        let (total, assets, liabilities, kinds) = aggregate_balances([
+            ("checking".into(), "checking".into(), 200_000),
+            ("card".into(), "credit_card".into(), -45_000),
+            ("card".into(), "credit_card".into(), 5_000),
+        ])
+        .unwrap();
+
+        assert_eq!(total, 160_000);
+        assert_eq!(assets, 200_000);
+        assert_eq!(liabilities, -40_000);
+        assert_eq!(
+            kinds,
+            vec![
+                NetWorthKindAmount {
+                    kind: "checking".into(),
+                    amount_in_cents: 200_000,
+                },
+                NetWorthKindAmount {
+                    kind: "credit_card".into(),
+                    amount_in_cents: -40_000,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_totals_that_do_not_fit_the_api_money_type() {
+        let error = aggregate_balances([
+            ("one".into(), "checking".into(), i64::MAX),
+            ("two".into(), "savings".into(), i64::MAX),
+        ])
+        .unwrap_err();
+
+        assert!(
+            matches!(error, AppError::Validation(message) if message.contains("limite monetário"))
+        );
+    }
+
     #[tokio::test]
     async fn reconstructs_a_known_past_balance_from_current_balance_and_one_past_transaction() {
         let (_directory, db, account_id) = setup().await;
@@ -173,6 +306,8 @@ mod tests {
         // From the transaction's month onward, balance is 150000.
         let at = points.iter().find(|p| p.month == past_month).unwrap();
         assert_eq!(at.total_in_cents, 150_000);
+        assert_eq!(at.assets_in_cents, 150_000);
+        assert_eq!(at.liabilities_in_cents, 0);
         let latest = points.last().unwrap();
         assert_eq!(latest.month, current_month);
         assert_eq!(latest.total_in_cents, 150_000);

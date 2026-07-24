@@ -331,10 +331,10 @@ pub async fn update_credit_card_import(
         validate_date(date)?;
     }
     let _commit_guard = state.import_commit.lock().await;
-    let category_name = if let Some(id) = &category_id {
+    let category = if let Some(id) = &category_id {
         Some(
-            sqlx::query_scalar::<_, String>(
-                "SELECT name FROM categories WHERE id=? AND deleted_at IS NULL",
+            sqlx::query_as::<_, (String, String)>(
+                "SELECT name,kind FROM categories WHERE id=? AND deleted_at IS NULL",
             )
             .bind(id)
             .fetch_optional(&state.db)
@@ -361,9 +361,26 @@ pub async fn update_credit_card_import(
             "Um lançamento duplicado não pode ser incluído".into(),
         ));
     }
+    if item.is_payment && category_id.as_deref() != Some("credit-card-payment") {
+        return Err(AppError::Validation(
+            "Pagamentos de fatura mantêm a categoria protegida".into(),
+        ));
+    }
+    if category.as_ref().is_some_and(|(_, kind)| {
+        !category_compatible(
+            kind,
+            item.candidate.amount_in_cents,
+            SuggestionContext::CreditCard,
+            false,
+        )
+    }) {
+        return Err(AppError::Validation(
+            "A categoria não é compatível com este item da fatura".into(),
+        ));
+    }
     item.included = included;
     item.candidate.suggested_category_id = category_id;
-    item.candidate.suggested_category_name = category_name;
+    item.candidate.suggested_category_name = category.map(|(name, _)| name);
     item.candidate.suggested_rule_id = None;
     item.candidate.suggested_rule_name = None;
     item.candidate.suggestion_source = None;

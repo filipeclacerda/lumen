@@ -1,10 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   Account,
+  AccountBalanceSummary,
   AccountType,
   AppBootstrap,
   BudgetOverview,
+  BalanceCheckpoint,
+  BalanceCheckpointInput,
   Category,
+  CategoryMergeImpact,
   CardPaymentReconciliation,
   CategorizationRule,
   CategoryTrendFilter,
@@ -18,11 +22,14 @@ import type {
   CsvMappingDraft,
   CsvMappingProfile,
   DashboardSummary,
+  DataQualityReview,
   FinancialReport,
   FinancialTarget,
   FinancialTargetInput,
   ImportFileInspection,
   ImportPreview,
+  InstallmentPlanInput,
+  InstallmentPlanResult,
   MerchantAlias,
   MerchantPage,
   MerchantPageFilter,
@@ -33,6 +40,7 @@ import type {
   PaymentMatchCandidate,
   RecurringTransaction,
   RecurringTransactionInput,
+  ReconciliationPreview,
   ReportFilter,
   RuleImpact,
   RuleInput,
@@ -43,6 +51,7 @@ import type {
   TransactionLink,
   TransactionPage,
   TransferCandidate,
+  TransferDetails,
   TransferInput,
   UpcomingItem,
   UserProfile,
@@ -286,6 +295,45 @@ export const api = {
     isTauri()
       ? invoke("list_accounts")
       : [{ id: "demo", name: "Conta principal", kind: "checking", balanceInCents: 549526 }],
+  accountBalanceSummaries: async (): Promise<AccountBalanceSummary[]> =>
+    isTauri()
+      ? invoke("list_account_balance_summaries")
+      : [
+          {
+            accountId: "demo",
+            realizedBalanceInCents: 549526,
+            pendingBalanceInCents: 549526,
+            forecastBalanceInCents: 549526,
+            minimumBalanceInCents: 549526,
+            scheduledCount: 0,
+            lastReconciledAt: "2026-06-30",
+            needsReconciliation: false,
+          },
+        ],
+  dataQualityReview: async (): Promise<DataQualityReview> =>
+    isTauri()
+      ? invoke("get_data_quality_review")
+      : {
+          totalCount: 0,
+          uncategorized: { totalCount: 0, items: [] },
+          pendingTransactions: { totalCount: 0, items: [] },
+          accountReconciliations: { totalCount: 0, items: [] },
+          cardPaymentReconciliations: { totalCount: 0, items: [] },
+        },
+  reconciliationPreview: async (input: BalanceCheckpointInput): Promise<ReconciliationPreview> =>
+    isTauri()
+      ? invoke("get_reconciliation_preview", { input })
+      : {
+          accountId: input.accountId,
+          asOfDate: input.asOfDate,
+          reportedBalanceInCents: input.balanceInCents,
+          calculatedBalanceInCents: 549526,
+          differenceInCents: input.balanceInCents - 549526,
+        },
+  recordBalanceCheckpoint: async (input: BalanceCheckpointInput): Promise<BalanceCheckpoint> =>
+    isTauri()
+      ? invoke("record_balance_checkpoint", { input })
+      : { ...input, id: crypto.randomUUID(), createdAt: new Date().toISOString() },
   transactions: async (month?: string): Promise<Transaction[]> =>
     isTauri() ? invoke("list_transactions", { month: month || null }) : demoTransactions,
   listTransactions: async (filter: TransactionFilter): Promise<TransactionPage> => {
@@ -335,6 +383,10 @@ export const api = {
   categories: async (): Promise<Category[]> => (isTauri() ? invoke("list_categories") : demoCategories),
   saveCategory: (input: Partial<Category>): Promise<string> => invoke("save_category", { input }),
   archiveCategory: (id: string): Promise<void> => invoke("archive_category", { id }),
+  previewCategoryMerge: (sourceCategoryId: string, targetCategoryId: string): Promise<CategoryMergeImpact> =>
+    invoke("preview_category_merge", { sourceCategoryId, targetCategoryId }),
+  mergeCategory: (sourceCategoryId: string, targetCategoryId: string): Promise<CategoryMergeImpact> =>
+    invoke("merge_category", { sourceCategoryId, targetCategoryId }),
   rules: async (): Promise<CategorizationRule[]> => (isTauri() ? invoke("list_rules") : demoRules),
   listMerchantsPage: async (filter: MerchantPageFilter): Promise<MerchantPage> => {
     if (isTauri()) return invoke("list_merchants_page", { filter });
@@ -375,7 +427,24 @@ export const api = {
   restoreTransactions: (transactionIds: string[]): Promise<number> =>
     invoke("restore_transactions", { transactionIds }),
   createTransaction: (input: TransactionInput): Promise<string> => invoke("create_transaction", { input }),
+  createCreditCardInstallments: (input: InstallmentPlanInput): Promise<InstallmentPlanResult> =>
+    isTauri()
+      ? invoke("create_credit_card_installments", { input })
+      : Promise.resolve({
+          planId: `demo-installments-${Date.now()}`,
+          transactionIds: Array.from(
+            { length: input.installmentCount },
+            (_, index) => `demo-installment-${Date.now()}-${index + 1}`,
+          ),
+        }),
   createTransfer: (input: TransferInput): Promise<string[]> => invoke("create_transfer", { input }),
+  getTransferDetails: (transactionId: string): Promise<TransferDetails> =>
+    invoke("get_transfer_details", { transactionId }),
+  updateTransfer: (transactionId: string, input: TransferInput): Promise<void> =>
+    invoke("update_transfer", { transactionId, input }),
+  unlinkTransfer: (transactionId: string): Promise<void> => invoke("unlink_transfer", { transactionId }),
+  setTransferDeleted: (transactionId: string, deleted: boolean): Promise<number> =>
+    invoke("set_transfer_deleted", { transactionId, deleted }),
   detectTransferCandidates: (batchId?: string): Promise<TransferCandidate[]> =>
     invoke("detect_transfer_candidates", { batchId: batchId || null }),
   linkTransferPair: (debitTransactionId: string, creditTransactionId: string): Promise<void> =>
@@ -648,7 +717,10 @@ export const api = {
     };
   },
   financialTargets: async (): Promise<FinancialTarget[]> => (isTauri() ? invoke("list_financial_targets") : []),
-  saveFinancialTarget: (input: FinancialTargetInput): Promise<string> => invoke("save_financial_target", { input }),
+  saveFinancialTarget: (input: FinancialTargetInput): Promise<string> =>
+    invoke("save_financial_target", {
+      input: { ...input, includeDescendants: input.includeDescendants ?? false },
+    }),
   saveFinancialTargetOverride: (targetId: string, month: string, amountInCents: number): Promise<void> =>
     invoke("save_financial_target_override", { targetId, month, amountInCents }),
   deleteFinancialTarget: (id: string): Promise<void> => invoke("delete_financial_target", { id }),
@@ -708,10 +780,20 @@ export const api = {
     const base = 300000;
     return Array.from({ length: months }, (_, i) => {
       const totalInCents = base + i * 45000;
+      const liabilitiesInCents = -80_000 - i * 2_000;
+      const assetsInCents = totalInCents - liabilitiesInCents;
+      const monthDate = new Date();
+      monthDate.setDate(1);
+      monthDate.setMonth(monthDate.getMonth() - months + i + 1);
       return {
-        month: `2026-${String((i % 12) + 1).padStart(2, "0")}`,
+        month: `${monthDate.getFullYear()}-${String(monthDate.getMonth() + 1).padStart(2, "0")}`,
         totalInCents,
-        perKind: [{ kind: "checking" as AccountType, amountInCents: totalInCents }],
+        assetsInCents,
+        liabilitiesInCents,
+        perKind: [
+          { kind: "checking" as AccountType, amountInCents: assetsInCents },
+          { kind: "credit_card" as AccountType, amountInCents: liabilitiesInCents },
+        ],
       };
     });
   },

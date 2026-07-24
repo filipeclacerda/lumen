@@ -12,6 +12,9 @@ const mocks = vi.hoisted(() => ({
   merchantAliases: vi.fn(),
   saveMerchantAlias: vi.fn(),
   deleteMerchantAlias: vi.fn(),
+  archiveCategory: vi.fn(),
+  previewCategoryMerge: vi.fn(),
+  mergeCategory: vi.fn(),
   toast: vi.fn(),
 }));
 
@@ -24,6 +27,9 @@ vi.mock("../../shared/api", () => ({
     merchantAliases: mocks.merchantAliases,
     saveMerchantAlias: mocks.saveMerchantAlias,
     deleteMerchantAlias: mocks.deleteMerchantAlias,
+    archiveCategory: mocks.archiveCategory,
+    previewCategoryMerge: mocks.previewCategoryMerge,
+    mergeCategory: mocks.mergeCategory,
   },
 }));
 vi.mock("../../shared/ui/toast", () => ({ useToast: () => mocks.toast }));
@@ -60,6 +66,29 @@ describe("CategoriesRules merchants", () => {
     ]);
     mocks.saveMerchantAlias.mockResolvedValue("alias-1");
     mocks.deleteMerchantAlias.mockResolvedValue(undefined);
+    mocks.archiveCategory.mockResolvedValue(undefined);
+    mocks.previewCategoryMerge.mockResolvedValue({
+      sourceCategoryId: "category-1",
+      sourceCategoryName: "Mercado antigo",
+      targetCategoryId: "category-2",
+      targetCategoryName: "Mercado",
+      movedTransactions: 4,
+      movedRules: 1,
+      movedRecurring: 1,
+      movedTargets: 0,
+      movedChildren: 0,
+    });
+    mocks.mergeCategory.mockResolvedValue({
+      sourceCategoryId: "category-1",
+      sourceCategoryName: "Mercado antigo",
+      targetCategoryId: "category-2",
+      targetCategoryName: "Mercado",
+      movedTransactions: 4,
+      movedRules: 1,
+      movedRecurring: 1,
+      movedTargets: 0,
+      movedChildren: 0,
+    });
   });
 
   afterEach(cleanup);
@@ -86,6 +115,41 @@ describe("CategoriesRules merchants", () => {
     expect((await screen.findByRole("tab", { name: "Categorias (2)" })).getAttribute("aria-selected")).toBe("true");
     expect(screen.getByText(/Exibindo 1 resultado\(s\) para/)).toBeTruthy();
     expect(document.querySelectorAll(".category-tree-node")).toHaveLength(1);
+  });
+
+  it("offers a short merge flow when an in-use category cannot be archived", async () => {
+    vi.mocked(api.categories).mockResolvedValueOnce([
+      {
+        id: "category-1",
+        name: "Mercado antigo",
+        kind: "expense",
+        sortOrder: 0,
+        isSystem: false,
+      },
+      {
+        id: "category-2",
+        name: "Mercado",
+        kind: "expense",
+        sortOrder: 10,
+        isSystem: false,
+      },
+    ]);
+    mocks.archiveCategory.mockRejectedValueOnce(new Error("categoria em uso"));
+    renderPage("/categories?tab=categories");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Arquivar Mercado antigo" }));
+    await screen.findByRole("heading", { name: "Para onde vão os lançamentos?" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Categoria de destino" }));
+    fireEvent.click(screen.getByRole("button", { name: "Outra categoria" }));
+    fireEvent.click(screen.getByRole("option", { name: "Mercado" }));
+    fireEvent.click(screen.getByRole("option", { name: "Mercado" }));
+    await waitFor(() => expect(mocks.previewCategoryMerge).toHaveBeenCalledWith("category-1", "category-2"));
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("4 lançamento(s)"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Unir categorias" }));
+    await waitFor(() => expect(mocks.mergeCategory).toHaveBeenCalledWith("category-1", "category-2"));
+    expect(await screen.findByText(/Mercado antigo foi unida a Mercado/)).toBeTruthy();
   });
 
   async function openMerchants() {

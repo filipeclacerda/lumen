@@ -29,6 +29,7 @@ import type {
   FinancialReport,
   FinancialTarget,
   KindBreakdown,
+  NetWorthPoint,
   ReportFilter,
   ReportSource,
 } from "../../shared/types";
@@ -38,15 +39,17 @@ import { CategorySelect } from "../../shared/ui/CategorySelect";
 import {
   CumulativeExpensesChart,
   CategoryBarsChart,
+  NetWorthHistoryChart,
   SourceComparisonChart,
   SpendingBarsChart,
 } from "../../shared/ui/Charts";
 import { useToast } from "../../shared/ui/toast";
 import { MoneyInput } from "../../shared/ui/MoneyInput";
 import { Select } from "../../shared/ui/Select";
+import { summarizeNetWorth } from "./netWorth";
 
 const currentMonth = curMonth();
-type ReportTab = "overview" | "categories" | "goals" | "credit";
+type ReportTab = "overview" | "categories" | "wealth" | "goals" | "credit";
 type CategoryKindTab = "expense" | "income" | "investment";
 const categoryKindLabels: Record<CategoryKindTab, string> = {
   expense: "Gastos",
@@ -166,7 +169,16 @@ export function Reports() {
               <Download size={16} /> {exporting ? "Exportando..." : "PDF"}
             </button>
             <button
-              onClick={() => setEditing({ id: "", kind: "category", amountInCents: 0, enabled: true, overrides: [] })}
+              onClick={() =>
+                setEditing({
+                  id: "",
+                  kind: "category",
+                  amountInCents: 0,
+                  enabled: true,
+                  includeDescendants: false,
+                  overrides: [],
+                })
+              }
             >
               <Plus size={16} /> Nova meta
             </button>
@@ -289,11 +301,21 @@ function ReportContent({
 }) {
   const [activeTab, setActiveTab] = useState<ReportTab>("overview");
   const [renamingMerchant, setRenamingMerchant] = useState<{ key: string; name: string }>();
+  const {
+    data: netWorth = [],
+    isLoading: isNetWorthLoading,
+    error: netWorthError,
+    refetch: refetchNetWorth,
+  } = useQuery({
+    queryKey: ["net-worth-history", 13],
+    queryFn: () => api.netWorthHistory(13),
+  });
   const summary = report.summary;
   const topCategory = report.categories[0];
   const tabs: { id: ReportTab; label: string }[] = [
     { id: "overview", label: "Visão geral" },
     { id: "categories", label: "Categorias" },
+    { id: "wealth", label: "Patrimônio" },
     { id: "goals", label: "Metas" },
     ...(filter.source === "bank" ? [] : [{ id: "credit" as const, label: "Crédito" }]),
   ];
@@ -368,6 +390,14 @@ function ReportContent({
         />
       )}
       {activeTab === "categories" && <CategoriesTab report={report} filter={filter} />}
+      {activeTab === "wealth" &&
+        (isNetWorthLoading ? (
+          <LoadingState variant="panel" label="Calculando seu patrimônio…" />
+        ) : netWorthError ? (
+          <ErrorState message="Não foi possível calcular seu patrimônio." onRetry={() => void refetchNetWorth()} />
+        ) : (
+          <WealthTab points={netWorth} />
+        ))}
       {activeTab === "goals" && (
         <GoalsTab report={report} profileIncome={profileIncome} targets={targets} onEdit={onEdit} onDelete={onDelete} />
       )}
@@ -384,6 +414,74 @@ function ReportContent({
       )}
       <ReportAlerts report={report} filter={filter} />
     </>
+  );
+}
+
+function WealthTab({ points }: { points: NetWorthPoint[] }) {
+  const summary = summarizeNetWorth(points);
+  if (!summary) {
+    return (
+      <article className="panel">
+        <div className="report-empty">
+          <TrendingUp />
+          <div>
+            <b>Seu patrimônio aparecerá aqui</b>
+            <p>Cadastre contas e lançamentos para acompanhar a evolução sem preencher nada a mais.</p>
+          </div>
+        </div>
+      </article>
+    );
+  }
+
+  const changeTone =
+    summary.changeInCents === undefined ? undefined : summary.changeInCents >= 0 ? "positive" : "negative";
+  return (
+    <div className="report-grid main-charts">
+      <article className="panel">
+        <div className="panel-title">
+          <div>
+            <h2>Patrimônio de hoje</h2>
+            <small>Saldo de todas as contas, já descontando cartões e dívidas</small>
+          </div>
+        </div>
+        <div className="period-summary">
+          <div>
+            <span>Patrimônio líquido</span>
+            <b>{money(summary.currentInCents)}</b>
+          </div>
+          <div>
+            <span>Ativos</span>
+            <b className="positive">{money(summary.assetsInCents)}</b>
+          </div>
+          <div>
+            <span>Cartões e dívidas</span>
+            <b className="negative">{money(summary.liabilitiesInCents)}</b>
+          </div>
+          <div>
+            <span>Variação em 12 meses</span>
+            <b className={changeTone}>
+              {summary.changeInCents === undefined ? "Sem base anterior" : money(summary.changeInCents)}
+            </b>
+          </div>
+        </div>
+        <p className="muted">
+          {summary.changePercent === undefined
+            ? "Ainda não há uma base válida para calcular a variação percentual."
+            : `${summary.changePercent >= 0 ? "+" : ""}${summary.changePercent.toLocaleString("pt-BR", {
+                maximumFractionDigits: 1,
+              })}% em relação ao mesmo mês do ano anterior.`}
+        </p>
+      </article>
+      <article className="panel">
+        <div className="panel-title">
+          <div>
+            <h2>Evolução do patrimônio</h2>
+            <small>Últimos 12 meses mais o ponto atual</small>
+          </div>
+        </div>
+        <NetWorthHistoryChart data={points} />
+      </article>
+    </div>
   );
 }
 
@@ -944,6 +1042,7 @@ function TargetEditor({
           categoryId: kind === "category" ? categoryId : undefined,
           amountInCents,
           enabled: true,
+          includeDescendants: kind === "category" ? target.includeDescendants : false,
         });
       onSaved();
     } catch (e: any) {

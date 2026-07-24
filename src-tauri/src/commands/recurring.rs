@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::{application::state::AppState, error::AppError};
 
-use super::{ensure_account_active, ensure_category_active, manual_fingerprint};
+use super::{ensure_account_active, ensure_transaction_category_compatible, manual_fingerprint};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -135,7 +135,13 @@ async fn save_recurring_transaction_impl(
 ) -> Result<String, AppError> {
     validate_recurring_input(&input)?;
     ensure_account_active(db, &input.account_id).await?;
-    ensure_category_active(db, &input.category_id).await?;
+    ensure_transaction_category_compatible(
+        db,
+        &input.category_id,
+        &input.account_id,
+        input.amount_in_cents,
+    )
+    .await?;
     let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
     sqlx::query(
         "INSERT INTO recurring_transactions(id,account_id,category_id,description,amount_cents,day_of_month,start_month,end_month,active)

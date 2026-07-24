@@ -148,6 +148,7 @@ export function BudgetPage() {
                 <div>
                   <b>{category.categoryName}</b>
                   <small>{statusLabel[category.status]}</small>
+                  {category.includeDescendants && <small>Inclui as subcategorias</small>}
                 </div>
                 <div className="budget-row-actions">
                   <button className="secondary" onClick={() => setEditing(category)}>
@@ -218,6 +219,7 @@ function AddBudgetModal({
 }) {
   const [categoryId, setCategoryId] = useState<string>();
   const [amountInCents, setAmountInCents] = useState<number | null>(null);
+  const [includeDescendants, setIncludeDescendants] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -232,7 +234,13 @@ function AddBudgetModal({
     }
     setSaving(true);
     try {
-      await api.saveFinancialTarget({ kind: "category", categoryId, amountInCents, enabled: true });
+      await api.saveFinancialTarget({
+        kind: "category",
+        categoryId,
+        amountInCents,
+        enabled: true,
+        includeDescendants,
+      });
       onSaved();
     } catch (e: any) {
       setError(e?.message || String(e));
@@ -263,6 +271,17 @@ function AddBudgetModal({
             <label>
               Limite mensal
               <MoneyInput onChange={setAmountInCents} autoFocus />
+            </label>
+            <label className="check-label">
+              <input
+                type="checkbox"
+                checked={includeDescendants}
+                onChange={(event) => setIncludeDescendants(event.target.checked)}
+              />
+              <span>
+                Incluir subcategorias
+                <small className="muted">Também soma os gastos das categorias que ficam dentro desta.</small>
+              </span>
             </label>
           </>
         )}
@@ -295,6 +314,9 @@ function EditBudgetModal({
 }) {
   const [amountInCents, setAmountInCents] = useState<number | null>(category.limitInCents);
   const [monthlyOnly, setMonthlyOnly] = useState(false);
+  const [includeDescendants, setIncludeDescendants] = useState(
+    target?.includeDescendants ?? category.includeDescendants,
+  );
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -314,6 +336,7 @@ function EditBudgetModal({
           categoryId: category.categoryId,
           amountInCents,
           enabled: target?.enabled ?? true,
+          includeDescendants,
         });
       }
       onSaved();
@@ -335,6 +358,20 @@ function EditBudgetModal({
         <label className="check-label">
           <input type="checkbox" checked={monthlyOnly} onChange={(e) => setMonthlyOnly(e.target.checked)} />
           Alterar somente este mês ({monthLabel(month)})
+        </label>
+        <label className="check-label">
+          <input
+            type="checkbox"
+            checked={includeDescendants}
+            disabled={monthlyOnly}
+            onChange={(event) => setIncludeDescendants(event.target.checked)}
+          />
+          <span>
+            Incluir subcategorias
+            <small className="muted">
+              Também soma os gastos das categorias que ficam dentro desta. Esta escolha vale para todos os meses.
+            </small>
+          </span>
         </label>
         {error && <p className="form-error">{error}</p>}
         <div className="editor-actions">

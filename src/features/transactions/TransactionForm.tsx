@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight } from "lucide-react";
 import { api } from "../../shared/api";
@@ -7,7 +7,8 @@ import { MoneyInput } from "../../shared/ui/MoneyInput";
 import { CategorySelect } from "../../shared/ui/CategorySelect";
 import { DatePicker } from "../../shared/ui/CalendarPicker";
 import { useToast } from "../../shared/ui/toast";
-import { todayIso } from "../../shared/format";
+import { money, shortDate, todayIso } from "../../shared/format";
+import { addMonthsClamped, splitInstallmentCents } from "../../shared/installments";
 import type { Transaction } from "../../shared/types";
 import { Select } from "../../shared/ui/Select";
 
@@ -21,19 +22,42 @@ export function TransactionForm({ onClose, existing, initialType = "expense" }: 
   const { data: categories = [] } = useQuery({ queryKey: ["categories"], queryFn: api.categories });
   const editing = Boolean(existing);
   const isTransferLeg = Boolean(existing?.isTransferLeg);
+  const isAccountTransfer = existing?.linkedKind === "transfer";
+  const { data: transferDetails, isLoading: transferLoading } = useQuery({
+    queryKey: ["transfer-details", existing?.id],
+    queryFn: () => api.getTransferDetails(existing!.id),
+    enabled: Boolean(existing?.id && isAccountTransfer),
+  });
   const [accountId, setAccountId] = useState(existing?.accountId ?? "");
   const [toAccountId, setToAccountId] = useState("");
   const [type, setType] = useState<TransactionEntryType>(
-    existing ? (existing.amountInCents > 0 ? "income" : "expense") : initialType,
+    isAccountTransfer ? "transfer" : existing ? (existing.amountInCents > 0 ? "income" : "expense") : initialType,
   );
   const [cents, setCents] = useState<number | null>(existing ? Math.abs(existing.amountInCents) : null);
   const [date, setDate] = useState(existing?.date ?? todayIso());
   const [description, setDescription] = useState(existing?.description ?? "");
   const [categoryId, setCategoryId] = useState(existing?.categoryId ?? "");
+  const [installmentsEnabled, setInstallmentsEnabled] = useState(false);
+  const [installmentCount, setInstallmentCount] = useState(2);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
+  useEffect(() => {
+    if (!transferDetails) return;
+    setAccountId(transferDetails.fromAccountId);
+    setToAccountId(transferDetails.toAccountId);
+    setCents(transferDetails.amountInCents);
+    setDate(transferDetails.date);
+    setDescription(transferDetails.description ?? "");
+  }, [transferDetails]);
+
   const resolvedAccountId = accountId || accounts[0]?.id || "";
+  const selectedAccount = accounts.find((account) => account.id === resolvedAccountId);
+  const canCreateInstallments = !editing && type === "expense" && selectedAccount?.kind === "credit_card";
+  const installmentParts =
+    canCreateInstallments && installmentsEnabled && cents ? splitInstallmentCents(cents, installmentCount) : [];
+  const finalInstallmentDate =
+    installmentParts.length > 0 ? addMonthsClamped(date, installmentParts.length - 1) : undefined;
   const destinationAccounts = accounts.filter((a) => a.id !== resolvedAccountId);
   const resolvedToAccountId =
     toAccountId && toAccountId !== resolvedAccountId ? toAccountId : destinationAccounts[0]?.id || "";
@@ -59,21 +83,23 @@ export function TransactionForm({ onClose, existing, initialType = "expense" }: 
     }
     setSaving(true);
     try {
-      if (type === "transfer" && !editing) {
+      if (type === "transfer" && (!editing || isAccountTransfer)) {
         if (!resolvedToAccountId) {
           setError("Selecione a conta de destino.");
           setSaving(false);
           return;
         }
-        await api.createTransfer({
+        const transferInput = {
           fromAccountId: resolvedAccountId,
           toAccountId: resolvedToAccountId,
           date,
           amountInCents: cents,
           description: description.trim() || undefined,
-        });
+        };
+        if (isAccountTransfer && existing) await api.updateTransfer(existing.id, transferInput);
+        else await api.createTransfer(transferInput);
         await invalidate();
-        toast("Transferência registrada");
+        toast(isAccountTransfer ? "Transferência atualizada" : "Transferência registrada");
         onClose();
         return;
       }
@@ -83,6 +109,20 @@ export function TransactionForm({ onClose, existing, initialType = "expense" }: 
         return;
       }
       const amountInCents = isTransferLeg && existing ? existing.amountInCents : type === "income" ? cents : -cents;
+      if (canCreateInstallments && installmentsEnabled) {
+        await api.createCreditCardInstallments({
+          accountId: resolvedAccountId,
+          firstDate: date,
+          description: description.trim(),
+          totalAmountInCents: cents,
+          installmentCount,
+          categoryId: categoryId || undefined,
+        });
+        await invalidate();
+        toast(`${installmentCount} parcelas adicionadas`);
+        onClose();
+        return;
+      }
       const input = {
         id: existing?.id,
         accountId: isTransferLeg && existing ? existing.accountId : resolvedAccountId,
@@ -104,25 +144,38 @@ export function TransactionForm({ onClose, existing, initialType = "expense" }: 
   }
 
   return (
-    <Modal title={editing ? "Editar transação" : "Nova transação"} onClose={onClose}>
+    <Modal
+      title={isAccountTransfer ? "Editar transferência" : editing ? "Editar transação" : "Nova transação"}
+      onClose={onClose}
+    >
       <div className="modal-form">
         <div className="segmented" role="group" aria-label="Tipo de transação">
-          <button type="button" className={type === "expense" ? "active" : ""} onClick={() => setType("expense")}>
+          <button
+            type="button"
+            className={type === "expense" ? "active" : ""}
+            onClick={() => setType("expense")}
+            disabled={isAccountTransfer}
+          >
             Despesa
           </button>
-          <button type="button" className={type === "income" ? "active" : ""} onClick={() => setType("income")}>
+          <button
+            type="button"
+            className={type === "income" ? "active" : ""}
+            onClick={() => setType("income")}
+            disabled={isAccountTransfer}
+          >
             Receita
           </button>
           <button
             type="button"
             className={type === "transfer" ? "active" : ""}
             onClick={() => setType("transfer")}
-            disabled={editing}
+            disabled={editing && !isAccountTransfer}
           >
             Transferência
           </button>
         </div>
-        {isTransferLeg && (
+        {isTransferLeg && !isAccountTransfer && (
           <p className="muted" style={{ fontSize: 13, margin: 0 }}>
             Esta transação está vinculada; valor, data, conta e categoria ficam travados para manter o vínculo.
           </p>
@@ -133,10 +186,10 @@ export function TransactionForm({ onClose, existing, initialType = "expense" }: 
             defaultCents={existing ? Math.abs(existing.amountInCents) : 0}
             onChange={setCents}
             autoFocus
-            disabled={isTransferLeg}
+            disabled={isTransferLeg && !isAccountTransfer}
           />
         </label>
-        {type === "transfer" && !editing ? (
+        {type === "transfer" && (!editing || isAccountTransfer) ? (
           <>
             <div className="form-row transfer-row">
               <label>
@@ -212,6 +265,62 @@ export function TransactionForm({ onClose, existing, initialType = "expense" }: 
               emptyLabel="Sem categoria"
               disabled={isTransferLeg}
             />
+            {canCreateInstallments && (
+              <section className="installment-editor" aria-label="Parcelamento da compra">
+                <label className="installment-toggle">
+                  <input
+                    type="checkbox"
+                    checked={installmentsEnabled}
+                    onChange={(event) => setInstallmentsEnabled(event.target.checked)}
+                  />
+                  <span>
+                    <strong>Parcelar esta compra</strong>
+                    <small>O Lumen cria um lançamento por mês, sem perder centavos.</small>
+                  </span>
+                </label>
+                {installmentsEnabled && (
+                  <div className="installment-details">
+                    <label htmlFor="installment-count">
+                      Número de parcelas
+                      <input
+                        id="installment-count"
+                        type="number"
+                        inputMode="numeric"
+                        min={2}
+                        max={48}
+                        step={1}
+                        value={installmentCount}
+                        onChange={(event) => {
+                          const value = Number(event.target.value);
+                          setInstallmentCount(Math.max(2, Math.min(48, Math.trunc(value) || 2)));
+                        }}
+                      />
+                    </label>
+                    {installmentParts.length > 0 && (
+                      <div className="installment-preview" role="status" aria-live="polite">
+                        <strong>Total {money(cents ?? 0)}</strong>
+                        <span>
+                          {installmentParts.every((part) => part === installmentParts[0])
+                            ? `${installmentCount} × ${money(installmentParts[0])}`
+                            : `${installmentParts.filter((part) => part === installmentParts[0]).length} × ${money(
+                                installmentParts[0],
+                              )} + ${
+                                installmentParts.length -
+                                installmentParts.filter((part) => part === installmentParts[0]).length
+                              } × ${money(installmentParts.at(-1) ?? 0)}`}
+                        </span>
+                        {finalInstallmentDate && (
+                          <small>
+                            Primeira em {shortDate(date)} · última em {shortDate(finalInstallmentDate)}
+                          </small>
+                        )}
+                        <small>Depois de criado, cada lançamento pode ser editado individualmente.</small>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </section>
+            )}
           </>
         )}
         {error && <p className="form-error">{error}</p>}
@@ -221,9 +330,21 @@ export function TransactionForm({ onClose, existing, initialType = "expense" }: 
           </button>
           <button
             onClick={submit}
-            disabled={saving || (type === "transfer" && !editing && destinationAccounts.length === 0)}
+            disabled={
+              saving ||
+              transferLoading ||
+              (type === "transfer" && (!editing || isAccountTransfer) && destinationAccounts.length === 0)
+            }
           >
-            {saving ? "Salvando…" : editing ? "Salvar" : type === "transfer" ? "Transferir" : "Adicionar"}
+            {saving
+              ? "Salvando…"
+              : isAccountTransfer
+                ? "Salvar transferência"
+                : editing
+                  ? "Salvar"
+                  : type === "transfer"
+                    ? "Transferir"
+                    : "Adicionar"}
           </button>
         </div>
       </div>

@@ -1,6 +1,9 @@
+pub mod cashflow_forecast;
 pub mod categorization;
+pub mod category_compatibility;
 pub mod category_vocabulary;
 pub mod credit_card;
+pub mod financial_metrics;
 pub mod import;
 pub mod merchant;
 pub mod money;

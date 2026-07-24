@@ -1,12 +1,12 @@
 use chrono::Local;
 use serde::Serialize;
 use sqlx::{Row, SqlitePool};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tauri::State;
 
 use super::reports::{
-    days_in_month, effective_days, expense_value, load_report_rows_for_month, load_targets,
-    parse_month,
+    category_scope_ids, days_in_month, effective_days, expense_value, load_category_children,
+    load_report_rows_for_month, load_targets, parse_month,
 };
 use crate::{application::state::AppState, error::AppError};
 
@@ -17,6 +17,7 @@ pub struct BudgetCategory {
     category_id: String,
     category_name: String,
     category_color: Option<String>,
+    include_descendants: bool,
     limit_in_cents: i64,
     spent_in_cents: i64,
     remaining_in_cents: i64,
@@ -50,6 +51,14 @@ fn status_for(progress_percent: f64) -> &'static str {
     }
 }
 
+fn budget_overflow() -> AppError {
+    AppError::Validation("O orçamento excedeu o limite numérico".into())
+}
+
+fn budget_i64(value: i128) -> Result<i64, AppError> {
+    i64::try_from(value).map_err(|_| budget_overflow())
+}
+
 /// Reads a category's monthly budget (an enabled `financial_targets` row of kind='category')
 /// against that month's actual spend, using the exact same income/expense classification as
 /// the financial report (`expense_value`) so the budget page and the reports page never
@@ -74,7 +83,8 @@ async fn budget_overview_impl(month: String, db: &SqlitePool) -> Result<BudgetOv
             continue;
         }
         if let Some(category_id) = &row.category_id {
-            *spent_by_category.entry(category_id.clone()).or_default() += expense;
+            let current = spent_by_category.entry(category_id.clone()).or_default();
+            *current = current.checked_add(expense).ok_or_else(budget_overflow)?;
         }
     }
 
@@ -91,8 +101,11 @@ async fn budget_overview_impl(month: String, db: &SqlitePool) -> Result<BudgetOv
     let total_days = days_in_month(&month);
 
     let targets = load_targets(db).await?;
+    let category_children = load_category_children(db).await?;
     let mut categories = vec![];
     let mut totals = BudgetTotals::default();
+    let mut covered_category_ids = HashSet::new();
+    let mut total_spent = 0i128;
     for target in targets
         .into_iter()
         .filter(|t| t.enabled && t.kind == "category")
@@ -107,28 +120,42 @@ async fn budget_overview_impl(month: String, db: &SqlitePool) -> Result<BudgetOv
             .find(|o| o.month == month)
             .map(|o| o.amount_in_cents)
             .unwrap_or(target.amount_in_cents);
-        let spent_in_cents = spent_by_category
-            .get(&category_id)
-            .copied()
-            .unwrap_or(0)
-            .max(0);
-        let remaining_in_cents = limit_in_cents - spent_in_cents;
+        let scope =
+            category_scope_ids(&category_id, target.include_descendants, &category_children);
+        let spent_in_cents = budget_i64(scope.iter().try_fold(0i128, |total, id| {
+            total
+                .checked_add(i128::from(spent_by_category.get(id).copied().unwrap_or(0)))
+                .ok_or_else(budget_overflow)
+        })?)?
+        .max(0);
+        let remaining_in_cents =
+            budget_i64(i128::from(limit_in_cents) - i128::from(spent_in_cents))?;
         let progress_percent = if limit_in_cents > 0 {
             spent_in_cents as f64 / limit_in_cents as f64 * 100.0
         } else {
             0.0
         };
         let projected_in_cents = if is_current_month {
-            ((spent_in_cents as i128 * total_days as i128) / elapsed as i128) as i64
+            budget_i64((i128::from(spent_in_cents) * i128::from(total_days)) / i128::from(elapsed))?
         } else {
             spent_in_cents
         };
-        totals.limit_in_cents += limit_in_cents;
-        totals.spent_in_cents += spent_in_cents;
+        totals.limit_in_cents =
+            budget_i64(i128::from(totals.limit_in_cents) + i128::from(limit_in_cents))?;
+        for covered_id in &scope {
+            if covered_category_ids.insert(covered_id.clone()) {
+                total_spent = total_spent
+                    .checked_add(i128::from(
+                        spent_by_category.get(covered_id).copied().unwrap_or(0),
+                    ))
+                    .ok_or_else(budget_overflow)?;
+            }
+        }
         categories.push(BudgetCategory {
             target_id: target.id,
             category_name: target.category_name.unwrap_or_else(|| "Categoria".into()),
             category_color: category_colors.get(&category_id).cloned().flatten(),
+            include_descendants: target.include_descendants,
             category_id,
             limit_in_cents,
             spent_in_cents,
@@ -138,6 +165,7 @@ async fn budget_overview_impl(month: String, db: &SqlitePool) -> Result<BudgetOv
             status: status_for(progress_percent).into(),
         });
     }
+    totals.spent_in_cents = budget_i64(total_spent)?.max(0);
     categories.sort_by(|a, b| b.progress_percent.partial_cmp(&a.progress_percent).unwrap());
 
     Ok(BudgetOverview { categories, totals })
@@ -164,6 +192,16 @@ mod tests {
             .bind(id)
             .bind(name)
             .bind(color)
+            .execute(db)
+            .await
+            .unwrap();
+    }
+
+    async fn insert_child_category(db: &SqlitePool, id: &str, parent_id: &str, name: &str) {
+        sqlx::query("INSERT INTO categories(id,parent_id,name,kind) VALUES(?,?,?,'expense')")
+            .bind(id)
+            .bind(parent_id)
+            .bind(name)
             .execute(db)
             .await
             .unwrap();
@@ -289,5 +327,70 @@ mod tests {
         let overview = budget_overview_impl("2026-06".into(), &db).await.unwrap();
         assert!(overview.categories.is_empty());
         assert_eq!(overview.totals, BudgetTotals::default());
+    }
+
+    #[tokio::test]
+    async fn includes_all_descendants_once_when_requested() {
+        let (_directory, db) = setup().await;
+        insert_category(&db, "budget-family", "Casa", "#728bba").await;
+        insert_child_category(&db, "budget-utilities", "budget-family", "Contas").await;
+        insert_child_category(&db, "budget-electricity", "budget-utilities", "Energia").await;
+        insert_target(&db, "goal-home", "budget-family", 100_000).await;
+        sqlx::query("UPDATE financial_targets SET include_descendants=1 WHERE id='goal-home'")
+            .execute(&db)
+            .await
+            .unwrap();
+        insert_expense(&db, "e-parent", "2026-06-01", "budget-family", -10_000).await;
+        insert_expense(&db, "e-child", "2026-06-02", "budget-utilities", -20_000).await;
+        insert_expense(
+            &db,
+            "e-grandchild",
+            "2026-06-03",
+            "budget-electricity",
+            -30_000,
+        )
+        .await;
+
+        let overview = budget_overview_impl("2026-06".into(), &db).await.unwrap();
+
+        assert_eq!(overview.categories[0].spent_in_cents, 60_000);
+        assert!(overview.categories[0].include_descendants);
+        assert_eq!(overview.totals.spent_in_cents, 60_000);
+    }
+
+    #[tokio::test]
+    async fn defaults_to_only_the_selected_category_and_deduplicates_overlapping_totals() {
+        let (_directory, db) = setup().await;
+        insert_category(&db, "budget-family", "Casa", "#728bba").await;
+        insert_child_category(&db, "budget-utilities", "budget-family", "Contas").await;
+        insert_target(&db, "goal-home", "budget-family", 100_000).await;
+        insert_target(&db, "goal-utilities", "budget-utilities", 40_000).await;
+        insert_expense(&db, "e-parent", "2026-06-01", "budget-family", -10_000).await;
+        insert_expense(&db, "e-child", "2026-06-02", "budget-utilities", -20_000).await;
+
+        let default_overview = budget_overview_impl("2026-06".into(), &db).await.unwrap();
+        let home = default_overview
+            .categories
+            .iter()
+            .find(|category| category.category_id == "budget-family")
+            .unwrap();
+        assert_eq!(home.spent_in_cents, 10_000);
+        assert!(!home.include_descendants);
+
+        sqlx::query("UPDATE financial_targets SET include_descendants=1 WHERE id='goal-home'")
+            .execute(&db)
+            .await
+            .unwrap();
+        let overlapping_overview = budget_overview_impl("2026-06".into(), &db).await.unwrap();
+        let home = overlapping_overview
+            .categories
+            .iter()
+            .find(|category| category.category_id == "budget-family")
+            .unwrap();
+        assert_eq!(home.spent_in_cents, 30_000);
+        assert_eq!(
+            overlapping_overview.totals.spent_in_cents, 30_000,
+            "a subcategoria coberta por dois limites não pode ser somada duas vezes no total"
+        );
     }
 }

@@ -1,11 +1,18 @@
 use chrono::{Datelike, Local, NaiveDate};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use tauri::State;
 use uuid::Uuid;
 
-use crate::{application::state::AppState, error::AppError};
+use crate::{
+    application::state::AppState,
+    domain::financial_metrics::{
+        classify_financial_entry, FinancialAccountKind, FinancialCategoryKind,
+        FinancialClassification, FinancialEntry, FinancialLinkedKind, FinancialMetrics,
+    },
+    error::AppError,
+};
 
 type KindCategoryMap = HashMap<Option<String>, (String, Option<String>, i64)>;
 
@@ -169,6 +176,8 @@ pub struct FinancialTargetInput {
     category_id: Option<String>,
     amount_in_cents: i64,
     enabled: bool,
+    #[serde(default)]
+    include_descendants: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -187,6 +196,7 @@ pub struct FinancialTarget {
     pub(crate) category_name: Option<String>,
     pub(crate) amount_in_cents: i64,
     pub(crate) enabled: bool,
+    pub(crate) include_descendants: bool,
     pub(crate) overrides: Vec<TargetOverride>,
 }
 
@@ -202,6 +212,7 @@ pub(crate) struct ReportRow {
     category_name: Option<String>,
     category_color: Option<String>,
     category_kind: Option<String>,
+    linked_kind: Option<String>,
 }
 
 /// Loads report rows for a single month with the `account_kind`/`category_kind` joins needed by
@@ -216,7 +227,9 @@ pub(crate) async fn load_report_rows_for_month(
     let rows = sqlx::query(
         "SELECT t.date, strftime('%Y-%m',t.date) month, t.merchant_key,
          COALESCE(ma.display_name, t.merchant_key, t.description) merchant_label, t.amount_cents,
-         a.kind account_kind, t.category_id, c.name category_name, c.color category_color, c.kind category_kind
+         a.kind account_kind, t.category_id, c.name category_name, c.color category_color, c.kind category_kind,
+         (SELECT l.kind FROM transaction_links l
+          WHERE l.debit_transaction_id=t.id OR l.credit_transaction_id=t.id LIMIT 1) linked_kind
          FROM transactions t JOIN accounts a ON a.id=t.account_id
          LEFT JOIN categories c ON c.id=t.category_id
          LEFT JOIN merchant_aliases ma ON ma.merchant_key=t.merchant_key
@@ -237,6 +250,7 @@ pub(crate) async fn load_report_rows_for_month(
             category_name: r.get("category_name"),
             category_color: r.get("category_color"),
             category_kind: r.get("category_kind"),
+            linked_kind: r.get("linked_kind"),
         })
         .collect())
 }
@@ -260,36 +274,39 @@ pub(crate) async fn dashboard_summary_data(
     month: &str,
 ) -> Result<DashboardSummaryData, AppError> {
     let rows = load_report_rows_for_month(db, month, "all").await?;
-    let mut income = 0i64;
-    let mut expenses = 0i64;
-    let mut investments = 0i64;
-    let mut balance = 0i64;
+    let summary = summarize(&rows, month)?;
+    let mut balance = 0i128;
     let mut category_map: HashMap<Option<String>, (String, i64)> = HashMap::new();
     for row in &rows {
-        income += income_value(row);
-        expenses += expense_value(row);
-        investments += investment_value(row);
-        balance += row.amount;
-        let expense = expense_value(row);
-        if expense > 0 {
+        balance = balance
+            .checked_add(i128::from(row.amount))
+            .ok_or_else(financial_metrics_overflow)?;
+        let expense = try_expense_value(row)?;
+        if expense != 0 {
             let entry = category_map.entry(row.category_id.clone()).or_insert((
                 row.category_name
                     .clone()
                     .unwrap_or_else(|| "Sem categoria".into()),
                 0,
             ));
-            entry.1 += expense;
+            entry.1 = entry
+                .1
+                .checked_add(expense)
+                .ok_or_else(financial_metrics_overflow)?;
         }
     }
-    let mut by_category: Vec<(String, i64)> = category_map.into_values().collect();
+    let mut by_category: Vec<(String, i64)> = category_map
+        .into_values()
+        .filter(|(_, amount)| *amount > 0)
+        .collect();
     by_category.sort_by_key(|item| std::cmp::Reverse(item.1));
     by_category.truncate(6);
     Ok(DashboardSummaryData {
-        income_in_cents: income,
-        expenses_in_cents: expenses.max(0),
-        investments_in_cents: investments,
-        balance_in_cents: balance,
-        transaction_count: rows.len() as i64,
+        income_in_cents: summary.income_in_cents,
+        expenses_in_cents: summary.expenses_in_cents,
+        investments_in_cents: summary.investments_in_cents,
+        balance_in_cents: metric_i64(balance)?,
+        transaction_count: i64::try_from(rows.len()).map_err(|_| financial_metrics_overflow())?,
         by_category,
     })
 }
@@ -336,66 +353,99 @@ fn percent_change(current: i64, previous: i64) -> Option<f64> {
     if previous == 0 {
         None
     } else {
-        Some((current - previous) as f64 / previous.abs() as f64 * 100.0)
+        Some(
+            (i128::from(current) - i128::from(previous)) as f64 / i128::from(previous).abs() as f64
+                * 100.0,
+        )
     }
 }
 
+fn financial_metrics_overflow() -> AppError {
+    AppError::Validation("Métricas financeiras excederam o limite numérico".into())
+}
+
+fn metric_i64(value: i128) -> Result<i64, AppError> {
+    i64::try_from(value).map_err(|_| financial_metrics_overflow())
+}
+
+fn checked_add_i64(target: &mut i64, value: i64) -> Result<(), AppError> {
+    *target = metric_i64(i128::from(*target) + i128::from(value))?;
+    Ok(())
+}
+
+fn financial_entry(row: &ReportRow) -> FinancialEntry {
+    FinancialEntry {
+        amount_in_cents: row.amount,
+        account_kind: FinancialAccountKind::from_database_value(&row.account_kind),
+        category_kind: row
+            .category_kind
+            .as_deref()
+            .and_then(|value| value.parse::<FinancialCategoryKind>().ok()),
+        linked_kind: row
+            .linked_kind
+            .as_deref()
+            .and_then(|value| value.parse::<FinancialLinkedKind>().ok()),
+    }
+}
+
+fn try_expense_value(row: &ReportRow) -> Result<i64, AppError> {
+    let entry = financial_entry(row);
+    match classify_financial_entry(&entry) {
+        FinancialClassification::Expense
+        | FinancialClassification::ExpenseRefund
+        | FinancialClassification::UncategorizedCreditCardExpense
+        | FinancialClassification::UncategorizedCreditCardRefund => {
+            metric_i64(-i128::from(row.amount))
+        }
+        _ => Ok(0),
+    }
+}
+
+/// Compatibility helper for budget aggregation. Report generation uses the
+/// fallible variant above so a narrowing failure becomes an `AppError`.
 pub(crate) fn expense_value(row: &ReportRow) -> i64 {
-    match row.category_kind.as_deref() {
-        Some("transfer") | Some("investment") | Some("income") => 0,
-        Some("expense") => -row.amount,
-        _ if row.account_kind == "credit_card" => -row.amount,
-        _ if row.amount < 0 => -row.amount,
-        _ => 0,
+    try_expense_value(row).unwrap_or(if row.amount < 0 { i64::MAX } else { i64::MIN })
+}
+
+pub(crate) fn income_value(row: &ReportRow) -> Result<i64, AppError> {
+    let entry = financial_entry(row);
+    match classify_financial_entry(&entry) {
+        FinancialClassification::Income | FinancialClassification::IncomeReversal => Ok(row.amount),
+        _ => Ok(0),
     }
 }
 
-pub(crate) fn income_value(row: &ReportRow) -> i64 {
-    if row.account_kind == "credit_card" {
-        return 0;
-    }
-    match row.category_kind.as_deref() {
-        Some("transfer") | Some("investment") | Some("expense") => 0,
-        Some("income") => row.amount.max(0),
-        _ => row.amount.max(0),
+pub(crate) fn investment_value(row: &ReportRow) -> Result<i64, AppError> {
+    let entry = financial_entry(row);
+    match classify_financial_entry(&entry) {
+        FinancialClassification::InvestmentContribution
+        | FinancialClassification::InvestmentRedemption => metric_i64(-i128::from(row.amount)),
+        _ => Ok(0),
     }
 }
 
-pub(crate) fn investment_value(row: &ReportRow) -> i64 {
-    if row.category_kind.as_deref() == Some("investment") {
-        (-row.amount).max(0)
-    } else {
-        0
-    }
-}
-
-fn summarize(rows: &[ReportRow], month: &str) -> ReportSummary {
-    let month_rows = rows.iter().filter(|r| r.month == month);
+fn summarize_rows<'a>(
+    rows: impl IntoIterator<Item = &'a ReportRow>,
+) -> Result<ReportSummary, AppError> {
+    let entries: Vec<_> = rows.into_iter().map(financial_entry).collect();
+    let metrics =
+        FinancialMetrics::try_from_entries(&entries).map_err(|_| financial_metrics_overflow())?;
     let mut result = ReportSummary::default();
-    for row in month_rows {
-        result.income_in_cents += income_value(row);
-        result.expenses_in_cents += expense_value(row);
-        result.investments_in_cents += investment_value(row);
-    }
-    result.expenses_in_cents = result.expenses_in_cents.max(0);
-    result.savings_in_cents = result.income_in_cents - result.expenses_in_cents;
+    result.income_in_cents = metric_i64(metrics.income_in_cents)?;
+    result.expenses_in_cents = metric_i64(metrics.expenses_in_cents)?;
+    result.investments_in_cents = metric_i64(metrics.investments_in_cents)?;
+    result.savings_in_cents = metric_i64(metrics.savings_in_cents)?;
     result.savings_rate_percent = (result.income_in_cents > 0)
         .then_some(result.savings_in_cents as f64 / result.income_in_cents as f64 * 100.0);
-    result
+    Ok(result)
 }
 
-fn summarize_period(rows: &[&ReportRow]) -> ReportSummary {
-    let mut result = ReportSummary::default();
-    for row in rows {
-        result.income_in_cents += income_value(row);
-        result.expenses_in_cents += expense_value(row);
-        result.investments_in_cents += investment_value(row);
-    }
-    result.expenses_in_cents = result.expenses_in_cents.max(0);
-    result.savings_in_cents = result.income_in_cents - result.expenses_in_cents;
-    result.savings_rate_percent = (result.income_in_cents > 0)
-        .then_some(result.savings_in_cents as f64 / result.income_in_cents as f64 * 100.0);
-    result
+fn summarize(rows: &[ReportRow], month: &str) -> Result<ReportSummary, AppError> {
+    summarize_rows(rows.iter().filter(|row| row.month == month))
+}
+
+fn summarize_period(rows: &[&ReportRow]) -> Result<ReportSummary, AppError> {
+    summarize_rows(rows.iter().copied())
 }
 
 pub(crate) fn days_in_month(month: &str) -> i64 {
@@ -415,7 +465,8 @@ pub(crate) fn effective_days(month: &str) -> i64 {
 
 pub(crate) async fn load_targets(db: &SqlitePool) -> Result<Vec<FinancialTarget>, AppError> {
     let rows = sqlx::query(
-        "SELECT t.id,t.kind,t.category_id,c.name category_name,t.amount_cents,t.enabled
+        "SELECT t.id,t.kind,t.category_id,c.name category_name,t.amount_cents,t.enabled,
+                t.include_descendants
          FROM financial_targets t LEFT JOIN categories c ON c.id=t.category_id
          WHERE t.deleted_at IS NULL ORDER BY t.kind,c.name",
     )
@@ -435,10 +486,49 @@ pub(crate) async fn load_targets(db: &SqlitePool) -> Result<Vec<FinancialTarget>
             category_name: row.get("category_name"),
             amount_in_cents: row.get("amount_cents"),
             enabled: row.get::<i64, _>("enabled") != 0,
+            include_descendants: row.get::<i64, _>("include_descendants") != 0,
             overrides,
         });
     }
     Ok(targets)
+}
+
+pub(crate) async fn load_category_children(
+    db: &SqlitePool,
+) -> Result<HashMap<String, Vec<String>>, AppError> {
+    let rows = sqlx::query("SELECT id,parent_id FROM categories WHERE deleted_at IS NULL")
+        .fetch_all(db)
+        .await?;
+    let mut children: HashMap<String, Vec<String>> = HashMap::new();
+    for row in rows {
+        let id: String = row.get("id");
+        if let Some(parent_id) = row.get::<Option<String>, _>("parent_id") {
+            children.entry(parent_id).or_default().push(id);
+        }
+    }
+    Ok(children)
+}
+
+pub(crate) fn category_scope_ids(
+    category_id: &str,
+    include_descendants: bool,
+    children: &HashMap<String, Vec<String>>,
+) -> HashSet<String> {
+    let mut scope = HashSet::from([category_id.to_string()]);
+    if !include_descendants {
+        return scope;
+    }
+    let mut pending = vec![category_id.to_string()];
+    while let Some(parent_id) = pending.pop() {
+        if let Some(child_ids) = children.get(&parent_id) {
+            for child_id in child_ids {
+                if scope.insert(child_id.clone()) {
+                    pending.push(child_id.clone());
+                }
+            }
+        }
+    }
+    scope
 }
 
 #[tauri::command]
@@ -480,6 +570,11 @@ pub async fn save_financial_target(
             "Meta de economia não aceita categoria".into(),
         ));
     }
+    if input.kind != "category" && input.include_descendants {
+        return Err(AppError::Validation(
+            "A opção de incluir subcategorias só vale para limites por categoria".into(),
+        ));
+    }
     if input.kind == "savings" {
         let other:i64=sqlx::query_scalar(
             "SELECT COUNT(*) FROM financial_targets WHERE kind='savings' AND deleted_at IS NULL AND id!=?"
@@ -492,15 +587,19 @@ pub async fn save_financial_target(
     }
     let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
     sqlx::query(
-        "INSERT INTO financial_targets(id,kind,category_id,amount_cents,enabled) VALUES(?,?,?,?,?)
+        "INSERT INTO financial_targets(
+           id,kind,category_id,amount_cents,enabled,include_descendants
+         ) VALUES(?,?,?,?,?,?)
          ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,category_id=excluded.category_id,
-         amount_cents=excluded.amount_cents,enabled=excluded.enabled,updated_at=datetime('now')",
+         amount_cents=excluded.amount_cents,enabled=excluded.enabled,
+         include_descendants=excluded.include_descendants,updated_at=datetime('now')",
     )
     .bind(&id)
     .bind(input.kind)
     .bind(input.category_id)
     .bind(input.amount_in_cents)
     .bind(input.enabled as i64)
+    .bind(input.include_descendants as i64)
     .execute(&state.db)
     .await?;
     Ok(id)
@@ -569,7 +668,9 @@ async fn list_merchants_page_impl(
         "SELECT t.date, strftime('%Y-%m',t.date) month, t.merchant_key,
          COALESCE(t.merchant_key, t.description) original_name, ma.display_name merchant_alias,
          COALESCE(ma.display_name, t.merchant_key, t.description) merchant_label, t.amount_cents,
-         a.kind account_kind, t.category_id, c.name category_name, c.color category_color, c.kind category_kind
+         a.kind account_kind, t.category_id, c.name category_name, c.color category_color, c.kind category_kind,
+         (SELECT l.kind FROM transaction_links l
+          WHERE l.debit_transaction_id=t.id OR l.credit_transaction_id=t.id LIMIT 1) linked_kind
          FROM transactions t JOIN accounts a ON a.id=t.account_id
          LEFT JOIN categories c ON c.id=t.category_id
          LEFT JOIN merchant_aliases ma ON ma.merchant_key=t.merchant_key
@@ -595,8 +696,9 @@ async fn list_merchants_page_impl(
             category_name: row.get("category_name"),
             category_color: row.get("category_color"),
             category_kind: row.get("category_kind"),
+            linked_kind: row.get("linked_kind"),
         };
-        let expense = expense_value(&report_row);
+        let expense = try_expense_value(&report_row)?;
         if expense <= 0 {
             continue;
         }
@@ -692,7 +794,9 @@ async fn generate_financial_report_impl(
     let rows=sqlx::query(
         "SELECT t.date, strftime('%Y-%m',t.date) month, t.merchant_key,
          COALESCE(ma.display_name, t.merchant_key, t.description) merchant_label, t.amount_cents,
-         a.kind account_kind, t.category_id, c.name category_name, c.color category_color, c.kind category_kind
+         a.kind account_kind, t.category_id, c.name category_name, c.color category_color, c.kind category_kind,
+         (SELECT l.kind FROM transaction_links l
+          WHERE l.debit_transaction_id=t.id OR l.credit_transaction_id=t.id LIMIT 1) linked_kind
          FROM transactions t JOIN accounts a ON a.id=t.account_id
          LEFT JOIN categories c ON c.id=t.category_id
          LEFT JOIN merchant_aliases ma ON ma.merchant_key=t.merchant_key
@@ -716,12 +820,13 @@ async fn generate_financial_report_impl(
             category_name: r.get("category_name"),
             category_color: r.get("category_color"),
             category_kind: r.get("category_kind"),
+            linked_kind: r.get("linked_kind"),
         })
         .collect();
 
     let mut monthly = vec![];
     for month in &months {
-        let summary = summarize(&report_rows, month);
+        let summary = summarize(&report_rows, month)?;
         monthly.push(MonthlyReportPoint {
             month: month.clone(),
             income_in_cents: summary.income_in_cents,
@@ -735,9 +840,9 @@ async fn generate_financial_report_impl(
         .iter()
         .filter(|r| r.month >= filter.start_month && r.month <= filter.end_month)
         .collect();
-    let mut summary = summarize_period(&period_rows);
-    let mut latest_month_summary = summarize(&report_rows, &filter.end_month);
-    let previous_summary = summarize(&report_rows, &previous_month);
+    let mut summary = summarize_period(&period_rows)?;
+    let mut latest_month_summary = summarize(&report_rows, &filter.end_month)?;
+    let previous_summary = summarize(&report_rows, &previous_month)?;
     latest_month_summary.income_change_percent = percent_change(
         latest_month_summary.income_in_cents,
         previous_summary.income_in_cents,
@@ -752,10 +857,11 @@ async fn generate_financial_report_impl(
     );
     let elapsed = effective_days(&filter.end_month).max(1);
     latest_month_summary.daily_average_in_cents = latest_month_summary.expenses_in_cents / elapsed;
-    latest_month_summary.projected_expenses_in_cents = ((latest_month_summary.expenses_in_cents
-        as i128
-        * days_in_month(&filter.end_month) as i128)
-        / elapsed as i128) as i64;
+    latest_month_summary.projected_expenses_in_cents = metric_i64(
+        (i128::from(latest_month_summary.expenses_in_cents)
+            * i128::from(days_in_month(&filter.end_month)))
+            / i128::from(elapsed),
+    )?;
     let period_days: i64 = months.iter().map(|m| effective_days(m)).sum();
     summary.daily_average_in_cents = if period_days == 0 {
         0
@@ -769,20 +875,22 @@ async fn generate_financial_report_impl(
         .filter(|r| r.month == filter.end_month)
         .collect();
     let mut category_map: HashMap<Option<String>, (String, Option<String>, i64)> = HashMap::new();
-    let mut current_category_map: HashMap<Option<String>, i64> = HashMap::new();
     let mut merchant_map: HashMap<String, (String, Option<String>, i64, i64)> = HashMap::new();
     let mut daily_map: BTreeMap<String, i64> = BTreeMap::new();
     let mut period_daily_map: BTreeMap<String, i64> = BTreeMap::new();
     let mut bank = 0;
     let mut card = 0;
-    let mut uncategorized_count = 0;
+    let mut uncategorized_count: i64 = 0;
     let mut uncategorized = 0;
     for row in &period_rows {
-        let expense = expense_value(row);
+        let expense = try_expense_value(row)?;
         if expense == 0 {
             continue;
         }
-        *period_daily_map.entry(row.date.clone()).or_default() += expense;
+        checked_add_i64(
+            period_daily_map.entry(row.date.clone()).or_default(),
+            expense,
+        )?;
         let category = category_map.entry(row.category_id.clone()).or_insert((
             row.category_name
                 .clone()
@@ -790,7 +898,7 @@ async fn generate_financial_report_impl(
             row.category_color.clone(),
             0,
         ));
-        category.2 += expense;
+        checked_add_i64(&mut category.2, expense)?;
         let merchant_group_key = row
             .merchant_key
             .clone()
@@ -801,29 +909,38 @@ async fn generate_financial_report_impl(
             0,
             0,
         ));
-        merchant.2 += expense;
-        merchant.3 += 1;
+        checked_add_i64(&mut merchant.2, expense)?;
+        merchant.3 = merchant
+            .3
+            .checked_add(1)
+            .ok_or_else(financial_metrics_overflow)?;
         if row.account_kind == "credit_card" {
-            card += expense
+            checked_add_i64(&mut card, expense)?;
         } else {
-            bank += expense
+            checked_add_i64(&mut bank, expense)?;
         }
         if row.category_id.is_none() {
-            uncategorized_count += 1;
-            uncategorized += expense
+            uncategorized_count = uncategorized_count
+                .checked_add(1)
+                .ok_or_else(financial_metrics_overflow)?;
+            checked_add_i64(&mut uncategorized, expense)?;
         }
     }
     for row in current_rows {
-        let expense = expense_value(row);
+        let expense = try_expense_value(row)?;
         if expense == 0 {
             continue;
         }
-        *daily_map.entry(row.date.clone()).or_default() += expense;
-        *current_category_map
-            .entry(row.category_id.clone())
-            .or_default() += expense;
+        checked_add_i64(daily_map.entry(row.date.clone()).or_default(), expense)?;
     }
-    let total = summary.expenses_in_cents.max(1);
+    let category_total = category_map
+        .values()
+        .try_fold(0i128, |total, (_, _, amount)| {
+            total
+                .checked_add(i128::from((*amount).max(0)))
+                .ok_or_else(financial_metrics_overflow)
+        })?
+        .max(1);
     let mut categories: Vec<_> = category_map
         .into_iter()
         .map(|(id, (name, color, amount))| CategoryReport {
@@ -831,32 +948,38 @@ async fn generate_financial_report_impl(
             category: name,
             color,
             amount_in_cents: amount.max(0),
-            share_percent: amount.max(0) as f64 / total as f64 * 100.0,
+            share_percent: amount.max(0) as f64 / category_total as f64 * 100.0,
         })
         .collect();
     categories.sort_by_key(|x| -x.amount_in_cents);
 
-    // Build per-kind breakdown (income, expense, investment) by aggregating signed amounts
-    // per category. For income/investment we use positive amounts; for expense we use the
-    // expense_value (positive spend). This powers separate donuts in the UI.
+    // Build per-kind breakdown (income, expense, investment) from the same unitary
+    // classification as the summaries, so reversals offset their original category.
     let mut kind_map: HashMap<String, KindCategoryMap> = HashMap::new();
     for row in &period_rows {
-        let kind = row.category_kind.clone().unwrap_or_else(|| {
-            if row.amount > 0 {
-                "income".into()
-            } else {
-                "expense".into()
+        let entry_classification = classify_financial_entry(&financial_entry(row));
+        let (kind, signed) = match entry_classification {
+            FinancialClassification::Income | FinancialClassification::IncomeReversal => {
+                ("income", income_value(row)?)
             }
-        });
-        let signed = match kind.as_str() {
-            "income" => income_value(row),
-            "investment" => investment_value(row),
-            _ => expense_value(row),
+            FinancialClassification::InvestmentContribution
+            | FinancialClassification::InvestmentRedemption => {
+                ("investment", investment_value(row)?)
+            }
+            FinancialClassification::Expense
+            | FinancialClassification::ExpenseRefund
+            | FinancialClassification::UncategorizedCreditCardExpense
+            | FinancialClassification::UncategorizedCreditCardRefund => {
+                ("expense", try_expense_value(row)?)
+            }
+            FinancialClassification::Transfer
+            | FinancialClassification::CreditCardPayment
+            | FinancialClassification::Ignored => continue,
         };
         if signed == 0 {
             continue;
         }
-        let entry = kind_map.entry(kind.clone()).or_default();
+        let entry = kind_map.entry(kind.into()).or_default();
         let cat = entry.entry(row.category_id.clone()).or_insert((
             row.category_name
                 .clone()
@@ -864,31 +987,33 @@ async fn generate_financial_report_impl(
             row.category_color.clone(),
             0,
         ));
-        cat.2 += signed;
+        checked_add_i64(&mut cat.2, signed)?;
     }
-    let mut kind_breakdown: Vec<_> = kind_map
-        .into_iter()
-        .map(|(kind, inner)| {
-            let kind_total: i64 = inner.values().map(|x| x.2.max(0)).sum();
-            let div = kind_total.max(1);
-            let mut list: Vec<_> = inner
-                .into_iter()
-                .map(|(id, (name, color, amount))| CategoryReport {
-                    category_id: id,
-                    category: name,
-                    color,
-                    amount_in_cents: amount.max(0),
-                    share_percent: amount.max(0) as f64 / div as f64 * 100.0,
-                })
-                .collect();
-            list.sort_by_key(|x| -x.amount_in_cents);
-            KindBreakdown {
-                kind: kind.clone(),
-                total_in_cents: kind_total,
-                categories: list,
-            }
-        })
-        .collect();
+    let mut kind_breakdown = Vec::with_capacity(kind_map.len());
+    for (kind, inner) in kind_map {
+        let kind_total = inner.values().try_fold(0i128, |total, item| {
+            total
+                .checked_add(i128::from(item.2.max(0)))
+                .ok_or_else(financial_metrics_overflow)
+        })?;
+        let div = kind_total.max(1);
+        let mut list: Vec<_> = inner
+            .into_iter()
+            .map(|(id, (name, color, amount))| CategoryReport {
+                category_id: id,
+                category: name,
+                color,
+                amount_in_cents: amount.max(0),
+                share_percent: amount.max(0) as f64 / div as f64 * 100.0,
+            })
+            .collect();
+        list.sort_by_key(|x| -x.amount_in_cents);
+        kind_breakdown.push(KindBreakdown {
+            kind,
+            total_in_cents: metric_i64(kind_total)?,
+            categories: list,
+        });
+    }
     kind_breakdown.sort_by_key(|k| match k.kind.as_str() {
         "income" => 0,
         "expense" => 1,
@@ -910,43 +1035,60 @@ async fn generate_financial_report_impl(
     merchants.sort_by_key(|x| -x.amount_in_cents);
     merchants.truncate(8);
     let mut cumulative = 0;
-    let daily: Vec<_> = daily_map
-        .into_iter()
-        .map(|(date, amount)| {
-            cumulative += amount;
-            DailyReportPoint {
-                date,
-                amount_in_cents: amount,
-                cumulative_in_cents: cumulative,
-            }
-        })
-        .collect();
+    let mut daily = Vec::with_capacity(daily_map.len());
+    for (date, amount) in daily_map {
+        checked_add_i64(&mut cumulative, amount)?;
+        daily.push(DailyReportPoint {
+            date,
+            amount_in_cents: amount,
+            cumulative_in_cents: cumulative,
+        });
+    }
     let mut period_cumulative = 0;
-    let highest_spending_day = period_daily_map
+    let mut period_daily = Vec::with_capacity(period_daily_map.len());
+    for (date, amount) in period_daily_map {
+        checked_add_i64(&mut period_cumulative, amount)?;
+        period_daily.push(DailyReportPoint {
+            date,
+            amount_in_cents: amount,
+            cumulative_in_cents: period_cumulative,
+        });
+    }
+    let highest_spending_day = period_daily
         .into_iter()
-        .map(|(date, amount)| {
-            period_cumulative += amount;
-            DailyReportPoint {
-                date,
-                amount_in_cents: amount,
-                cumulative_in_cents: period_cumulative,
-            }
-        })
-        .max_by_key(|x| x.amount_in_cents);
+        .max_by_key(|point| point.amount_in_cents);
+    let source_total = (i128::from(bank.max(0)) + i128::from(card.max(0))).max(1);
     let sources = vec![
         SourceReport {
             source: "bank".into(),
             amount_in_cents: bank.max(0),
-            share_percent: bank.max(0) as f64 / total as f64 * 100.0,
+            share_percent: bank.max(0) as f64 / source_total as f64 * 100.0,
         },
         SourceReport {
             source: "credit_card".into(),
             amount_in_cents: card.max(0),
-            share_percent: card.max(0) as f64 / total as f64 * 100.0,
+            share_percent: card.max(0) as f64 / source_total as f64 * 100.0,
         },
     ];
 
+    // Goals are global product settings. Their progress must not change when
+    // the report is narrowed to a source or an individual account.
+    let global_current_rows = load_report_rows_for_month(db, &filter.end_month, "all").await?;
+    let global_latest_month_summary = summarize(&global_current_rows, &filter.end_month)?;
+    let mut global_current_category_map: HashMap<Option<String>, i64> = HashMap::new();
+    for row in &global_current_rows {
+        let expense = try_expense_value(row)?;
+        if expense != 0 {
+            checked_add_i64(
+                global_current_category_map
+                    .entry(row.category_id.clone())
+                    .or_default(),
+                expense,
+            )?;
+        }
+    }
     let targets = load_targets(db).await?;
+    let category_children = load_category_children(db).await?;
     let mut goals = vec![];
     for target in targets.into_iter().filter(|t| t.enabled) {
         let target_amount = target
@@ -956,12 +1098,27 @@ async fn generate_financial_report_impl(
             .map(|o| o.amount_in_cents)
             .unwrap_or(target.amount_in_cents);
         let actual = if target.kind == "savings" {
-            latest_month_summary.savings_in_cents
+            global_latest_month_summary.savings_in_cents
         } else {
-            current_category_map
-                .get(&target.category_id)
-                .copied()
-                .unwrap_or(0)
+            let category_id = target
+                .category_id
+                .as_deref()
+                .ok_or_else(|| AppError::Validation("Meta de categoria sem categoria".into()))?;
+            let scope =
+                category_scope_ids(category_id, target.include_descendants, &category_children);
+            scope
+                .iter()
+                .try_fold(0i128, |total, category_id| {
+                    total
+                        .checked_add(i128::from(
+                            global_current_category_map
+                                .get(&Some(category_id.clone()))
+                                .copied()
+                                .unwrap_or(0),
+                        ))
+                        .ok_or_else(financial_metrics_overflow)
+                })
+                .and_then(metric_i64)?
                 .max(0)
         };
         let is_current_month =
@@ -969,16 +1126,23 @@ async fn generate_financial_report_impl(
         let projected = if target.kind == "savings" {
             if is_current_month {
                 let days = days_in_month(&filter.end_month) as i128;
-                let projected_income =
-                    (latest_month_summary.income_in_cents as i128 * days) / elapsed as i128;
-                projected_income as i64 - latest_month_summary.projected_expenses_in_cents
+                let projected_income = (i128::from(global_latest_month_summary.income_in_cents)
+                    * days)
+                    / i128::from(elapsed);
+                let projected_expenses =
+                    (i128::from(global_latest_month_summary.expenses_in_cents) * days)
+                        / i128::from(elapsed);
+                metric_i64(projected_income - projected_expenses)?
             } else {
                 // Past (or future) months: the month is fully elapsed, so the actual figure is final.
                 actual
             }
         } else if is_current_month {
             // Pro-rate the current month's partial category spend to a full-month projection.
-            ((actual as i128 * days_in_month(&filter.end_month) as i128) / elapsed as i128) as i64
+            metric_i64(
+                (i128::from(actual) * i128::from(days_in_month(&filter.end_month)))
+                    / i128::from(elapsed),
+            )?
         } else {
             actual
         };
@@ -991,7 +1155,7 @@ async fn generate_financial_report_impl(
                 .unwrap_or_else(|| "Economia mensal".into()),
             target_in_cents: target_amount,
             actual_in_cents: actual,
-            remaining_in_cents: target_amount - actual,
+            remaining_in_cents: metric_i64(i128::from(target_amount) - i128::from(actual))?,
             progress_percent: actual as f64 / target_amount as f64 * 100.0,
             projected_in_cents: projected,
             projected_to_exceed: if target.kind == "savings" {
@@ -1030,9 +1194,16 @@ async fn generate_financial_report_impl(
     let monthly_average = if monthly.is_empty() {
         0
     } else {
-        monthly.iter().map(|x| x.expenses_in_cents).sum::<i64>() / monthly.len() as i64
+        let total = monthly.iter().try_fold(0i128, |total, point| {
+            total
+                .checked_add(i128::from(point.expenses_in_cents))
+                .ok_or_else(financial_metrics_overflow)
+        })?;
+        metric_i64(
+            total / i128::try_from(monthly.len()).map_err(|_| financial_metrics_overflow())?,
+        )?
     };
-    let card_share = card.max(0) as f64 / total as f64 * 100.0;
+    let card_share = card.max(0) as f64 / source_total as f64 * 100.0;
     let mut alerts = vec![];
     if latest_month_summary.expenses_in_cents > previous_summary.expenses_in_cents
         && previous_summary.expenses_in_cents > 0
@@ -1489,6 +1660,366 @@ mod tests {
         );
         // The credit-card refund must not have been counted as income.
         assert_eq!(dashboard.income_in_cents, 500000);
+    }
+
+    #[tokio::test]
+    async fn report_nets_reversals_redemptions_and_excludes_linked_movements() {
+        let (_directory, db, _account_id) = setup().await;
+        sqlx::query(
+            "INSERT INTO categories(id,name,kind) VALUES('test-expense','Despesa','expense')",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        insert_transaction(
+            &db,
+            "salary",
+            "acc",
+            "2026-06-01",
+            "Salário",
+            500_000,
+            Some("salary"),
+        )
+        .await;
+        insert_transaction(
+            &db,
+            "salary-reversal",
+            "acc",
+            "2026-06-02",
+            "Reversão salarial",
+            -50_000,
+            Some("salary"),
+        )
+        .await;
+        insert_transaction(
+            &db,
+            "expense",
+            "acc",
+            "2026-06-03",
+            "Despesa",
+            -100_000,
+            Some("test-expense"),
+        )
+        .await;
+        insert_transaction(
+            &db,
+            "expense-refund",
+            "acc",
+            "2026-06-04",
+            "Estorno",
+            20_000,
+            Some("test-expense"),
+        )
+        .await;
+        insert_transaction(
+            &db,
+            "contribution",
+            "acc",
+            "2026-06-05",
+            "Aporte",
+            -80_000,
+            Some("investments"),
+        )
+        .await;
+        insert_transaction(
+            &db,
+            "redemption",
+            "acc",
+            "2026-06-06",
+            "Resgate",
+            30_000,
+            Some("investments"),
+        )
+        .await;
+        insert_transaction(
+            &db,
+            "transfer-debit",
+            "acc",
+            "2026-06-07",
+            "Transferência",
+            -70_000,
+            Some("test-expense"),
+        )
+        .await;
+        insert_transaction(
+            &db,
+            "transfer-credit",
+            "acc",
+            "2026-06-07",
+            "Transferência",
+            70_000,
+            Some("salary"),
+        )
+        .await;
+        insert_transaction(
+            &db,
+            "payment-debit",
+            "acc",
+            "2026-06-08",
+            "Pagamento de cartão",
+            -40_000,
+            Some("test-expense"),
+        )
+        .await;
+        insert_transaction(
+            &db,
+            "payment-credit",
+            "acc",
+            "2026-06-08",
+            "Pagamento de cartão",
+            40_000,
+            Some("salary"),
+        )
+        .await;
+        sqlx::query(
+            "INSERT INTO transaction_links(id,kind,debit_transaction_id,credit_transaction_id)
+             VALUES('transfer-link','transfer','transfer-debit','transfer-credit'),
+                   ('payment-link','credit_card_payment','payment-debit','payment-credit')",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+
+        let report = generate_financial_report_impl(
+            ReportFilter {
+                start_month: "2026-06".into(),
+                end_month: "2026-06".into(),
+                source: "all".into(),
+                account_id: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(report.summary.income_in_cents, 450_000);
+        assert_eq!(report.summary.expenses_in_cents, 80_000);
+        assert_eq!(report.summary.investments_in_cents, 50_000);
+        assert_eq!(report.summary.savings_in_cents, 370_000);
+        assert_eq!(report.latest_month_summary.income_in_cents, 450_000);
+        assert!(report
+            .kind_breakdown
+            .iter()
+            .flat_map(|kind| &kind.categories)
+            .all(|category| category.share_percent <= 100.0));
+    }
+
+    #[tokio::test]
+    async fn refund_denominators_keep_visible_shares_at_or_below_one_hundred_percent() {
+        let (_directory, db, _account_id) = setup().await;
+        sqlx::query("INSERT INTO accounts(id,name,kind) VALUES('card','Cartão','credit_card')")
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO categories(id,name,kind) VALUES
+               ('expense-a','Despesa A','expense'),
+               ('expense-b','Despesa B','expense')",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        insert_transaction(
+            &db,
+            "bank-expense",
+            "acc",
+            "2026-06-01",
+            "Despesa",
+            -10_000,
+            Some("expense-a"),
+        )
+        .await;
+        insert_transaction(
+            &db,
+            "card-refund",
+            "card",
+            "2026-06-02",
+            "Estorno",
+            9_000,
+            Some("expense-b"),
+        )
+        .await;
+
+        let report = generate_financial_report_impl(
+            ReportFilter {
+                start_month: "2026-06".into(),
+                end_month: "2026-06".into(),
+                source: "all".into(),
+                account_id: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(report.summary.expenses_in_cents, 1_000);
+        assert!(report
+            .categories
+            .iter()
+            .all(|category| category.share_percent <= 100.0));
+        assert!(report
+            .sources
+            .iter()
+            .all(|source| source.share_percent <= 100.0));
+        assert!(report.card_share_percent <= 100.0);
+    }
+
+    #[tokio::test]
+    async fn goals_are_global_even_when_report_is_filtered_to_one_account() {
+        let (_directory, db, _account_id) = setup().await;
+        sqlx::query("INSERT INTO accounts(id,name,kind) VALUES('other','Outra conta','checking')")
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO categories(id,name,kind) VALUES('goal-expense','Meta','expense')")
+            .execute(&db)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO financial_targets(id,kind,category_id,amount_cents,enabled) VALUES
+               ('goal-savings-global','savings',NULL,100000,1),
+               ('goal-category-global','category','goal-expense',100000,1)",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        insert_transaction(
+            &db,
+            "income-a",
+            "acc",
+            "2026-06-01",
+            "Renda A",
+            10_000,
+            None,
+        )
+        .await;
+        insert_transaction(
+            &db,
+            "expense-a",
+            "acc",
+            "2026-06-02",
+            "Despesa A",
+            -2_000,
+            Some("goal-expense"),
+        )
+        .await;
+        insert_transaction(
+            &db,
+            "income-b",
+            "other",
+            "2026-06-01",
+            "Renda B",
+            20_000,
+            None,
+        )
+        .await;
+        insert_transaction(
+            &db,
+            "expense-b",
+            "other",
+            "2026-06-02",
+            "Despesa B",
+            -5_000,
+            Some("goal-expense"),
+        )
+        .await;
+
+        let report = generate_financial_report_impl(
+            ReportFilter {
+                start_month: "2026-06".into(),
+                end_month: "2026-06".into(),
+                source: "bank".into(),
+                account_id: Some("acc".into()),
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(report.latest_month_summary.savings_in_cents, 8_000);
+        let savings = report
+            .goals
+            .iter()
+            .find(|goal| goal.kind == "savings")
+            .unwrap();
+        let category = report
+            .goals
+            .iter()
+            .find(|goal| goal.kind == "category")
+            .unwrap();
+        assert_eq!(savings.actual_in_cents, 23_000);
+        assert_eq!(category.actual_in_cents, 7_000);
+    }
+
+    #[tokio::test]
+    async fn category_goal_can_include_nested_subcategories() {
+        let (_directory, db, _account_id) = setup().await;
+        sqlx::query(
+            "INSERT INTO categories(id,parent_id,name,kind) VALUES
+             ('goal-family',NULL,'Casa','expense'),
+             ('goal-child','goal-family','Contas','expense'),
+             ('goal-grandchild','goal-child','Energia','expense')",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO financial_targets(
+               id,kind,category_id,amount_cents,enabled,include_descendants
+             ) VALUES('goal-family-target','category','goal-family',100000,1,1)",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        insert_transaction(
+            &db,
+            "goal-parent-expense",
+            "acc",
+            "2026-06-01",
+            "Casa",
+            -10_000,
+            Some("goal-family"),
+        )
+        .await;
+        insert_transaction(
+            &db,
+            "goal-child-expense",
+            "acc",
+            "2026-06-02",
+            "Conta",
+            -20_000,
+            Some("goal-child"),
+        )
+        .await;
+        insert_transaction(
+            &db,
+            "goal-grandchild-expense",
+            "acc",
+            "2026-06-03",
+            "Energia",
+            -30_000,
+            Some("goal-grandchild"),
+        )
+        .await;
+
+        let report = generate_financial_report_impl(
+            ReportFilter {
+                start_month: "2026-06".into(),
+                end_month: "2026-06".into(),
+                source: "all".into(),
+                account_id: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+
+        let goal = report
+            .goals
+            .iter()
+            .find(|goal| goal.target_id == "goal-family-target")
+            .unwrap();
+        assert_eq!(goal.actual_in_cents, 60_000);
     }
 
     #[tokio::test]

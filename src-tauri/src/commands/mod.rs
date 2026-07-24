@@ -24,12 +24,23 @@ mod budget;
 pub use budget::*;
 mod export;
 pub use export::*;
+mod reconciliation;
+pub use reconciliation::*;
+mod category_management;
+pub use category_management::*;
+mod data_quality;
+pub use data_quality::*;
+mod installments;
+pub use installments::*;
 
 use crate::{
     application::state::{AppState, ImportSession},
     domain::{
         categorization::{
             first_match, CategorizationInput, CategorizationRule, MovementType, RuleOperator,
+        },
+        category_compatibility::{
+            is_category_compatible, is_rule_category_compatible, CategoryContext, CategoryKind,
         },
         import::{
             fingerprint, is_own_account_pix_description, is_pix_description, mapping_signature,
@@ -73,6 +84,18 @@ pub struct TransactionInput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransferInput {
+    from_account_id: String,
+    to_account_id: String,
+    date: String,
+    amount_in_cents: i64,
+    description: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferDetails {
+    debit_transaction_id: String,
+    credit_transaction_id: String,
     from_account_id: String,
     to_account_id: String,
     date: String,
@@ -145,6 +168,7 @@ pub struct Transaction {
     category_source: Option<String>,
     status: String,
     is_transfer_leg: bool,
+    linked_kind: Option<String>,
 }
 
 /// Optional server-side filters + pagination for `list_transactions_page`.
@@ -370,7 +394,7 @@ async fn load_all_historical_category_stats(
          COUNT(*) n, MAX(t.date) last_used
          FROM transactions t JOIN categories c ON c.id=t.category_id
          WHERE t.merchant_key IS NOT NULL AND t.deleted_at IS NULL AND c.deleted_at IS NULL
-         AND t.category_source IN ('manual','rule')
+          AND t.category_source='manual'
          GROUP BY t.merchant_key, t.category_id",
     )
     .fetch_all(db)
@@ -711,9 +735,55 @@ fn profile_from_row(row: SqliteRow) -> UserProfile {
     }
 }
 
+async fn sync_profile_savings_target(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    amount_in_cents: Option<i64>,
+) -> Result<(), AppError> {
+    match amount_in_cents {
+        Some(amount) => {
+            let updated = sqlx::query(
+                "UPDATE financial_targets
+                 SET amount_cents=?,enabled=1,deleted_at=NULL,updated_at=datetime('now')
+                 WHERE is_profile_target=1",
+            )
+            .bind(amount)
+            .execute(&mut **tx)
+            .await?;
+            if updated.rows_affected() == 0 {
+                sqlx::query(
+                    "INSERT INTO financial_targets(
+                       id,kind,category_id,amount_cents,enabled,is_profile_target
+                     ) VALUES('profile-monthly-savings','savings',NULL,?,1,1)
+                     ON CONFLICT(id) DO UPDATE SET amount_cents=excluded.amount_cents,
+                     enabled=1,is_profile_target=1,deleted_at=NULL,updated_at=datetime('now')",
+                )
+                .bind(amount)
+                .execute(&mut **tx)
+                .await?;
+            }
+        }
+        None => {
+            sqlx::query(
+                "UPDATE financial_targets
+                 SET enabled=0,is_profile_target=0,deleted_at=COALESCE(deleted_at,datetime('now')),
+                 updated_at=datetime('now')
+                 WHERE is_profile_target=1",
+            )
+            .execute(&mut **tx)
+            .await?;
+        }
+    }
+    Ok(())
+}
+
 async fn load_profile(db: &SqlitePool) -> Result<Option<UserProfile>, AppError> {
     Ok(sqlx::query(
-        "SELECT display_name,monthly_income_cents,monthly_target_cents,income_day,income_day_rule,
+        "SELECT display_name,monthly_income_cents,
+         COALESCE((
+           SELECT amount_cents FROM financial_targets
+           WHERE is_profile_target=1 AND enabled=1 AND deleted_at IS NULL LIMIT 1
+         ),monthly_target_cents) monthly_target_cents,
+         income_day,income_day_rule,
          financial_goal,onboarding_start_mode,onboarding_completed_at
          FROM user_profiles WHERE id='primary'",
     )
@@ -780,6 +850,7 @@ pub async fn save_profile(
         input.financial_goal.as_deref(),
     )?;
     validate_monthly_target(input.monthly_target_in_cents)?;
+    let mut tx = state.db.begin().await?;
     let result = sqlx::query(
         "UPDATE user_profiles SET display_name=?,monthly_income_cents=?,monthly_target_cents=?,
          income_day=?,income_day_rule=?,financial_goal=?,updated_at=datetime('now') WHERE id='primary'",
@@ -790,13 +861,15 @@ pub async fn save_profile(
     .bind(input.income_day)
     .bind(input.income_day_rule)
     .bind(input.financial_goal)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
     if result.rows_affected() == 0 {
         return Err(AppError::Validation(
             "Conclua o cadastro inicial antes de editar o perfil".into(),
         ));
     }
+    sync_profile_savings_target(&mut tx, input.monthly_target_in_cents).await?;
+    tx.commit().await?;
     load_profile(&state.db)
         .await?
         .ok_or_else(|| AppError::Validation("Perfil não encontrado".into()))
@@ -849,6 +922,7 @@ async fn complete_onboarding_impl(
     .bind(input.onboarding_start_mode)
     .execute(&mut *tx)
     .await?;
+    sync_profile_savings_target(&mut tx, input.monthly_target_in_cents).await?;
     tx.commit().await?;
     let profile = load_profile(db)
         .await?
@@ -1044,7 +1118,10 @@ async fn query_transactions_page(
          EXISTS(
             SELECT 1 FROM transaction_links l
             WHERE l.debit_transaction_id=t.id OR l.credit_transaction_id=t.id
-         ) is_transfer_leg
+         ) is_transfer_leg,
+         (SELECT l.kind FROM transaction_links l
+          WHERE l.debit_transaction_id=t.id OR l.credit_transaction_id=t.id
+          LIMIT 1) linked_kind
          FROM transactions t JOIN accounts a ON a.id=t.account_id
          LEFT JOIN categories c ON c.id=t.category_id
          WHERE {TRANSACTION_FILTER_WHERE}
@@ -1071,6 +1148,7 @@ async fn query_transactions_page(
             category_source: r.get("category_source"),
             status: r.get("status"),
             is_transfer_leg: r.get::<i64, _>("is_transfer_leg") != 0,
+            linked_kind: r.get("linked_kind"),
         })
         .collect();
     Ok(TransactionPage { items, total_count })
@@ -1200,6 +1278,19 @@ pub async fn save_category(
 
 #[tauri::command]
 pub async fn archive_category(id: String, state: State<'_, AppState>) -> Result<(), AppError> {
+    let is_system = sqlx::query_scalar::<_, i64>(
+        "SELECT is_system FROM categories WHERE id=? AND deleted_at IS NULL",
+    )
+    .bind(&id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::Validation("Categoria não encontrada".into()))?
+        != 0;
+    if is_system {
+        return Err(AppError::Validation(
+            "Categorias essenciais do Lumen não podem ser arquivadas".into(),
+        ));
+    }
     let used_by_transactions = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM transactions WHERE category_id=? AND deleted_at IS NULL",
     )
@@ -1214,9 +1305,31 @@ pub async fn archive_category(id: String, state: State<'_, AppState>) -> Result<
     .fetch_one(&state.db)
     .await?
         > 0;
-    if used_by_transactions || used_by_rules {
+    let used_by_recurring = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM recurring_transactions WHERE category_id=? AND deleted_at IS NULL",
+    )
+    .bind(&id)
+    .fetch_one(&state.db)
+    .await?
+        > 0;
+    let used_by_targets = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM financial_targets WHERE category_id=? AND deleted_at IS NULL",
+    )
+    .bind(&id)
+    .fetch_one(&state.db)
+    .await?
+        > 0;
+    let has_children = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM categories WHERE parent_id=? AND deleted_at IS NULL",
+    )
+    .bind(&id)
+    .fetch_one(&state.db)
+    .await?
+        > 0;
+    if used_by_transactions || used_by_rules || used_by_recurring || used_by_targets || has_children
+    {
         return Err(AppError::Validation(
-            "A categoria está em uso; recategorize as transações antes de arquivá-la".into(),
+            "A categoria está em uso; una-a a outra categoria para preservar os vínculos".into(),
         ));
     }
     sqlx::query("UPDATE categories SET deleted_at=datetime('now') WHERE id=?")
@@ -1234,6 +1347,26 @@ pub async fn list_rules(state: State<'_, AppState>) -> Result<Vec<Categorization
 #[tauri::command]
 pub async fn save_rule(input: RuleInput, state: State<'_, AppState>) -> Result<String, AppError> {
     validate_rule(&input)?;
+    let category_kind = sqlx::query_scalar::<_, String>(
+        "SELECT kind FROM categories WHERE id=? AND deleted_at IS NULL",
+    )
+    .bind(&input.category_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::Validation("Categoria não encontrada".into()))?;
+    let category_kind = CategoryKind::from_str(&category_kind)
+        .ok_or_else(|| AppError::Validation("Tipo de categoria inválido".into()))?;
+    let configured_context = match input.movement_type {
+        MovementType::Any => None,
+        MovementType::Income => Some(CategoryContext::Income),
+        MovementType::Expense => Some(CategoryContext::Expense),
+        MovementType::Transfer => Some(CategoryContext::Transfer),
+    };
+    if configured_context.is_some_and(|context| !is_category_compatible(category_kind, context)) {
+        return Err(AppError::Validation(
+            "A categoria não é compatível com o tipo de movimento da regra".into(),
+        ));
+    }
     let id = input.id.unwrap_or_else(|| Uuid::new_v4().to_string());
     sqlx::query(
         "INSERT INTO categorization_rules(id,name,priority,enabled,operator,pattern,account_id,movement_type,min_amount_cents,max_amount_cents,category_id)
@@ -1279,9 +1412,12 @@ async fn calculate_impact(
     rule: &CategorizationRule,
     overwrite_manual: bool,
 ) -> Result<RuleImpact, AppError> {
+    let category_kinds = load_active_category_kinds(db).await?;
     let rows = sqlx::query(
-        "SELECT t.id,t.account_id,t.date,t.description,t.normalized_description,t.amount_cents,t.category_source,c.name current_category
-         FROM transactions t LEFT JOIN categories c ON c.id=t.category_id
+        "SELECT t.id,t.account_id,t.date,t.description,t.normalized_description,t.amount_cents,
+                t.category_source,c.name current_category,a.kind account_kind
+         FROM transactions t JOIN accounts a ON a.id=t.account_id
+         LEFT JOIN categories c ON c.id=t.category_id
          WHERE t.deleted_at IS NULL
            AND NOT EXISTS (SELECT 1 FROM transaction_links l WHERE l.debit_transaction_id=t.id OR l.credit_transaction_id=t.id)"
     ).fetch_all(db).await?;
@@ -1295,14 +1431,18 @@ async fn calculate_impact(
         }
         let account_id: String = row.get("account_id");
         let description: String = row.get("normalized_description");
-        if crate::domain::categorization::matches_rule(
-            rule,
-            &CategorizationInput {
-                account_id: &account_id,
-                normalized_description: &description,
-                amount_in_cents: row.get("amount_cents"),
-            },
-        ) {
+        let amount_in_cents: i64 = row.get("amount_cents");
+        let account_kind: String = row.get("account_kind");
+        if rule_is_compatible(rule, &category_kinds, &account_kind, amount_in_cents)
+            && crate::domain::categorization::matches_rule(
+                rule,
+                &CategorizationInput {
+                    account_id: &account_id,
+                    normalized_description: &description,
+                    amount_in_cents,
+                },
+            )
+        {
             count += 1;
             if sample.len() < 10 {
                 sample.push(RuleImpactItem {
@@ -1360,10 +1500,12 @@ pub async fn preview_rules_retroactive(
     state: State<'_, AppState>,
 ) -> Result<RuleImpact, AppError> {
     let rules = load_rules(&state.db).await?;
+    let category_kinds = load_active_category_kinds(&state.db).await?;
     let rows = sqlx::query(
         "SELECT t.id,t.account_id,t.date,t.description,t.normalized_description,t.amount_cents,
-         t.category_source,c.name current_category
-         FROM transactions t LEFT JOIN categories c ON c.id=t.category_id
+         t.category_source,c.name current_category,a.kind account_kind
+         FROM transactions t JOIN accounts a ON a.id=t.account_id
+         LEFT JOIN categories c ON c.id=t.category_id
          WHERE t.deleted_at IS NULL
            AND NOT EXISTS (SELECT 1 FROM transaction_links l WHERE l.debit_transaction_id=t.id OR l.credit_transaction_id=t.id)"
     ).fetch_all(&state.db).await?;
@@ -1377,14 +1519,18 @@ pub async fn preview_rules_retroactive(
         }
         let account_id: String = row.get("account_id");
         let description: String = row.get("normalized_description");
+        let amount_in_cents: i64 = row.get("amount_cents");
+        let account_kind: String = row.get("account_kind");
         if let Some(rule) = first_match(
             &rules,
             &CategorizationInput {
                 account_id: &account_id,
                 normalized_description: &description,
-                amount_in_cents: row.get("amount_cents"),
+                amount_in_cents,
             },
-        ) {
+        )
+        .filter(|rule| rule_is_compatible(rule, &category_kinds, &account_kind, amount_in_cents))
+        {
             count += 1;
             if sample.len() < 10 {
                 sample.push(RuleImpactItem {
@@ -1416,7 +1562,8 @@ async fn apply_rules_retroactive_impl(
     db: &SqlitePool,
 ) -> Result<usize, AppError> {
     let rules = load_rules(db).await?;
-    let rows = sqlx::query("SELECT t.id,t.account_id,t.normalized_description,t.amount_cents,t.category_source FROM transactions t WHERE t.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM transaction_links l WHERE l.debit_transaction_id=t.id OR l.credit_transaction_id=t.id)").fetch_all(db).await?;
+    let category_kinds = load_active_category_kinds(db).await?;
+    let rows = sqlx::query("SELECT t.id,t.account_id,t.normalized_description,t.amount_cents,t.category_source,a.kind account_kind FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM transaction_links l WHERE l.debit_transaction_id=t.id OR l.credit_transaction_id=t.id)").fetch_all(db).await?;
     let mut tx = db.begin().await?;
     let mut count = 0;
     let mut rule_hits: HashMap<String, i64> = HashMap::new();
@@ -1428,14 +1575,18 @@ async fn apply_rules_retroactive_impl(
         }
         let account_id: String = row.get("account_id");
         let description: String = row.get("normalized_description");
+        let amount_in_cents: i64 = row.get("amount_cents");
+        let account_kind: String = row.get("account_kind");
         if let Some(rule) = first_match(
             &rules,
             &CategorizationInput {
                 account_id: &account_id,
                 normalized_description: &description,
-                amount_in_cents: row.get("amount_cents"),
+                amount_in_cents,
             },
-        ) {
+        )
+        .filter(|rule| rule_is_compatible(rule, &category_kinds, &account_kind, amount_in_cents))
+        {
             let transaction_id: String = row.get("id");
             let updated = sqlx::query(
                 "UPDATE transactions SET category_id=?,category_source='rule',categorization_rule_id=?
@@ -1499,21 +1650,91 @@ async fn ensure_account_active(db: &SqlitePool, account_id: &str) -> Result<(), 
     Ok(())
 }
 
-async fn ensure_category_active(
+fn transaction_category_context(account_kind: &str, amount_in_cents: i64) -> CategoryContext {
+    if account_kind == "credit_card" {
+        if amount_in_cents > 0 {
+            CategoryContext::CreditCardRefund
+        } else {
+            CategoryContext::CreditCardCharge
+        }
+    } else if amount_in_cents > 0 {
+        CategoryContext::Income
+    } else {
+        CategoryContext::Expense
+    }
+}
+
+fn rule_context(value: &MovementType) -> CategoryContext {
+    match value {
+        MovementType::Any => CategoryContext::RuleAny,
+        MovementType::Income => CategoryContext::Income,
+        MovementType::Expense => CategoryContext::Expense,
+        MovementType::Transfer => CategoryContext::Transfer,
+    }
+}
+
+async fn load_active_category_kinds(
+    db: &SqlitePool,
+) -> Result<HashMap<String, CategoryKind>, AppError> {
+    sqlx::query("SELECT id,kind FROM categories WHERE deleted_at IS NULL")
+        .fetch_all(db)
+        .await?
+        .into_iter()
+        .map(|row| {
+            let id: String = row.get("id");
+            let kind: String = row.get("kind");
+            CategoryKind::from_str(&kind)
+                .map(|kind| (id, kind))
+                .ok_or_else(|| AppError::Validation("Tipo de categoria inválido".into()))
+        })
+        .collect()
+}
+
+fn rule_is_compatible(
+    rule: &CategorizationRule,
+    category_kinds: &HashMap<String, CategoryKind>,
+    account_kind: &str,
+    amount_in_cents: i64,
+) -> bool {
+    category_kinds.get(&rule.category_id).is_some_and(|kind| {
+        is_rule_category_compatible(
+            *kind,
+            rule_context(&rule.movement_type),
+            transaction_category_context(account_kind, amount_in_cents),
+        )
+    })
+}
+
+async fn ensure_transaction_category_compatible(
     db: &SqlitePool,
     category_id: &Option<String>,
+    account_id: &str,
+    amount_in_cents: i64,
 ) -> Result<(), AppError> {
-    if let Some(id) = category_id {
-        let exists = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM categories WHERE id=? AND deleted_at IS NULL",
-        )
-        .bind(id)
-        .fetch_one(db)
-        .await?
-            > 0;
-        if !exists {
-            return Err(AppError::Validation("Categoria não encontrada".into()));
-        }
+    let Some(category_id) = category_id else {
+        return Ok(());
+    };
+    let row = sqlx::query(
+        "SELECT c.kind category_kind,a.kind account_kind
+         FROM categories c CROSS JOIN accounts a
+         WHERE c.id=? AND c.deleted_at IS NULL AND a.id=? AND a.deleted_at IS NULL",
+    )
+    .bind(category_id)
+    .bind(account_id)
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(|| AppError::Validation("Conta ou categoria não encontrada".into()))?;
+    let kind: String = row.get("category_kind");
+    let kind = CategoryKind::from_str(&kind)
+        .ok_or_else(|| AppError::Validation("Tipo de categoria inválido".into()))?;
+    let account_kind: String = row.get("account_kind");
+    if !is_category_compatible(
+        kind,
+        transaction_category_context(&account_kind, amount_in_cents),
+    ) {
+        return Err(AppError::Validation(
+            "A categoria não é compatível com este lançamento".into(),
+        ));
     }
     Ok(())
 }
@@ -1564,7 +1785,13 @@ async fn create_transaction_impl(
 ) -> Result<String, AppError> {
     validate_transaction_input(&input)?;
     ensure_account_active(db, &input.account_id).await?;
-    ensure_category_active(db, &input.category_id).await?;
+    ensure_transaction_category_compatible(
+        db,
+        &input.category_id,
+        &input.account_id,
+        input.amount_in_cents,
+    )
+    .await?;
     let description = input.description.trim().to_string();
     let normalized = normalize_description(&description);
     let merchant = merchant_key(&normalized);
@@ -1708,6 +1935,355 @@ async fn create_transfer_impl(
     Ok(ids)
 }
 
+fn transfer_descriptions(
+    custom_description: Option<&str>,
+    from_name: &str,
+    to_name: &str,
+) -> Result<(String, String), AppError> {
+    let custom = custom_description
+        .map(str::trim)
+        .filter(|description| !description.is_empty());
+    if custom.is_some_and(|description| description.chars().count() > 180) {
+        return Err(AppError::Validation(
+            "A descrição deve ter no máximo 180 caracteres".into(),
+        ));
+    }
+    Ok((
+        custom
+            .map(|description| format!("{description} (para {to_name})"))
+            .unwrap_or_else(|| format!("Transferência para {to_name}")),
+        custom
+            .map(|description| format!("{description} (de {from_name})"))
+            .unwrap_or_else(|| format!("Transferência de {from_name}")),
+    ))
+}
+
+#[tauri::command]
+pub async fn get_transfer_details(
+    transaction_id: String,
+    state: State<'_, AppState>,
+) -> Result<TransferDetails, AppError> {
+    get_transfer_details_impl(&transaction_id, &state.db).await
+}
+
+async fn get_transfer_details_impl(
+    transaction_id: &str,
+    db: &SqlitePool,
+) -> Result<TransferDetails, AppError> {
+    let row = sqlx::query(
+        "SELECT l.debit_transaction_id,l.credit_transaction_id,
+                debit.account_id from_account_id,credit.account_id to_account_id,
+                debit.date,debit.amount_cents,debit.description,
+                destination.name to_account_name
+         FROM transaction_links l
+         JOIN transactions debit ON debit.id=l.debit_transaction_id
+         JOIN transactions credit ON credit.id=l.credit_transaction_id
+         JOIN accounts destination ON destination.id=credit.account_id
+         WHERE l.kind='transfer'
+           AND (l.debit_transaction_id=? OR l.credit_transaction_id=?)",
+    )
+    .bind(transaction_id)
+    .bind(transaction_id)
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(|| AppError::Validation("Transferência não encontrada".into()))?;
+    let description: String = row.get("description");
+    let to_account_name: String = row.get("to_account_name");
+    let default_description = format!("Transferência para {to_account_name}");
+    let suffix = format!(" (para {to_account_name})");
+    let custom_description = if description == default_description {
+        None
+    } else {
+        description
+            .strip_suffix(&suffix)
+            .map(str::to_string)
+            .or(Some(description))
+    };
+    let debit_amount: i64 = row.get("amount_cents");
+    let amount_in_cents = debit_amount.checked_abs().ok_or_else(|| {
+        AppError::Validation("O valor armazenado para esta transferência é inválido".into())
+    })?;
+    Ok(TransferDetails {
+        debit_transaction_id: row.get("debit_transaction_id"),
+        credit_transaction_id: row.get("credit_transaction_id"),
+        from_account_id: row.get("from_account_id"),
+        to_account_id: row.get("to_account_id"),
+        date: row.get("date"),
+        amount_in_cents,
+        description: custom_description,
+    })
+}
+
+#[tauri::command]
+pub async fn update_transfer(
+    transaction_id: String,
+    input: TransferInput,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    update_transfer_impl(&transaction_id, input, &state.db).await
+}
+
+async fn update_transfer_impl(
+    transaction_id: &str,
+    input: TransferInput,
+    db: &SqlitePool,
+) -> Result<(), AppError> {
+    if input.amount_in_cents <= 0 {
+        return Err(AppError::Validation(
+            "O valor da transferência deve ser maior que zero".into(),
+        ));
+    }
+    if input.from_account_id == input.to_account_id {
+        return Err(AppError::Validation(
+            "Escolha contas diferentes para origem e destino".into(),
+        ));
+    }
+    let date = input.date.trim().to_string();
+    chrono::NaiveDate::parse_from_str(&date, "%Y-%m-%d")
+        .map_err(|_| AppError::Validation("Data inválida".into()))?;
+
+    let mut tx = db.begin().await?;
+    let link = sqlx::query(
+        "SELECT debit_transaction_id,credit_transaction_id
+         FROM transaction_links
+         WHERE kind='transfer' AND (debit_transaction_id=? OR credit_transaction_id=?)",
+    )
+    .bind(transaction_id)
+    .bind(transaction_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::Validation("Transferência não encontrada".into()))?;
+    let debit_id: String = link.get("debit_transaction_id");
+    let credit_id: String = link.get("credit_transaction_id");
+    let from_name = sqlx::query_scalar::<_, String>(
+        "SELECT name FROM accounts WHERE id=? AND deleted_at IS NULL",
+    )
+    .bind(&input.from_account_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::Validation("Conta de origem não encontrada ou arquivada".into()))?;
+    let to_name = sqlx::query_scalar::<_, String>(
+        "SELECT name FROM accounts WHERE id=? AND deleted_at IS NULL",
+    )
+    .bind(&input.to_account_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::Validation("Conta de destino não encontrada ou arquivada".into()))?;
+    let (out_description, in_description) =
+        transfer_descriptions(input.description.as_deref(), &from_name, &to_name)?;
+    let legs = [
+        (
+            debit_id.as_str(),
+            input.from_account_id.as_str(),
+            out_description,
+            -input.amount_in_cents,
+        ),
+        (
+            credit_id.as_str(),
+            input.to_account_id.as_str(),
+            in_description,
+            input.amount_in_cents,
+        ),
+    ];
+    let mut updates = Vec::with_capacity(2);
+    for (id, account_id, description, amount) in legs {
+        let normalized = normalize_description(&description);
+        let merchant = merchant_key(&normalized);
+        let fp = manual_fingerprint(account_id, &date, &description, &normalized, amount);
+        let collides = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM transactions
+             WHERE fingerprint=? AND id NOT IN (?,?) AND deleted_at IS NULL",
+        )
+        .bind(&fp)
+        .bind(&debit_id)
+        .bind(&credit_id)
+        .fetch_one(&mut *tx)
+        .await?
+            > 0;
+        if collides {
+            return Err(AppError::Validation(
+                "Já existe uma transferência idêntica (mesmas contas, data e valor)".into(),
+            ));
+        }
+        updates.push((
+            id.to_string(),
+            account_id.to_string(),
+            description,
+            normalized,
+            merchant,
+            amount,
+            fp,
+        ));
+    }
+    for (id, account_id, description, normalized, merchant, amount, fp) in updates {
+        let affected = sqlx::query(
+            "UPDATE transactions
+             SET account_id=?,date=?,description=?,normalized_description=?,merchant_key=?,
+                 amount_cents=?,fingerprint=?,category_id=?,category_source='manual',
+                 categorization_rule_id=NULL
+             WHERE id=? AND deleted_at IS NULL",
+        )
+        .bind(account_id)
+        .bind(&date)
+        .bind(description)
+        .bind(normalized)
+        .bind(merchant)
+        .bind(amount)
+        .bind(fp)
+        .bind(TRANSFER_CATEGORY_ID)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+        if affected != 1 {
+            return Err(AppError::Validation(
+                "Não é possível editar uma transferência que está na lixeira".into(),
+            ));
+        }
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn unlink_transfer(
+    transaction_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    unlink_transfer_impl(&transaction_id, &state.db).await
+}
+
+async fn unlink_transfer_impl(transaction_id: &str, db: &SqlitePool) -> Result<(), AppError> {
+    let mut tx = db.begin().await?;
+    let link = sqlx::query(
+        "SELECT id,debit_transaction_id,credit_transaction_id,
+                previous_category_id,previous_category_source,previous_rule_id,
+                previous_credit_category_id,previous_credit_category_source,previous_credit_rule_id
+         FROM transaction_links
+         WHERE kind='transfer' AND (debit_transaction_id=? OR credit_transaction_id=?)",
+    )
+    .bind(transaction_id)
+    .bind(transaction_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::Validation("Transferência não encontrada".into()))?;
+    let link_id: String = link.get("id");
+    let debit_id: String = link.get("debit_transaction_id");
+    let credit_id: String = link.get("credit_transaction_id");
+    sqlx::query(
+        "UPDATE transactions
+         SET category_id=?,category_source=?,categorization_rule_id=?
+         WHERE id=?",
+    )
+    .bind(link.get::<Option<String>, _>("previous_category_id"))
+    .bind(link.get::<Option<String>, _>("previous_category_source"))
+    .bind(link.get::<Option<String>, _>("previous_rule_id"))
+    .bind(debit_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "UPDATE transactions
+         SET category_id=?,category_source=?,categorization_rule_id=?
+         WHERE id=?",
+    )
+    .bind(link.get::<Option<String>, _>("previous_credit_category_id"))
+    .bind(link.get::<Option<String>, _>("previous_credit_category_source"))
+    .bind(link.get::<Option<String>, _>("previous_credit_rule_id"))
+    .bind(credit_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("DELETE FROM transaction_links WHERE id=?")
+        .bind(link_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_transfer_deleted(
+    transaction_id: String,
+    deleted: bool,
+    state: State<'_, AppState>,
+) -> Result<usize, AppError> {
+    set_transfer_deleted_impl(&transaction_id, deleted, &state.db).await
+}
+
+async fn set_transfer_deleted_impl(
+    transaction_id: &str,
+    deleted: bool,
+    db: &SqlitePool,
+) -> Result<usize, AppError> {
+    let mut tx = db.begin().await?;
+    let link = sqlx::query(
+        "SELECT debit_transaction_id,credit_transaction_id
+         FROM transaction_links
+         WHERE kind='transfer' AND (debit_transaction_id=? OR credit_transaction_id=?)",
+    )
+    .bind(transaction_id)
+    .bind(transaction_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::Validation("Transferência não encontrada".into()))?;
+    let debit_id: String = link.get("debit_transaction_id");
+    let credit_id: String = link.get("credit_transaction_id");
+    if !deleted {
+        for id in [&debit_id, &credit_id] {
+            let row = sqlx::query(
+                "SELECT t.fingerprint,a.deleted_at account_deleted_at
+                 FROM transactions t JOIN accounts a ON a.id=t.account_id
+                 WHERE t.id=?",
+            )
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| AppError::Validation("Perna da transferência não encontrada".into()))?;
+            if row.get::<Option<String>, _>("account_deleted_at").is_some() {
+                return Err(AppError::Validation(
+                    "Restaure as contas da transferência antes de restaurá-la".into(),
+                ));
+            }
+            let fp: String = row.get("fingerprint");
+            let collides = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM transactions
+                 WHERE fingerprint=? AND id NOT IN (?,?) AND deleted_at IS NULL",
+            )
+            .bind(fp)
+            .bind(&debit_id)
+            .bind(&credit_id)
+            .fetch_one(&mut *tx)
+            .await?
+                > 0;
+            if collides {
+                return Err(AppError::Validation(
+                    "Não é possível restaurar: já existe uma transação idêntica ativa".into(),
+                ));
+            }
+        }
+    }
+    let result = if deleted {
+        sqlx::query(
+            "UPDATE transactions SET deleted_at=datetime('now')
+             WHERE id IN (?,?) AND deleted_at IS NULL",
+        )
+        .bind(&debit_id)
+        .bind(&credit_id)
+        .execute(&mut *tx)
+        .await?
+    } else {
+        sqlx::query(
+            "UPDATE transactions SET deleted_at=NULL
+             WHERE id IN (?,?) AND deleted_at IS NOT NULL",
+        )
+        .bind(&debit_id)
+        .bind(&credit_id)
+        .execute(&mut *tx)
+        .await?
+    };
+    tx.commit().await?;
+    Ok(result.rows_affected() as usize)
+}
+
 /// Candidate pair of transactions that look like an unlinked account-to-account transfer:
 /// opposite amounts, different (non-credit-card) accounts, dates within 3 days, and neither
 /// side already categorized outside the transfers bucket or linked to another transaction.
@@ -1806,7 +2382,8 @@ async fn link_transfer_pair_impl(
     .await?
     .ok_or_else(|| AppError::Validation("Transação de origem não encontrada".into()))?;
     let credit = sqlx::query(
-        "SELECT t.amount_cents,t.account_id FROM transactions t JOIN accounts a ON a.id=t.account_id
+        "SELECT t.amount_cents,t.account_id,t.category_id,t.category_source,t.categorization_rule_id
+         FROM transactions t JOIN accounts a ON a.id=t.account_id
          WHERE t.id=? AND t.deleted_at IS NULL AND a.kind!='credit_card'",
     )
     .bind(&credit_transaction_id)
@@ -1841,13 +2418,24 @@ async fn link_transfer_pair_impl(
         ));
     }
     sqlx::query(
-        "INSERT INTO transaction_links(id,kind,debit_transaction_id,credit_transaction_id,previous_category_id,previous_category_source,previous_rule_id)
-         VALUES(?,'transfer',?,?,?,?,?)"
-    ).bind(Uuid::new_v4().to_string()).bind(&debit_transaction_id).bind(&credit_transaction_id)
-        .bind(debit.get::<Option<String>,_>("category_id"))
-        .bind(debit.get::<Option<String>,_>("category_source"))
-        .bind(debit.get::<Option<String>,_>("categorization_rule_id"))
-        .execute(&mut *tx).await?;
+        "INSERT INTO transaction_links(
+             id,kind,debit_transaction_id,credit_transaction_id,
+             previous_category_id,previous_category_source,previous_rule_id,
+             previous_credit_category_id,previous_credit_category_source,previous_credit_rule_id
+         )
+         VALUES(?,'transfer',?,?,?,?,?,?,?,?)",
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(&debit_transaction_id)
+    .bind(&credit_transaction_id)
+    .bind(debit.get::<Option<String>, _>("category_id"))
+    .bind(debit.get::<Option<String>, _>("category_source"))
+    .bind(debit.get::<Option<String>, _>("categorization_rule_id"))
+    .bind(credit.get::<Option<String>, _>("category_id"))
+    .bind(credit.get::<Option<String>, _>("category_source"))
+    .bind(credit.get::<Option<String>, _>("categorization_rule_id"))
+    .execute(&mut *tx)
+    .await?;
     for transaction_id in [&debit_transaction_id, &credit_transaction_id] {
         sqlx::query(
             "UPDATE transactions SET category_id=?,category_source='manual',categorization_rule_id=NULL WHERE id=?",
@@ -1876,7 +2464,6 @@ async fn update_transaction_impl(input: TransactionInput, db: &SqlitePool) -> Re
         .ok_or_else(|| AppError::Validation("Transação inválida".into()))?;
     validate_transaction_input(&input)?;
     ensure_account_active(db, &input.account_id).await?;
-    ensure_category_active(db, &input.category_id).await?;
     let description = input.description.trim().to_string();
     let normalized = normalize_description(&description);
     let merchant = merchant_key(&normalized);
@@ -1914,6 +2501,14 @@ async fn update_transaction_impl(input: TransactionInput, db: &SqlitePool) -> Re
                 "Esta transação está vinculada; edite valor, data, conta ou categoria pelo fluxo correspondente".into(),
             ));
         }
+    } else {
+        ensure_transaction_category_compatible(
+            db,
+            &input.category_id,
+            &input.account_id,
+            input.amount_in_cents,
+        )
+        .await?;
     }
     let collides = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM transactions WHERE fingerprint=? AND id!=? AND deleted_at IS NULL",
@@ -1954,6 +2549,17 @@ async fn update_transaction_category_impl(
     category_id: Option<String>,
     db: &SqlitePool,
 ) -> Result<(), AppError> {
+    let transaction = sqlx::query(
+        "SELECT account_id,amount_cents FROM transactions
+         WHERE id=? AND deleted_at IS NULL",
+    )
+    .bind(&transaction_id)
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(|| AppError::Validation("Transação não encontrada".into()))?;
+    let account_id: String = transaction.get("account_id");
+    let amount_in_cents: i64 = transaction.get("amount_cents");
+    ensure_transaction_category_compatible(db, &category_id, &account_id, amount_in_cents).await?;
     let mut tx = db.begin().await?;
     ensure_transactions_unlinked(&mut tx, std::slice::from_ref(&transaction_id)).await?;
     sqlx::query("UPDATE transactions SET category_id=?,category_source='manual',categorization_rule_id=NULL WHERE id=? AND deleted_at IS NULL")
@@ -2053,17 +2659,19 @@ async fn bulk_update_transaction_category_impl(
     db: &SqlitePool,
 ) -> Result<usize, AppError> {
     let ids = normalize_transaction_ids(transaction_ids)?;
-    if let Some(id) = &category_id {
-        let exists = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM categories WHERE id=? AND deleted_at IS NULL",
+    for id in &ids {
+        let transaction = sqlx::query(
+            "SELECT account_id,amount_cents FROM transactions
+             WHERE id=? AND deleted_at IS NULL",
         )
         .bind(id)
-        .fetch_one(db)
+        .fetch_optional(db)
         .await?
-            > 0;
-        if !exists {
-            return Err(AppError::Validation("Categoria não encontrada".into()));
-        }
+        .ok_or_else(|| AppError::Validation("Transação não encontrada".into()))?;
+        let account_id: String = transaction.get("account_id");
+        let amount_in_cents: i64 = transaction.get("amount_cents");
+        ensure_transaction_category_compatible(db, &category_id, &account_id, amount_in_cents)
+            .await?;
     }
     let mut tx = db.begin().await?;
     ensure_transactions_unlinked(&mut tx, &ids).await?;
@@ -2470,15 +3078,16 @@ pub async fn set_import_candidate_category(
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
     let _commit_guard = state.import_commit.lock().await;
-    let category_name = if let Some(id) = &category_id {
-        sqlx::query_scalar::<_, String>(
-            "SELECT name FROM categories WHERE id=? AND deleted_at IS NULL",
+    let category = if let Some(id) = &category_id {
+        Some(
+            sqlx::query_as::<_, (String, String)>(
+                "SELECT name,kind FROM categories WHERE id=? AND deleted_at IS NULL",
+            )
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_else(|| AppError::Validation("Categoria não encontrada".into()))?,
         )
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| AppError::Validation("Categoria não encontrada".into()))?
-        .into()
     } else {
         None
     };
@@ -2491,8 +3100,16 @@ pub async fn set_import_candidate_category(
         .iter_mut()
         .find(|c| c.source_row == source_row)
         .ok_or_else(|| AppError::Validation("Lançamento não encontrado na sessão".into()))?;
+    if category
+        .as_ref()
+        .is_some_and(|(_, kind)| !explicit_bank_category_compatible(kind, candidate))
+    {
+        return Err(AppError::Validation(
+            "A categoria não é compatível com este lançamento".into(),
+        ));
+    }
     candidate.suggested_category_id = category_id;
-    candidate.suggested_category_name = category_name;
+    candidate.suggested_category_name = category.map(|(name, _)| name);
     candidate.suggested_rule_id = None;
     candidate.suggested_rule_name = None;
     candidate.suggestion_source = None;
@@ -2947,6 +3564,192 @@ mod tests {
         )
         .await
         .is_err());
+    }
+
+    #[tokio::test]
+    async fn transfer_update_unlink_delete_and_restore_keep_both_legs_consistent() {
+        let directory = tempfile::tempdir().unwrap();
+        let db =
+            crate::infrastructure::database::connect(&directory.path().join("transfer-edit.db"))
+                .await
+                .unwrap();
+        let checking = complete_onboarding_impl(onboarding_input(), &db)
+            .await
+            .unwrap()
+            .account_id;
+        let savings = "transfer-edit-savings".to_string();
+        sqlx::query("INSERT INTO accounts(id,name,kind) VALUES(?,?,'savings')")
+            .bind(&savings)
+            .bind("Reserva")
+            .execute(&db)
+            .await
+            .unwrap();
+
+        let ids = create_transfer_impl(
+            TransferInput {
+                from_account_id: checking.clone(),
+                to_account_id: savings.clone(),
+                date: "2026-06-10".into(),
+                amount_in_cents: 10_000,
+                description: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+        update_transfer_impl(
+            &ids[1],
+            TransferInput {
+                from_account_id: savings.clone(),
+                to_account_id: checking.clone(),
+                date: "2026-06-12".into(),
+                amount_in_cents: 12_345,
+                description: Some("Volta para uso".into()),
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+        let details = get_transfer_details_impl(&ids[0], &db).await.unwrap();
+        assert_eq!(details.from_account_id, savings);
+        assert_eq!(details.to_account_id, checking);
+        assert_eq!(details.date, "2026-06-12");
+        assert_eq!(details.amount_in_cents, 12_345);
+        assert_eq!(details.description.as_deref(), Some("Volta para uso"));
+        let legs: Vec<(String, i64, String)> = sqlx::query_as(
+            "SELECT account_id,amount_cents,date FROM transactions
+             WHERE id IN (?,?) ORDER BY amount_cents",
+        )
+        .bind(&ids[0])
+        .bind(&ids[1])
+        .fetch_all(&db)
+        .await
+        .unwrap();
+        assert_eq!(
+            legs,
+            vec![
+                ("transfer-edit-savings".into(), -12_345, "2026-06-12".into()),
+                (details.to_account_id, 12_345, "2026-06-12".into())
+            ]
+        );
+
+        assert_eq!(
+            set_transfer_deleted_impl(&ids[0], true, &db).await.unwrap(),
+            2
+        );
+        let active: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM transactions WHERE id IN (?,?) AND deleted_at IS NULL",
+        )
+        .bind(&ids[0])
+        .bind(&ids[1])
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(active, 0);
+        assert_eq!(
+            set_transfer_deleted_impl(&ids[1], false, &db)
+                .await
+                .unwrap(),
+            2
+        );
+
+        unlink_transfer_impl(&ids[0], &db).await.unwrap();
+        let restored: Vec<(Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT category_id,category_source,categorization_rule_id
+             FROM transactions WHERE id IN (?,?) ORDER BY id",
+        )
+        .bind(&ids[0])
+        .bind(&ids[1])
+        .fetch_all(&db)
+        .await
+        .unwrap();
+        assert_eq!(restored, vec![(None, None, None), (None, None, None)]);
+        let links: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM transaction_links
+             WHERE debit_transaction_id IN (?,?) OR credit_transaction_id IN (?,?)",
+        )
+        .bind(&ids[0])
+        .bind(&ids[1])
+        .bind(&ids[0])
+        .bind(&ids[1])
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(links, 0);
+    }
+
+    #[tokio::test]
+    async fn unlink_transfer_restores_categories_from_both_imported_legs() {
+        let directory = tempfile::tempdir().unwrap();
+        let db =
+            crate::infrastructure::database::connect(&directory.path().join("transfer-unlink.db"))
+                .await
+                .unwrap();
+        let checking = complete_onboarding_impl(onboarding_input(), &db)
+            .await
+            .unwrap()
+            .account_id;
+        let savings = "transfer-unlink-savings".to_string();
+        sqlx::query("INSERT INTO accounts(id,name,kind) VALUES(?,?,'savings')")
+            .bind(&savings)
+            .bind("Reserva")
+            .execute(&db)
+            .await
+            .unwrap();
+        let expense_category: String =
+            sqlx::query_scalar("SELECT id FROM categories WHERE kind='expense' LIMIT 1")
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        let income_category: String =
+            sqlx::query_scalar("SELECT id FROM categories WHERE kind='income' LIMIT 1")
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        let debit_id = create_transaction_impl(
+            TransactionInput {
+                id: None,
+                account_id: checking,
+                date: "2026-06-10".into(),
+                description: "Envio".into(),
+                amount_in_cents: -10_000,
+                category_id: Some(expense_category.clone()),
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+        let credit_id = create_transaction_impl(
+            TransactionInput {
+                id: None,
+                account_id: savings,
+                date: "2026-06-10".into(),
+                description: "Recebimento".into(),
+                amount_in_cents: 10_000,
+                category_id: Some(income_category.clone()),
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+        link_transfer_pair_impl(debit_id.clone(), credit_id.clone(), &db)
+            .await
+            .unwrap();
+        unlink_transfer_impl(&credit_id, &db).await.unwrap();
+        let debit: (Option<String>, Option<String>) =
+            sqlx::query_as("SELECT category_id,category_source FROM transactions WHERE id=?")
+                .bind(debit_id)
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        let credit: (Option<String>, Option<String>) =
+            sqlx::query_as("SELECT category_id,category_source FROM transactions WHERE id=?")
+                .bind(credit_id)
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(debit, (Some(expense_category), Some("manual".into())));
+        assert_eq!(credit, (Some(income_category), Some("manual".into())));
     }
 
     #[tokio::test]
@@ -3590,7 +4393,7 @@ mod tests {
             &db,
         )
         .await;
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "{result:?}");
         for input in [
             TransactionInput {
                 id: Some(payment_id.clone()),
@@ -3696,6 +4499,36 @@ mod tests {
                 .unwrap(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn any_rule_does_not_apply_an_incompatible_category() {
+        let (_directory, db, account_id) = suggestion_test_setup().await;
+        create_transaction_impl(
+            TransactionInput {
+                id: None,
+                account_id,
+                date: "2026-06-14".into(),
+                description: "BONUS usado como despesa".into(),
+                amount_in_cents: -1000,
+                category_id: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO categorization_rules(
+               id,name,priority,enabled,operator,pattern,movement_type,category_id
+             ) VALUES('any-income','Regra ampla',10,1,'contains','BONUS','any','income')",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+
+        let rule = load_rules(&db).await.unwrap().remove(0);
+        assert_eq!(calculate_impact(&db, &rule, true).await.unwrap().count, 0);
+        assert_eq!(apply_rules_retroactive_impl(true, &db).await.unwrap(), 0);
     }
 
     async fn suggestion_test_setup() -> (tempfile::TempDir, SqlitePool, String) {
@@ -3826,14 +4659,17 @@ mod tests {
         let mut second = candidate("SUPERMERCADO NOVO 02/02", -2000);
         second.source_row = 2;
         second.date = "2026-05-02".into();
+        let mut third = candidate("SUPERMERCADO NOVO 03/03", -3000);
+        third.source_row = 3;
+        third.date = "2026-05-03".into();
         let mut session = ImportSession {
             account_id: account_id.clone(),
             file_name: "extrato.csv".into(),
-            candidates: vec![first, second],
+            candidates: vec![first, second, third],
         };
         set_import_candidates_category_impl(
             &mut session,
-            &HashSet::from([1, 2]),
+            &HashSet::from([1, 2, 3]),
             Some("groceries".into()),
             Some("Supermercado".into()),
         )
@@ -3845,9 +4681,9 @@ mod tests {
         .fetch_one(&db)
         .await
         .unwrap();
-        assert_eq!(manual_count, 2);
+        assert_eq!(manual_count, 3);
 
-        let mut future = vec![candidate("SUPERMERCADO NOVO 03/03", -3000)];
+        let mut future = vec![candidate("SUPERMERCADO NOVO 04/04", -4000)];
         apply_category_suggestions(&db, &account_id, &[], &mut future)
             .await
             .unwrap();

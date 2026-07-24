@@ -18,7 +18,7 @@ import {
 } from "recharts";
 import { money, shortDate } from "../format";
 import { monthLabel } from "../period";
-import type { CategoryReport, DailyReportPoint, FinancialReport, MonthlyReportPoint } from "../types";
+import type { CategoryReport, DailyReportPoint, FinancialReport, MonthlyReportPoint, NetWorthPoint } from "../types";
 
 export const compactMoney = (value: number) =>
   new Intl.NumberFormat("pt-BR", { notation: "compact", maximumFractionDigits: 1 }).format(value / 100);
@@ -123,6 +123,72 @@ export function SpendingBarsChart({ data }: { data: MonthlyReportPoint[] }) {
           <Line type="monotone" dataKey="Saldo" stroke="var(--brand)" strokeWidth={2} dot={false} />
           <Bar dataKey="Gasto" fill="var(--danger)" radius={[4, 4, 0, 0]} />
         </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+export function NetWorthHistoryChart({ data }: { data: NetWorthPoint[] }) {
+  const chartData = useMemo(
+    () =>
+      data.map((point) => ({
+        month: monthLabel(point.month),
+        "Patrimônio líquido": point.totalInCents,
+      })),
+    [data],
+  );
+  const first = data[0];
+  const latest = data.at(-1);
+
+  if (!chartData.length) return <EmptyChart message="Cadastre contas e lançamentos para acompanhar a evolução." />;
+
+  return (
+    <div
+      className="chart-wrap"
+      role="img"
+      aria-label={
+        first && latest
+          ? `Evolução do patrimônio líquido de ${monthLabel(first.month)}, ${money(first.totalInCents)}, até ${monthLabel(latest.month)}, ${money(latest.totalInCents)}.`
+          : "Evolução do patrimônio líquido."
+      }
+    >
+      <ResponsiveContainer width="100%" height={230}>
+        <AreaChart accessibilityLayer={false} data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
+          <defs>
+            <linearGradient id="netWorthFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="var(--brand)" stopOpacity={0.28} />
+              <stop offset="100%" stopColor="var(--brand)" stopOpacity={0.03} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid stroke="var(--border)" vertical={false} />
+          <XAxis
+            dataKey="month"
+            tick={{ fill: "var(--text-muted)", fontSize: 11 }}
+            axisLine={{ stroke: "var(--border-strong)" }}
+            tickLine={false}
+            interval="preserveStartEnd"
+          />
+          <YAxis
+            tickFormatter={moneyAxisFormatter}
+            tick={{ fill: "var(--text-muted)", fontSize: 11 }}
+            axisLine={false}
+            tickLine={false}
+            width={56}
+          />
+          <Tooltip
+            formatter={(value) => chartMoneyFormatter(value)}
+            contentStyle={chartTooltipStyle}
+            labelStyle={chartTooltipLabelStyle}
+            itemStyle={chartTooltipItemStyle}
+          />
+          <Area
+            type="monotone"
+            dataKey="Patrimônio líquido"
+            stroke="var(--brand)"
+            strokeWidth={2.5}
+            fill="url(#netWorthFill)"
+          />
+        </AreaChart>
       </ResponsiveContainer>
     </div>
   );

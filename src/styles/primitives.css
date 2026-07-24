@@ -1,4 +1,9 @@
 @layer components {
+  .category-dropdown-pagination { display:grid; grid-template-columns:44px 1fr 44px; align-items:center; gap:var(--space-2); padding:var(--space-2) var(--space-1) 0; color:var(--text-muted); font-size:var(--text-xs); text-align:center; }
+  button.category-dropdown-pagination-button { display:grid; place-items:center; width:44px; min-width:44px; height:44px; min-height:44px; padding:0; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface); color:var(--text); box-shadow:none; }
+  button.category-dropdown-pagination-button:hover:not(:disabled) { border-color:var(--control-hover-border); background:var(--control-hover-bg); color:var(--control-hover-fg); filter:none; transform:none; }
+  button.category-dropdown-pagination-button:disabled { color:var(--text-soft); cursor:not-allowed; opacity:.55; }
+
   .page-header { display:flex; justify-content:space-between; align-items:flex-start; gap:var(--space-4); margin-bottom:var(--space-8); }
   .page-header h1 { margin:0; }
   .page-header__actions { display:flex; flex-wrap:wrap; gap:var(--space-2); }

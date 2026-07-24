@@ -1,5 +1,56 @@
 export type AccountType = "checking" | "savings" | "cash" | "credit_card";
 export type Account = { id: string; name: string; kind: AccountType; balanceInCents: number };
+export type BalanceCheckpointSource = "manual" | "import" | "reconciliation";
+export type BalanceCheckpointInput = {
+  accountId: string;
+  asOfDate: string;
+  balanceInCents: number;
+  source: BalanceCheckpointSource;
+  note?: string;
+};
+export type BalanceCheckpoint = BalanceCheckpointInput & {
+  id: string;
+  createdAt: string;
+};
+export type ReconciliationPreview = {
+  accountId: string;
+  asOfDate: string;
+  reportedBalanceInCents: number;
+  calculatedBalanceInCents: number;
+  differenceInCents: number;
+  latestCheckpoint?: BalanceCheckpoint;
+};
+export type AccountBalanceSummary = {
+  accountId: string;
+  realizedBalanceInCents: number;
+  pendingBalanceInCents: number;
+  forecastBalanceInCents: number;
+  minimumBalanceInCents: number;
+  minimumBalanceDate?: string;
+  scheduledCount: number;
+  lastReconciledAt?: string;
+  needsReconciliation: boolean;
+};
+export type ReviewItem = {
+  id: string;
+  title: string;
+  description: string;
+  date?: string;
+  amountInCents?: number;
+  actionPath: string;
+  actionLabel: string;
+};
+export type ReviewSection = {
+  totalCount: number;
+  items: ReviewItem[];
+};
+export type DataQualityReview = {
+  totalCount: number;
+  uncategorized: ReviewSection;
+  pendingTransactions: ReviewSection;
+  accountReconciliations: ReviewSection;
+  cardPaymentReconciliations: ReviewSection;
+};
 export type FinancialGoal = "organize" | "emergency_fund" | "pay_debt" | "save" | "invest";
 export type OnboardingStartMode = "import" | "manual" | "tour";
 export type IncomeDayRule = "fifth_business_day";
@@ -45,9 +96,10 @@ export type Transaction = {
   amountInCents: number;
   categoryId?: string;
   category?: string;
-  categorySource?: "manual" | "rule";
+  categorySource?: "manual" | "rule" | "history";
   status: "cleared" | "pending";
   isTransferLeg: boolean;
+  linkedKind?: "transfer" | "credit_card_payment";
 };
 export type TransactionFilter = {
   month?: string;
@@ -78,7 +130,28 @@ export type TransactionInput = {
   amountInCents: number;
   categoryId?: string;
 };
+export type InstallmentPlanInput = {
+  accountId: string;
+  firstDate: string;
+  description: string;
+  totalAmountInCents: number;
+  installmentCount: number;
+  categoryId?: string;
+};
+export type InstallmentPlanResult = {
+  planId: string;
+  transactionIds: string[];
+};
 export type TransferInput = {
+  fromAccountId: string;
+  toAccountId: string;
+  date: string;
+  amountInCents: number;
+  description?: string;
+};
+export type TransferDetails = {
+  debitTransactionId: string;
+  creditTransactionId: string;
   fromAccountId: string;
   toAccountId: string;
   date: string;
@@ -95,6 +168,17 @@ export type Category = {
   kind: CategoryKind;
   sortOrder: number;
   isSystem: boolean;
+};
+export type CategoryMergeImpact = {
+  sourceCategoryId: string;
+  sourceCategoryName: string;
+  targetCategoryId: string;
+  targetCategoryName: string;
+  movedTransactions: number;
+  movedRules: number;
+  movedRecurring: number;
+  movedTargets: number;
+  movedChildren: number;
 };
 export type RuleOperator = "contains" | "starts_with" | "regex";
 export type MovementType = "any" | "income" | "expense" | "transfer";
@@ -402,12 +486,22 @@ export type FinancialTarget = {
   categoryName?: string;
   amountInCents: number;
   enabled: boolean;
+  includeDescendants: boolean;
   overrides: { month: string; amountInCents: number }[];
 };
-export type FinancialTargetInput = Omit<FinancialTarget, "id" | "categoryName" | "overrides"> & { id?: string };
+export type FinancialTargetInput = Omit<FinancialTarget, "id" | "categoryName" | "overrides" | "includeDescendants"> & {
+  id?: string;
+  includeDescendants?: boolean;
+};
 export type CategoryTrendPoint = { month: string; amountInCents: number };
 export type NetWorthKindAmount = { kind: AccountType; amountInCents: number };
-export type NetWorthPoint = { month: string; totalInCents: number; perKind: NetWorthKindAmount[] };
+export type NetWorthPoint = {
+  month: string;
+  totalInCents: number;
+  assetsInCents: number;
+  liabilitiesInCents: number;
+  perKind: NetWorthKindAmount[];
+};
 export type UpcomingItem = { date: string; label: string; amountInCents: number; kind: "invoice" | "recurring" };
 export type BudgetStatus = "ok" | "warning" | "over";
 export type BudgetCategory = {
@@ -415,6 +509,7 @@ export type BudgetCategory = {
   categoryId: string;
   categoryName: string;
   categoryColor?: string;
+  includeDescendants: boolean;
   limitInCents: number;
   spentInCents: number;
   remainingInCents: number;

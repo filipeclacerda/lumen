@@ -11,6 +11,7 @@ import { SettingsPage } from "../features/settings/SettingsPage";
 import { AccountsCards } from "../features/accounts/AccountsCards";
 import { Reports } from "../features/reports/Reports";
 import { RecurringTransactions } from "../features/recurring/RecurringTransactions";
+import { ReviewCenter } from "../features/review/ReviewCenter";
 import { BudgetPage } from "../features/budget/BudgetPage";
 import { api } from "../shared/api";
 import { UpdateNotice } from "../shared/ui/UpdateNotice";
@@ -233,6 +234,7 @@ export function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/transactions" element={<Transactions />} />
             <Route path="/recurring" element={<RecurringTransactions />} />
+            <Route path="/review" element={<ReviewCenter />} />
             <Route path="/budget" element={<BudgetPage />} />
             <Route path="/import" element={<ImportPage />} />
             <Route path="/accounts" element={<AccountsCards />} />

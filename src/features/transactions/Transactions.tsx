@@ -17,6 +17,7 @@ import {
   SlidersHorizontal,
   Tags,
   Trash2,
+  Unlink,
   Undo2,
   X,
 } from "lucide-react";
@@ -131,12 +132,16 @@ export function Transactions() {
   const [showNew, setShowNew] = useState(false);
   const [newTransactionType, setNewTransactionType] = useState<TransactionEntryType>("expense");
   const [editing, setEditing] = useState<Transaction>();
+  const [unlinking, setUnlinking] = useState<Transaction>();
+  const [deletingTransfer, setDeletingTransfer] = useState<Transaction>();
   const [learning, setLearning] = useState<{ transaction: Transaction; categoryId: string; pattern: string }>();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkCategory, setBulkCategory] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [undo, setUndo] = useState<
-    { kind: "delete"; ids: string[] } | { kind: "categorize"; previous: { id: string; categoryId?: string }[] }
+    | { kind: "delete"; ids: string[] }
+    | { kind: "transfer-delete"; transactionId: string }
+    | { kind: "categorize"; previous: { id: string; categoryId?: string }[] }
   >();
   const [notice, setNotice] = useState("");
   const client = useQueryClient();
@@ -382,7 +387,9 @@ export function Transactions() {
       }
     });
   }
-  const allVisibleSelected = rows.length > 0 && rows.every((t) => selected.has(t.id));
+  const selectableRows = rows.filter((transaction) => !transaction.isTransferLeg);
+  const allVisibleSelected =
+    selectableRows.length > 0 && selectableRows.every((transaction) => selected.has(transaction.id));
   function toggle(id: string) {
     setSelected((current) => {
       const next = new Set(current);
@@ -394,8 +401,8 @@ export function Transactions() {
   function toggleAll() {
     setSelected((current) => {
       const next = new Set(current);
-      if (allVisibleSelected) rows.forEach((t) => next.delete(t.id));
-      else rows.forEach((t) => next.add(t.id));
+      if (allVisibleSelected) selectableRows.forEach((transaction) => next.delete(transaction.id));
+      else selectableRows.forEach((transaction) => next.add(transaction.id));
       return next;
     });
   }
@@ -452,15 +459,29 @@ export function Transactions() {
     await refresh();
     if (categoryId) setLearning({ transaction, categoryId, pattern: suggestRulePattern(transaction.description) });
   }
-  async function deleteOne(id: string) {
-    const count = await api.deleteTransactions([id]);
-    setUndo({ kind: "delete", ids: [id] });
-    setNotice(`${count} transação movida para a lixeira.`);
+  async function deleteOne(transaction: Transaction) {
+    if (transaction.linkedKind === "transfer") {
+      await api.setTransferDeleted(transaction.id, true);
+      setUndo({ kind: "transfer-delete", transactionId: transaction.id });
+      setNotice("Transferência movida para a lixeira com os dois lançamentos.");
+      setDeletingTransfer(undefined);
+    } else {
+      const count = await api.deleteTransactions([transaction.id]);
+      setUndo({ kind: "delete", ids: [transaction.id] });
+      setNotice(`${count} transação movida para a lixeira.`);
+    }
     setSelected((current) => {
       const next = new Set(current);
-      next.delete(id);
+      next.delete(transaction.id);
       return next;
     });
+    await refresh();
+  }
+  async function unlinkTransfer() {
+    if (!unlinking) return;
+    await api.unlinkTransfer(unlinking.id);
+    setUnlinking(undefined);
+    setNotice("Vínculo removido. As categorias anteriores dos dois lançamentos foram restauradas.");
     await refresh();
   }
   async function createRule() {
@@ -512,6 +533,9 @@ export function Transactions() {
     if (undo.kind === "delete") {
       const count = await api.restoreTransactions(undo.ids);
       setNotice(`${count} transações restauradas.`);
+    } else if (undo.kind === "transfer-delete") {
+      await api.setTransferDeleted(undo.transactionId, false);
+      setNotice("Transferência restaurada com os dois lançamentos.");
     } else {
       const groups = new Map<string | undefined, string[]>();
       undo.previous.forEach((p) => {
@@ -823,6 +847,7 @@ export function Transactions() {
                     type="checkbox"
                     aria-label="Selecionar transações visíveis"
                     checked={allVisibleSelected}
+                    disabled={selectableRows.length === 0}
                     onChange={toggleAll}
                   />
                 </th>
@@ -864,6 +889,8 @@ export function Transactions() {
                       type="checkbox"
                       aria-label={`Selecionar ${t.description}`}
                       checked={selected.has(t.id)}
+                      disabled={t.isTransferLeg}
+                      title={t.isTransferLeg ? "Use as ações próprias deste vínculo" : undefined}
                       onChange={() => toggle(t.id)}
                     />
                   </td>
@@ -915,10 +942,15 @@ export function Transactions() {
                       categories={categories}
                       allowEmpty
                       emptyLabel="Sem categoria"
+                      disabled={t.isTransferLeg}
                     />
                     {t.categorySource && (
                       <small className="source-label" style={{ marginTop: "6px" }}>
-                        {t.categorySource === "rule" ? "categorizado por regra" : "selecionado manualmente"}
+                        {t.categorySource === "rule"
+                          ? "categorizado por regra"
+                          : t.categorySource === "history"
+                            ? "sugerido pelo seu histórico"
+                            : "selecionado manualmente"}
                       </small>
                     )}
                   </td>
@@ -934,17 +966,35 @@ export function Transactions() {
                     <div className="row-actions">
                       <button
                         className="icon-button"
-                        title="Editar transação"
-                        aria-label={`Editar ${t.description}`}
+                        title={t.linkedKind === "transfer" ? "Editar transferência completa" : "Editar transação"}
+                        aria-label={
+                          t.linkedKind === "transfer"
+                            ? `Editar transferência ${t.description}`
+                            : `Editar ${t.description}`
+                        }
                         onClick={() => setEditing(t)}
                       >
                         <Pencil size={14} />
                       </button>
+                      {t.linkedKind === "transfer" && (
+                        <button
+                          className="icon-button"
+                          title="Desvincular os dois lançamentos"
+                          aria-label={`Desvincular transferência ${t.description}`}
+                          onClick={() => setUnlinking(t)}
+                        >
+                          <Unlink size={15} />
+                        </button>
+                      )}
                       <button
                         className="danger icon-button"
-                        title="Excluir transação"
-                        aria-label={`Excluir ${t.description}`}
-                        onClick={() => deleteOne(t.id)}
+                        title={t.linkedKind === "transfer" ? "Excluir transferência completa" : "Excluir transação"}
+                        aria-label={
+                          t.linkedKind === "transfer"
+                            ? `Excluir transferência ${t.description}`
+                            : `Excluir ${t.description}`
+                        }
+                        onClick={() => (t.linkedKind === "transfer" ? setDeletingTransfer(t) : void deleteOne(t))}
                       >
                         <Trash2 size={15} />
                       </button>
@@ -982,6 +1032,44 @@ export function Transactions() {
               <button onClick={createRule}>Criar regra</button>
             </div>
           </div>
+        </Modal>
+      )}
+      {unlinking && (
+        <Modal title="Desvincular transferência" onClose={() => setUnlinking(undefined)}>
+          <article className="modal">
+            <h2>Transformar em dois lançamentos separados?</h2>
+            <p className="muted">
+              Nenhum lançamento será apagado. O Lumen removerá apenas o vínculo e restaurará a categoria anterior de
+              cada lado quando ela estiver disponível.
+            </p>
+            <div className="editor-actions">
+              <button className="secondary" onClick={() => setUnlinking(undefined)}>
+                Cancelar
+              </button>
+              <button onClick={unlinkTransfer}>
+                <Unlink size={15} /> Desvincular
+              </button>
+            </div>
+          </article>
+        </Modal>
+      )}
+      {deletingTransfer && (
+        <Modal title="Excluir transferência" onClose={() => setDeletingTransfer(undefined)}>
+          <article className="modal">
+            <h2>Mover a transferência inteira para a lixeira?</h2>
+            <p className="muted">
+              Os lançamentos de saída e entrada serão removidos juntos dos saldos e relatórios. Você poderá desfazer
+              logo depois.
+            </p>
+            <div className="editor-actions">
+              <button className="secondary" onClick={() => setDeletingTransfer(undefined)}>
+                Cancelar
+              </button>
+              <button className="danger" onClick={() => void deleteOne(deletingTransfer)}>
+                <Trash2 size={15} /> Mover os dois lançamentos
+              </button>
+            </div>
+          </article>
         </Modal>
       )}
       {confirmDelete && (

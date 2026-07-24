@@ -10,9 +10,10 @@ use super::{
 
 /// A merchant needs at least this many categorized occurrences of the winning category before
 /// we trust it enough to suggest it automatically on a brand new import.
-pub const MIN_OCCURRENCES: i64 = 2;
-/// The winning category must hold at least this share of the merchant's categorized history.
-pub const MIN_DOMINANCE_PERCENT: f64 = 70.0;
+pub const MIN_OCCURRENCES: i64 = 3;
+/// Smoothed confidence in basis points. This is an internal guardrail, not a calibrated
+/// probability shown to the user.
+pub const MIN_CONFIDENCE_BPS: i64 = 8_000;
 
 #[derive(Debug, Clone)]
 pub struct MerchantCategoryStat {
@@ -152,8 +153,8 @@ pub fn suggest_from_history(
     if top.count < MIN_OCCURRENCES {
         return None;
     }
-    let dominance = top.count as f64 / total as f64 * 100.0;
-    if dominance < MIN_DOMINANCE_PERCENT
+    let confidence_bps = ((i128::from(top.count) + 1) * 10_000 / (i128::from(total) + 2)) as i64;
+    if confidence_bps < MIN_CONFIDENCE_BPS
         || !category_compatible(&top.category_kind, amount_in_cents, context, is_refund)
     {
         return None;
@@ -597,6 +598,37 @@ mod tests {
                 .category_id,
             "groceries"
         );
+    }
+
+    #[test]
+    fn smooths_small_history_before_preselecting() {
+        assert!(suggest_from_history(
+            &[stat("groceries", "expense", 2, "2026-06-01")],
+            -5000,
+            SuggestionContext::Bank,
+            false
+        )
+        .is_none());
+        assert!(suggest_from_history(
+            &[
+                stat("groceries", "expense", 4, "2026-06-01"),
+                stat("restaurants", "expense", 1, "2026-06-02"),
+            ],
+            -5000,
+            SuggestionContext::Bank,
+            false
+        )
+        .is_none());
+        assert!(suggest_from_history(
+            &[
+                stat("groceries", "expense", 8, "2026-06-01"),
+                stat("restaurants", "expense", 1, "2026-06-02"),
+            ],
+            -5000,
+            SuggestionContext::Bank,
+            false
+        )
+        .is_some());
     }
 
     #[test]

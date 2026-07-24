@@ -3,6 +3,7 @@ import {
   CreditCard,
   FileUp,
   LayoutDashboard,
+  ListChecks,
   Repeat,
   Settings,
   Tags,
@@ -18,6 +19,7 @@ const items = {
   overview: { to: "/", label: "Visão geral", icon: LayoutDashboard },
   reports: { to: "/reports", label: "Relatórios", icon: BarChart3 },
   transactions: { to: "/transactions", label: "Transações", icon: CreditCard },
+  review: { to: "/review", label: "Pendências", icon: ListChecks },
   accounts: { to: "/accounts", label: "Contas e cartões", icon: WalletCards },
   recurring: { to: "/recurring", label: "Recorrências", icon: Repeat },
   import: { to: "/import", label: "Importar", icon: FileUp },
@@ -28,7 +30,7 @@ const items = {
 
 export const navigationGroups: ReadonlyArray<NavigationGroup> = [
   { label: "Acompanhar", items: [items.overview, items.reports] },
-  { label: "Gerenciar", items: [items.transactions, items.accounts, items.recurring, items.import] },
+  { label: "Gerenciar", items: [items.transactions, items.review, items.accounts, items.recurring, items.import] },
   { label: "Planejar", items: [items.budget, items.categories] },
 ];
 
