@@ -251,7 +251,7 @@ function CategoryDropdown({
 }: DropdownProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [browseMode, setBrowseMode] = useState<"initial" | "roots" | "family">("initial");
+  const [browseMode, setBrowseMode] = useState<"roots" | "family">("roots");
   const [familyId, setFamilyId] = useState<string>();
   const [rootPage, setRootPage] = useState(0);
   const [familyPage, setFamilyPage] = useState(0);
@@ -289,15 +289,19 @@ function CategoryDropdown({
   }, [open]);
 
   useEffect(() => {
-    if (open) {
-      setQuery("");
-      setBrowseMode("initial");
-      setFamilyId(undefined);
-      setRootPage(0);
-      setFamilyPage(0);
-      setSearchPage(0);
+    if (!open) return;
+
+    setQuery("");
+    setBrowseMode("roots");
+    setFamilyId(undefined);
+    setRootPage(0);
+    setFamilyPage(0);
+    setSearchPage(0);
+
+    const focusFrame = requestAnimationFrame(() => {
       inputRef.current?.focus({ preventScroll: true });
-    }
+    });
+    return () => cancelAnimationFrame(focusFrame);
   }, [open]);
 
   useLayoutEffect(() => {
@@ -352,6 +356,22 @@ function CategoryDropdown({
     () => allItems.filter((category) => !category.parentId || !filteredIds.has(category.parentId)),
     [allItems, filteredIds],
   );
+  const selectedRootId = useMemo(() => {
+    let current = selected;
+    const visited = new Set<string>();
+    while (current?.parentId && filteredIds.has(current.parentId) && !visited.has(current.parentId)) {
+      visited.add(current.parentId);
+      current = allItems.find((category) => category.id === current!.parentId);
+    }
+    return current?.id;
+  }, [allItems, filteredIds, selected]);
+  const orderedRoots = useMemo(
+    () =>
+      selectedRootId
+        ? [...roots].sort((a, b) => Number(b.id === selectedRootId) - Number(a.id === selectedRootId))
+        : roots,
+    [roots, selectedRootId],
+  );
   const family = familyId ? allItems.find((category) => category.id === familyId) : undefined;
   const familyChildren = useMemo(
     () => (family ? allItems.filter((category) => category.parentId === family.id) : []),
@@ -367,13 +387,15 @@ function CategoryDropdown({
         : [],
     [allItems, categories, normalizedQuery],
   );
-  const rootPageCount = Math.max(1, Math.ceil(roots.length / PAGE_SIZE));
+  const showClearOption = allowEmpty && Boolean(value);
+  const rootOptionsPerPage = showClearOption ? PAGE_SIZE - 1 : PAGE_SIZE;
+  const rootPageCount = Math.max(1, Math.ceil(orderedRoots.length / rootOptionsPerPage));
   const familyPageCount = Math.max(1, Math.ceil(familyChildren.length / FAMILY_CHILDREN_PAGE_SIZE));
   const searchPageCount = Math.max(1, Math.ceil(searchResults.length / PAGE_SIZE));
   const safeRootPage = Math.min(rootPage, rootPageCount - 1);
   const safeFamilyPage = Math.min(familyPage, familyPageCount - 1);
   const safeSearchPage = Math.min(searchPage, searchPageCount - 1);
-  const visibleRoots = roots.slice(safeRootPage * PAGE_SIZE, (safeRootPage + 1) * PAGE_SIZE);
+  const visibleRoots = orderedRoots.slice(safeRootPage * rootOptionsPerPage, (safeRootPage + 1) * rootOptionsPerPage);
   const visibleFamilyChildren = familyChildren.slice(
     safeFamilyPage * FAMILY_CHILDREN_PAGE_SIZE,
     (safeFamilyPage + 1) * FAMILY_CHILDREN_PAGE_SIZE,
@@ -510,6 +532,9 @@ function CategoryDropdown({
         aria-expanded={open}
         aria-controls={listboxId}
         aria-label={ariaLabel}
+        onMouseDown={(e) => {
+          if (!open) e.preventDefault();
+        }}
         onClick={() => setOpen((o) => !o)}
         onKeyDown={(e) => {
           if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
@@ -566,14 +591,14 @@ function CategoryDropdown({
               />
             </div>
             <div className="category-dropdown-list" id={listboxId} role="listbox" aria-label={ariaLabel}>
-              {!normalizedQuery && browseMode === "initial" && allowEmpty && (
+              {!normalizedQuery && browseMode === "roots" && showClearOption && (
                 <button
                   type="button"
-                  className={"category-dropdown-option" + (!value ? " selected" : "")}
+                  className="category-dropdown-option"
                   onClick={() => select(undefined)}
                   onKeyDown={handleOptionKeyDown}
                   role="option"
-                  aria-selected={!value}
+                  aria-selected={false}
                 >
                   <span className="category-dropdown-icon category-dropdown-icon-muted">
                     <Tag size={14} strokeWidth={2} aria-hidden />
@@ -581,35 +606,9 @@ function CategoryDropdown({
                   <span className="category-dropdown-placeholder">{emptyLabel}</span>
                 </button>
               )}
-              {!normalizedQuery && browseMode === "initial" && selected && renderCategoryOption(selected)}
-              {!normalizedQuery && browseMode === "initial" && (
-                <button
-                  type="button"
-                  className="category-dropdown-option category-dropdown-option--browse"
-                  onKeyDown={handleOptionKeyDown}
-                  onClick={() => {
-                    setBrowseMode("roots");
-                    setRootPage(0);
-                  }}
-                >
-                  <span className="category-dropdown-icon" aria-hidden>
-                    <Tag size={14} strokeWidth={2} />
-                  </span>
-                  <span className="category-dropdown-name">Outra categoria</span>
-                </button>
-              )}
 
               {!normalizedQuery && browseMode === "roots" && (
                 <>
-                  <button
-                    type="button"
-                    className="category-dropdown-option category-dropdown-option--back"
-                    onKeyDown={handleOptionKeyDown}
-                    onClick={() => setBrowseMode("initial")}
-                  >
-                    <span aria-hidden>‹</span>
-                    <span className="category-dropdown-name">Voltar</span>
-                  </button>
                   <div className="category-dropdown-group" role="group" aria-label="Famílias de categorias">
                     {visibleRoots.map((root) => {
                       const childCount = allItems.filter((category) => category.parentId === root.id).length;
@@ -645,7 +644,9 @@ function CategoryDropdown({
                       );
                     })}
                   </div>
-                  {roots.length === 0 && <p className="category-dropdown-empty">Nenhuma categoria encontrada.</p>}
+                  {orderedRoots.length === 0 && (
+                    <p className="category-dropdown-empty">Nenhuma categoria encontrada.</p>
+                  )}
                   {renderPagination(safeRootPage, rootPageCount, setRootPage, "Famílias")}
                 </>
               )}

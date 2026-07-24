@@ -37,7 +37,7 @@ function openSelect(label = "Categoria") {
 }
 
 describe("CategorySelect", () => {
-  it("renders the current option in a viewport portal and keeps it interactive", () => {
+  it("opens with the search focused and category families already visible", async () => {
     const onChange = vi.fn();
     const { container } = render(
       <div style={{ overflow: "hidden" }}>
@@ -49,8 +49,11 @@ describe("CategorySelect", () => {
     const panel = listbox.closest(".category-dropdown-panel");
     expect(panel?.parentElement).toBe(document.body);
     expect((panel as HTMLElement).style.position).toBe("fixed");
-    expect(within(listbox).getAllByRole("option")).toHaveLength(2);
+    expect(within(listbox).getAllByRole("option")).toHaveLength(3);
+    expect(within(listbox).queryByText("Outra categoria")).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Buscar categoria" })));
 
+    fireEvent.click(within(listbox).getByRole("option", { name: "Alimentação" }));
     fireEvent.click(within(listbox).getByRole("option", { name: "Alimentação" }));
     expect(onChange).toHaveBeenCalledWith("food");
     expect(container.querySelector(".category-dropdown-panel")).toBeNull();
@@ -61,9 +64,6 @@ describe("CategorySelect", () => {
     render(<CategorySelect value="food" categories={categories} onChange={onChange} allowEmpty={false} />);
 
     const listbox = openSelect();
-    expect(within(listbox).getAllByRole("option")).toHaveLength(1);
-
-    fireEvent.click(within(listbox).getByRole("button", { name: "Outra categoria" }));
     expect(within(listbox).getAllByRole("option")).toHaveLength(3);
     expect(within(listbox).queryByRole("option", { name: "Lazer" })).toBeNull();
 
@@ -92,7 +92,6 @@ describe("CategorySelect", () => {
     );
 
     const listbox = openSelect("Categoria famílias");
-    fireEvent.click(within(listbox).getByRole("button", { name: "Outra categoria" }));
     expect(within(listbox).getAllByRole("option")).toHaveLength(3);
 
     fireEvent.click(within(listbox).getByRole("button", { name: "Famílias: próxima página" }));
@@ -128,7 +127,7 @@ describe("CategorySelect", () => {
     await waitFor(() => expect(document.activeElement).toBe(search));
 
     fireEvent.keyDown(search, { key: "ArrowDown" });
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Outra categoria" }));
+    expect(document.activeElement).toBe(screen.getByRole("option", { name: "Salário" }));
 
     fireEvent.keyDown(document.activeElement!, { key: "Escape" });
     await waitFor(() => expect(document.activeElement).toBe(trigger));

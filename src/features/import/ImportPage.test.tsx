@@ -382,7 +382,6 @@ describe("ImportReviewGroups", () => {
     expect(document.querySelector(".import-review-group-actions--manual-only")).toBeTruthy();
     expect(document.querySelector(".import-review-quick-actions")).toBeNull();
     fireEvent.click(categoryTrigger);
-    fireEvent.click(screen.getByRole("button", { name: "Outra categoria" }));
     expect(screen.getByRole("option", { name: "Transferencias" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "Pagamento de fatura" })).toBeTruthy();
   });
@@ -398,7 +397,6 @@ describe("ImportReviewGroups", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Escolher categoria para A MERCADO" }));
-    fireEvent.click(screen.getByRole("button", { name: "Outra categoria" }));
     fireEvent.click(screen.getByRole("option", { name: "Alimentacao" }));
     fireEvent.click(screen.getByRole("option", { name: "Alimentacao" }));
     await waitFor(() => expect(onApply).toHaveBeenCalledWith([31], "food", first));
@@ -452,7 +450,6 @@ describe("ImportReviewGroups", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Escolher categoria para ULTIMA LOJA" }));
-    fireEvent.click(screen.getByRole("button", { name: "Outra categoria" }));
     fireEvent.click(screen.getByRole("option", { name: "Alimentacao" }));
     fireEvent.click(screen.getByRole("option", { name: "Alimentacao" }));
     await waitFor(() => expect(onApply).toHaveBeenCalledOnce());
@@ -592,7 +589,6 @@ describe("ImportReviewGroups", () => {
     scroller.scrollTop = 360;
 
     fireEvent.click(screen.getByRole("button", { name: "Escolher categoria para A LOJA" }));
-    fireEvent.click(screen.getByRole("button", { name: "Outra categoria" }));
     fireEvent.click(screen.getByRole("option", { name: "Alimentacao" }));
     fireEvent.click(screen.getByRole("option", { name: "Alimentacao" }));
     await waitFor(() => expect(onApply).toHaveBeenCalledWith([61], "food", first));

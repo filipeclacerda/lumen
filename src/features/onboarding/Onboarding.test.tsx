@@ -70,6 +70,23 @@ describe("Onboarding", () => {
     expect(screen.getByRole("heading", { name: "Seu dinheiro, mais claro." })).toBeTruthy();
   });
 
+  it("preserves the theme already resolved from the saved or system preference", () => {
+    document.documentElement.dataset.theme = "light";
+    const { unmount } = render(<Onboarding onFinished={vi.fn()} />);
+
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(document.documentElement.dataset.appSurface).toBe("onboarding");
+
+    unmount();
+    document.documentElement.dataset.theme = "dark";
+    const darkOnboarding = render(<Onboarding onFinished={vi.fn()} />);
+
+    expect(document.documentElement.dataset.theme).toBe("dark");
+
+    darkOnboarding.unmount();
+    delete document.documentElement.dataset.theme;
+  });
+
   it("supports previous and next navigation without losing the draft", () => {
     renderOnboarding();
     openGoalStep();

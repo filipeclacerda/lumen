@@ -141,7 +141,6 @@ describe("CategoriesRules merchants", () => {
     await screen.findByRole("heading", { name: "Para onde vão os lançamentos?" });
 
     fireEvent.click(screen.getByRole("button", { name: "Categoria de destino" }));
-    fireEvent.click(screen.getByRole("button", { name: "Outra categoria" }));
     fireEvent.click(screen.getByRole("option", { name: "Mercado" }));
     fireEvent.click(screen.getByRole("option", { name: "Mercado" }));
     await waitFor(() => expect(mocks.previewCategoryMerge).toHaveBeenCalledWith("category-1", "category-2"));

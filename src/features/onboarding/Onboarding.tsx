@@ -278,18 +278,10 @@ export function Onboarding({ onFinished }: { onFinished: (destination: string) =
   useLayoutEffect(() => {
     const root = document.documentElement;
     const previousSurface = root.dataset.appSurface;
-    const previousTheme = root.dataset.onboardingTheme;
-    const previousResolvedTheme = root.dataset.theme;
     root.dataset.appSurface = "onboarding";
-    root.dataset.onboardingTheme = "dark";
-    root.dataset.theme = "dark";
     return () => {
       if (previousSurface === undefined) delete root.dataset.appSurface;
       else root.dataset.appSurface = previousSurface;
-      if (previousTheme === undefined) delete root.dataset.onboardingTheme;
-      else root.dataset.onboardingTheme = previousTheme;
-      if (previousResolvedTheme === undefined) delete root.dataset.theme;
-      else root.dataset.theme = previousResolvedTheme;
     };
   }, []);
 
