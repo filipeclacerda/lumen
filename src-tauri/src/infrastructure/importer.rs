@@ -8,9 +8,9 @@ use crate::{
     domain::{
         credit_card::{CreditCardImportItem, CreditCardLineKind, ParsedCreditCardInvoice},
         import::{
-            is_own_account_pix_description, is_pix_description, normalize_description,
-            CsvColumnMapping, CsvColumnRole, CsvMappingDraft, DuplicateStatus, ImportCandidate,
-            ImportSourceKind, NormalizedImportRow,
+            is_own_account_pix_description, is_pix_description, needs_pix_merchant_identification,
+            normalize_description, CsvColumnMapping, CsvColumnRole, CsvMappingDraft,
+            DuplicateStatus, ImportCandidate, ImportSourceKind, NormalizedImportRow,
         },
         money::{parse_brl, parse_money, DecimalSeparator},
     },
@@ -443,6 +443,7 @@ fn parse_csv_legacy(content: &str) -> Result<Vec<ImportCandidate>, AppError> {
                 normalized_description: normalize_description(&description),
                 is_pix: is_pix_description(&description),
                 is_own_account_pix: is_own_account_pix_description(&description),
+                needs_merchant_identification: needs_pix_merchant_identification(&description),
                 description,
                 amount_in_cents: parse_brl(record.get(amount_i).unwrap_or(""))?,
                 external_id: id_i
@@ -531,6 +532,7 @@ fn parse_mapped_bank_rows(
                 normalized_description: normalize_description(&description),
                 is_pix: is_pix_description(&description),
                 is_own_account_pix: is_own_account_pix_description(&description),
+                needs_merchant_identification: needs_pix_merchant_identification(&description),
                 description,
                 amount_in_cents,
                 external_id: external_i
@@ -646,6 +648,7 @@ fn parse_mapped_credit_card_rows(
                 normalized_description: normalize_description(&normalized.description),
                 is_pix: false,
                 is_own_account_pix: false,
+                needs_merchant_identification: false,
                 amount_in_cents: normalized.amount_in_cents,
                 external_id: normalized.external_id.clone(),
                 suggested_category_id: None,
@@ -734,6 +737,7 @@ fn parse_legacy_credit_card_csv(content: &str) -> Result<ParsedCreditCardInvoice
                 date: parse_date(record.get(0).unwrap_or(""))?,
                 is_pix: false,
                 is_own_account_pix: false,
+                needs_merchant_identification: false,
                 description,
                 normalized_description,
                 amount_in_cents,
@@ -853,6 +857,7 @@ fn parse_sicoob_text(text: &str) -> Result<Vec<ImportCandidate>, AppError> {
             normalized_description: normalize_description(&description),
             is_pix: is_pix_description(&description),
             is_own_account_pix: is_own_account_pix_description(&description),
+            needs_merchant_identification: needs_pix_merchant_identification(&description),
             description,
             amount_in_cents: if direction == 'D' { -amount } else { amount },
             external_id: None,
@@ -984,6 +989,7 @@ fn parse_ofx(content: &str) -> Result<Vec<ImportCandidate>, AppError> {
                 normalized_description: normalize_description(&description),
                 is_pix: is_pix_description(&description),
                 is_own_account_pix: is_own_account_pix_description(&description),
+                needs_merchant_identification: needs_pix_merchant_identification(&description),
                 description,
                 amount_in_cents: parse_brl(
                     &tag(block, "TRNAMT")

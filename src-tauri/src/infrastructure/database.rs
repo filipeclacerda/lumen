@@ -817,6 +817,8 @@ async fn validate_current_schema(connection: &mut SqliteConnection) -> Result<()
         ("transactions", "category_source"),
         ("transactions", "categorization_rule_id"),
         ("transactions", "merchant_key"),
+        ("transactions", "display_description"),
+        ("transactions", "merchant_identification_status"),
         ("categories", "parent_id"),
         ("categories", "kind"),
         ("categories", "sort_order"),
@@ -1384,6 +1386,60 @@ mod tests {
             );
             pool.close().await;
         }
+    }
+
+    #[tokio::test]
+    async fn v27_upgrade_adds_import_aliases_and_preserves_a_pending_pix() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("v27-import-aliases.db");
+        let mut connection = database_at_version(&path, 27).await;
+        sqlx::query(
+            "INSERT INTO import_batches(id,file_name,created_at)
+             VALUES('legacy-pix-batch','extrato.ofx',datetime('now'))",
+        )
+        .execute(&mut connection)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO transactions(
+               id,account_id,date,description,normalized_description,merchant_key,
+               amount_cents,fingerprint,status,import_batch_id
+             ) VALUES(
+               'legacy-pix','default-account','2026-07-24','Pix emitido outra IF',
+               'PIX EMITIDO OUTRA IF','PIX EMITIDO OUTRA IF',-3500,
+               'legacy-pix-fingerprint','cleared','legacy-pix-batch'
+             )",
+        )
+        .execute(&mut connection)
+        .await
+        .unwrap();
+        connection.close().await.unwrap();
+
+        let pool = connect(&path).await.unwrap();
+        let row = sqlx::query(
+            "SELECT description,display_description,merchant_key,merchant_identification_status
+             FROM transactions WHERE id='legacy-pix'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.get::<String, _>("description"), "Pix emitido outra IF");
+        assert!(row
+            .get::<Option<String>, _>("display_description")
+            .is_none());
+        assert!(row.get::<Option<String>, _>("merchant_key").is_none());
+        assert_eq!(
+            row.get::<String, _>("merchant_identification_status"),
+            "pending"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT MAX(version) FROM _sqlx_migrations")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            28
+        );
+        pool.close().await;
     }
 
     #[tokio::test]

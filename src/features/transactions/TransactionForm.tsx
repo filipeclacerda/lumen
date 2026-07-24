@@ -272,13 +272,18 @@ export function TransactionForm({ onClose, existing, initialType = "expense" }: 
               </label>
             </div>
             <label>
-              Descrição
+              {existing?.isImported ? "Nome exibido" : "Descrição"}
               <input
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Ex.: Mercado, salário, farmácia"
               />
             </label>
+            {existing?.isImported && (
+              <p className="muted imported-original-description">
+                Texto original do banco: <strong>{existing.originalDescription ?? existing.description}</strong>
+              </p>
+            )}
             <CategorySelect
               value={categoryId}
               onChange={(id) => setCategoryId(id ?? "")}

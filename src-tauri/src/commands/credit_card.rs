@@ -158,7 +158,13 @@ async fn build_credit_card_preview(
     let mut seen_external = HashSet::new();
     let mut seen_fingerprint = HashSet::new();
     for item in &mut parsed.items {
-        item.candidate.merchant_key = merchant_key(&item.candidate.normalized_description);
+        item.candidate.needs_merchant_identification =
+            crate::domain::import::needs_pix_merchant_identification(&item.candidate.description);
+        item.candidate.merchant_key = if item.candidate.needs_merchant_identification {
+            String::new()
+        } else {
+            merchant_key(&item.candidate.normalized_description)
+        };
         item.candidate.category_suggestions.clear();
         if let Some(id) = item.candidate.external_id.as_mut() {
             *id = id.trim().to_string();
@@ -588,13 +594,19 @@ pub(crate) async fn commit_credit_card_import_impl(
             None if item.candidate.suggested_category_id.is_some() => Some("manual"),
             None => None,
         };
-        let merchant = merchant_key(&item.candidate.normalized_description);
+        let merchant = (!item.candidate.needs_merchant_identification)
+            .then(|| merchant_key(&item.candidate.normalized_description));
+        let merchant_status = if item.candidate.needs_merchant_identification {
+            "pending"
+        } else {
+            "identified"
+        };
         sqlx::query(
-            "INSERT INTO transactions(id,account_id,date,description,normalized_description,merchant_key,amount_cents,fingerprint,
-             category_id,category_source,categorization_rule_id,status,import_batch_id,external_id)
-             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+            "INSERT INTO transactions(id,account_id,date,description,normalized_description,merchant_key,merchant_identification_status,
+             amount_cents,fingerprint,category_id,category_source,categorization_rule_id,status,import_batch_id,external_id)
+             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
         ).bind(&transaction_id).bind(&session.account_id).bind(&item.candidate.date)
-            .bind(&item.candidate.description).bind(&item.candidate.normalized_description).bind(&merchant)
+            .bind(&item.candidate.description).bind(&item.candidate.normalized_description).bind(&merchant).bind(merchant_status)
             .bind(item.candidate.amount_in_cents).bind(item_fingerprint(&session.account_id, &item))
             .bind(&item.candidate.suggested_category_id).bind(source)
             .bind(&item.candidate.suggested_rule_id).bind("cleared").bind(&batch_id).bind(&item.candidate.external_id)
@@ -1603,6 +1615,7 @@ mod tests {
                 normalized_description: description.to_uppercase(),
                 is_pix: false,
                 is_own_account_pix: false,
+                needs_merchant_identification: false,
                 amount_in_cents: -1000,
                 external_id: external_id.map(str::to_owned),
                 suggested_category_id: None,

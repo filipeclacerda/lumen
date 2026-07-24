@@ -44,8 +44,9 @@ use crate::{
         },
         import::{
             fingerprint, is_own_account_pix_description, is_pix_description, mapping_signature,
-            normalize_description, CsvColumnMapping, CsvMappingDraft, CsvMappingProfile,
-            ImportCandidate, ImportSourceKind, SuggestionSource,
+            needs_pix_merchant_identification, normalize_description, CsvColumnMapping,
+            CsvMappingDraft, CsvMappingProfile, ImportCandidate, ImportSourceKind,
+            SuggestionSource,
         },
         merchant::merchant_key,
         suggestion::{
@@ -162,6 +163,8 @@ pub struct Transaction {
     account_kind: String,
     date: String,
     description: String,
+    original_description: Option<String>,
+    is_imported: bool,
     amount_in_cents: i64,
     category_id: Option<String>,
     category: Option<String>,
@@ -435,7 +438,14 @@ pub(super) async fn apply_category_suggestions_to<'a>(
 ) -> Result<(), AppError> {
     let mut candidates: Vec<&mut ImportCandidate> = candidates.collect();
     for candidate in candidates.iter_mut() {
-        candidate.merchant_key = merchant_key(&candidate.normalized_description);
+        candidate.needs_merchant_identification =
+            needs_pix_merchant_identification(&candidate.description);
+        candidate.merchant_key = if candidate.needs_merchant_identification && !credit_card_context
+        {
+            String::new()
+        } else {
+            merchant_key(&candidate.normalized_description)
+        };
         candidate.category_suggestions.clear();
         if let Some(rule) = first_match(
             rules,
@@ -1099,7 +1109,13 @@ const TRANSACTION_FILTER_WHERE: &str = "
     AND (?5 IS NULL OR t.account_id=?5)
     AND (?6 IS NULL OR t.category_id=?6)
     AND (?7=0 OR t.category_id IS NULL)
-    AND (?8 IS NULL OR t.normalized_description LIKE ?8 OR t.description LIKE ?8)
+    AND (?8 IS NULL OR t.normalized_description LIKE ?8 OR t.description LIKE ?8
+         OR UPPER(COALESCE(t.display_description,'')) LIKE ?8
+         OR EXISTS(
+           SELECT 1 FROM merchant_aliases search_alias
+           WHERE search_alias.merchant_key=t.merchant_key
+             AND UPPER(search_alias.display_name) LIKE ?8
+         ))
     AND (?9 IS NULL OR t.date >= ?9)
     AND (?10 IS NULL OR t.date <= ?10)
     AND (?11 IS NULL OR t.status = ?11)
@@ -1161,13 +1177,17 @@ async fn query_transactions_page(
     let count_sql = format!(
         "SELECT COUNT(*) FROM transactions t JOIN accounts a ON a.id=t.account_id
          LEFT JOIN categories c ON c.id=t.category_id
+         LEFT JOIN merchant_aliases ma ON ma.merchant_key=t.merchant_key
          WHERE {TRANSACTION_FILTER_WHERE}"
     );
     let count_query = bind_transaction_filter(sqlx::query(&count_sql), filter, &search_like);
     let total_count: i64 = count_query.fetch_one(db).await?.get(0);
 
     let items_sql = format!(
-        "SELECT t.id,t.account_id,a.name account_name,a.kind account_kind,t.date,t.description,t.amount_cents,t.category_id,
+        "SELECT t.id,t.account_id,a.name account_name,a.kind account_kind,t.date,
+         COALESCE(t.display_description,ma.display_name,t.description) description,
+         CASE WHEN t.import_batch_id IS NOT NULL THEN t.description END original_description,
+         t.import_batch_id IS NOT NULL is_imported,t.amount_cents,t.category_id,
          COALESCE(c.name,'Sem categoria') category,t.category_source,t.status,
          EXISTS(
             SELECT 1 FROM transaction_links l
@@ -1184,6 +1204,7 @@ async fn query_transactions_page(
          ) linked_kind
          FROM transactions t JOIN accounts a ON a.id=t.account_id
          LEFT JOIN categories c ON c.id=t.category_id
+         LEFT JOIN merchant_aliases ma ON ma.merchant_key=t.merchant_key
          WHERE {TRANSACTION_FILTER_WHERE}
          ORDER BY t.date DESC, t.id DESC
          LIMIT ?16 OFFSET ?17"
@@ -1202,6 +1223,8 @@ async fn query_transactions_page(
             account_kind: r.get("account_kind"),
             date: r.get("date"),
             description: r.get("description"),
+            original_description: r.get("original_description"),
+            is_imported: r.get::<i64, _>("is_imported") != 0,
             amount_in_cents: r.get("amount_cents"),
             category_id: r.get("category_id"),
             category: r.get("category"),
@@ -1815,6 +1838,7 @@ fn manual_fingerprint(
         normalized_description: normalized.to_string(),
         is_pix: is_pix_description(description),
         is_own_account_pix: is_own_account_pix_description(description),
+        needs_merchant_identification: needs_pix_merchant_identification(description),
         amount_in_cents,
         external_id: None,
         suggested_category_id: None,
@@ -2525,24 +2549,19 @@ async fn update_transaction_impl(input: TransactionInput, db: &SqlitePool) -> Re
     validate_transaction_input(&input)?;
     ensure_account_active(db, &input.account_id).await?;
     let description = input.description.trim().to_string();
-    let normalized = normalize_description(&description);
-    let merchant = merchant_key(&normalized);
     let date = input.date.trim().to_string();
-    let fp = manual_fingerprint(
-        &input.account_id,
-        &date,
-        &description,
-        &normalized,
-        input.amount_in_cents,
-    );
     let mut tx = db.begin().await?;
     ensure_transactions_not_invoice_payments(&mut tx, std::slice::from_ref(&id)).await?;
     let current = sqlx::query(
-        "SELECT account_id,date,amount_cents,category_id,
+        "SELECT t.account_id,t.date,t.description,t.normalized_description,t.display_description,
+         COALESCE(t.display_description,ma.display_name,t.description) resolved_description,
+         t.amount_cents,t.category_id,t.import_batch_id,
          EXISTS(SELECT 1 FROM transaction_links l
                 WHERE l.debit_transaction_id=t.id OR l.credit_transaction_id=t.id) is_transfer_leg,
          EXISTS(SELECT 1 FROM transaction_installments i WHERE i.transaction_id=t.id) is_installment
-         FROM transactions t WHERE t.id=? AND t.deleted_at IS NULL",
+         FROM transactions t
+         LEFT JOIN merchant_aliases ma ON ma.merchant_key=t.merchant_key
+         WHERE t.id=? AND t.deleted_at IS NULL",
     )
     .bind(&id)
     .fetch_optional(&mut *tx)
@@ -2557,6 +2576,9 @@ async fn update_transaction_impl(input: TransactionInput, db: &SqlitePool) -> Re
         ));
     }
     let is_transfer_leg = current.get::<i64, _>("is_transfer_leg") != 0;
+    let is_imported = current
+        .get::<Option<String>, _>("import_batch_id")
+        .is_some();
     if is_transfer_leg {
         let current_account: String = current.get("account_id");
         let current_date: String = current.get("date");
@@ -2580,6 +2602,23 @@ async fn update_transaction_impl(input: TransactionInput, db: &SqlitePool) -> Re
         )
         .await?;
     }
+    let original_description: String = current.get("description");
+    let normalized = if is_imported {
+        current.get("normalized_description")
+    } else {
+        normalize_description(&description)
+    };
+    let fp = manual_fingerprint(
+        &input.account_id,
+        &date,
+        if is_imported {
+            &original_description
+        } else {
+            &description
+        },
+        &normalized,
+        input.amount_in_cents,
+    );
     let collides = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM transactions WHERE fingerprint=? AND id!=? AND deleted_at IS NULL",
     )
@@ -2594,13 +2633,49 @@ async fn update_transaction_impl(input: TransactionInput, db: &SqlitePool) -> Re
         ));
     }
     let source = input.category_id.as_ref().map(|_| "manual");
-    sqlx::query(
-        "UPDATE transactions SET account_id=?,date=?,description=?,normalized_description=?,merchant_key=?,amount_cents=?,
-         fingerprint=?,category_id=?,category_source=?,categorization_rule_id=NULL
-         WHERE id=? AND deleted_at IS NULL"
-    ).bind(&input.account_id).bind(&date).bind(&description).bind(&normalized).bind(&merchant)
-        .bind(input.amount_in_cents).bind(&fp).bind(&input.category_id).bind(source).bind(&id)
-        .execute(&mut *tx).await?;
+    if is_imported {
+        let current_display_description: Option<String> = current.get("display_description");
+        let resolved_description: String = current.get("resolved_description");
+        let display_description = if description == resolved_description {
+            current_display_description
+        } else {
+            (description != original_description).then_some(description)
+        };
+        sqlx::query(
+            "UPDATE transactions SET account_id=?,date=?,display_description=?,amount_cents=?,
+             fingerprint=?,category_id=?,category_source=?,categorization_rule_id=NULL
+             WHERE id=? AND deleted_at IS NULL",
+        )
+        .bind(&input.account_id)
+        .bind(&date)
+        .bind(display_description)
+        .bind(input.amount_in_cents)
+        .bind(&fp)
+        .bind(&input.category_id)
+        .bind(source)
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
+    } else {
+        let merchant = merchant_key(&normalized);
+        sqlx::query(
+            "UPDATE transactions SET account_id=?,date=?,description=?,normalized_description=?,merchant_key=?,amount_cents=?,
+             fingerprint=?,category_id=?,category_source=?,categorization_rule_id=NULL
+             WHERE id=? AND deleted_at IS NULL",
+        )
+        .bind(&input.account_id)
+        .bind(&date)
+        .bind(&description)
+        .bind(&normalized)
+        .bind(&merchant)
+        .bind(input.amount_in_cents)
+        .bind(&fp)
+        .bind(&input.category_id)
+        .bind(source)
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
+    }
     tx.commit().await?;
     Ok(())
 }
@@ -2679,6 +2754,9 @@ async fn update_transaction_amount_impl(
         is_pix: is_pix_description(row.get::<String, _>("description").as_str()),
         is_own_account_pix: is_own_account_pix_description(
             row.get::<String, _>("description").as_str(),
+        ),
+        needs_merchant_identification: needs_pix_merchant_identification(
+            &row.get::<String, _>("description"),
         ),
         amount_in_cents,
         external_id: row.get("external_id"),
@@ -3415,12 +3493,20 @@ async fn commit_import_impl(
             None if candidate.suggested_category_id.is_some() => Some("manual"),
             None => None,
         };
-        let merchant = merchant_key(&candidate.normalized_description);
+        let merchant = (!candidate.needs_merchant_identification)
+            .then(|| merchant_key(&candidate.normalized_description));
+        let merchant_status = if candidate.needs_merchant_identification {
+            "pending"
+        } else {
+            "identified"
+        };
         sqlx::query(
-            "INSERT INTO transactions(id,account_id,date,description,normalized_description,merchant_key,amount_cents,external_id,fingerprint,
-             status,import_batch_id,category_id,category_source,categorization_rule_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+            "INSERT INTO transactions(id,account_id,date,description,normalized_description,merchant_key,merchant_identification_status,
+             amount_cents,external_id,fingerprint,status,import_batch_id,category_id,category_source,categorization_rule_id)
+             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
         ).bind(Uuid::new_v4().to_string()).bind(&session.account_id).bind(&candidate.date)
-            .bind(&candidate.description).bind(&candidate.normalized_description).bind(&merchant).bind(candidate.amount_in_cents)
+            .bind(&candidate.description).bind(&candidate.normalized_description).bind(&merchant).bind(merchant_status)
+            .bind(candidate.amount_in_cents)
             .bind(&candidate.external_id).bind(fingerprint(&session.account_id,&candidate)).bind("cleared")
             .bind(&batch_id).bind(&candidate.suggested_category_id).bind(source).bind(&candidate.suggested_rule_id)
             .execute(&mut *tx).await?;
@@ -3857,6 +3943,155 @@ mod tests {
         assert!(unchanged.get::<Option<String>, _>("category_id").is_none());
         assert_eq!(unchanged.get::<String, _>("status"), "cleared");
         assert!(unchanged.get::<Option<String>, _>("deleted_at").is_none());
+    }
+
+    #[tokio::test]
+    async fn imported_transaction_alias_preserves_original_and_fingerprint() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = crate::infrastructure::database::connect(&directory.path().join("alias.db"))
+            .await
+            .unwrap();
+        let account_id = complete_onboarding_impl(onboarding_input(), &db)
+            .await
+            .unwrap()
+            .account_id;
+        sqlx::query(
+            "INSERT INTO import_batches(id,file_name,created_at) VALUES('batch-alias','extrato.ofx',datetime('now'))",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        let original_fingerprint = manual_fingerprint(
+            &account_id,
+            "2026-06-10",
+            "COMPRA LOJA CENTRAL",
+            "COMPRA LOJA CENTRAL",
+            -5000,
+        );
+        sqlx::query(
+            "INSERT INTO transactions(id,account_id,date,description,normalized_description,merchant_key,
+             amount_cents,fingerprint,status,import_batch_id)
+             VALUES('tx-alias',?,'2026-06-10','COMPRA LOJA CENTRAL','COMPRA LOJA CENTRAL',
+             'LOJA CENTRAL',-5000,?,'cleared','batch-alias')",
+        )
+        .bind(&account_id)
+        .bind(&original_fingerprint)
+        .execute(&db)
+        .await
+        .unwrap();
+
+        update_transaction_impl(
+            TransactionInput {
+                id: Some("tx-alias".into()),
+                account_id,
+                date: "2026-06-10".into(),
+                description: "Loja do bairro".into(),
+                amount_in_cents: -5000,
+                category_id: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+
+        let row = sqlx::query(
+            "SELECT description,normalized_description,display_description,merchant_key,fingerprint
+             FROM transactions WHERE id='tx-alias'",
+        )
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(row.get::<String, _>("description"), "COMPRA LOJA CENTRAL");
+        assert_eq!(
+            row.get::<String, _>("normalized_description"),
+            "COMPRA LOJA CENTRAL"
+        );
+        assert_eq!(
+            row.get::<String, _>("display_description"),
+            "Loja do bairro"
+        );
+        assert_eq!(row.get::<String, _>("merchant_key"), "LOJA CENTRAL");
+        assert_eq!(row.get::<String, _>("fingerprint"), original_fingerprint);
+        let page = query_transactions_page(&db, &TransactionFilter::default())
+            .await
+            .unwrap();
+        assert_eq!(page.items[0].description, "Loja do bairro");
+        assert_eq!(
+            page.items[0].original_description.as_deref(),
+            Some("COMPRA LOJA CENTRAL")
+        );
+    }
+
+    #[tokio::test]
+    async fn updating_an_imported_transaction_does_not_freeze_a_global_merchant_alias() {
+        let directory = tempfile::tempdir().unwrap();
+        let db =
+            crate::infrastructure::database::connect(&directory.path().join("alias-global.db"))
+                .await
+                .unwrap();
+        let account_id = complete_onboarding_impl(onboarding_input(), &db)
+            .await
+            .unwrap()
+            .account_id;
+        sqlx::query(
+            "INSERT INTO import_batches(id,file_name,created_at)
+             VALUES('batch-global','extrato.ofx',datetime('now'))",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO merchant_aliases(id,merchant_key,display_name)
+             VALUES('alias-global','FEIRA CENTRAL','Feira do bairro')",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO transactions(id,account_id,date,description,normalized_description,merchant_key,
+             amount_cents,fingerprint,status,import_batch_id)
+             VALUES('tx-global',?,'2026-06-10','PIX QRS FEIRA CENTRAL','PIX QRS FEIRA CENTRAL',
+             'FEIRA CENTRAL',-5000,'fp-global','cleared','batch-global')",
+        )
+        .bind(&account_id)
+        .execute(&db)
+        .await
+        .unwrap();
+
+        update_transaction_impl(
+            TransactionInput {
+                id: Some("tx-global".into()),
+                account_id,
+                date: "2026-06-10".into(),
+                description: "Feira do bairro".into(),
+                amount_in_cents: -5000,
+                category_id: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+        let stored_override: Option<String> =
+            sqlx::query_scalar("SELECT display_description FROM transactions WHERE id='tx-global'")
+                .fetch_one(&db)
+                .await
+                .unwrap();
+        assert_eq!(
+            stored_override, None,
+            "saving another field must not copy the resolved global alias into the transaction"
+        );
+
+        sqlx::query(
+            "UPDATE merchant_aliases SET display_name='Feira Central nova'
+             WHERE id='alias-global'",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        let page = query_transactions_page(&db, &TransactionFilter::default())
+            .await
+            .unwrap();
+        assert_eq!(page.items[0].description, "Feira Central nova");
     }
 
     #[tokio::test]
@@ -5085,6 +5320,7 @@ mod tests {
             normalized_description: normalized,
             is_pix: is_pix_description(description),
             is_own_account_pix: is_own_account_pix_description(description),
+            needs_merchant_identification: needs_pix_merchant_identification(description),
             amount_in_cents,
             external_id: None,
             suggested_category_id: None,
@@ -5098,6 +5334,31 @@ mod tests {
             warnings: vec![],
             included: true,
         }
+    }
+
+    #[tokio::test]
+    async fn generic_pix_commit_stays_financially_active_but_pending_identification() {
+        let (_directory, db, account_id) = suggestion_test_setup().await;
+        let result = commit_import_impl(
+            ImportSession {
+                account_id,
+                file_name: "extrato.ofx".into(),
+                candidates: vec![candidate("Pix emitido outra IF", -3500)],
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.count, 1);
+        let row: (Option<String>, String, i64) = sqlx::query_as(
+            "SELECT merchant_key,merchant_identification_status,amount_cents
+             FROM transactions WHERE import_batch_id=?",
+        )
+        .bind(result.batch_id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(row, (None, "pending".into(), -3500));
     }
 
     #[test]

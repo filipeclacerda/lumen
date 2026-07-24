@@ -953,6 +953,7 @@ function MerchantsTab() {
 
   return (
     <section className="merchants-workspace">
+      <PendingPixPanel />
       <article className="panel merchants-panel">
         <div className="panel-title merchants-heading">
           <div>
@@ -1094,6 +1095,156 @@ function MerchantsTab() {
         </div>
       </article>
     </section>
+  );
+}
+
+function PendingPixPanel() {
+  const client = useQueryClient();
+  const toast = useToast();
+  const {
+    data: pending = [],
+    isLoading,
+    isError,
+    refetch,
+  } = useQuery({
+    queryKey: ["pending-pix"],
+    queryFn: api.pendingPixTransactions || (() => Promise.resolve([])),
+  });
+  const { data: merchantOptions = [] } = useQuery({
+    queryKey: ["merchant-options"],
+    queryFn: api.merchantOptions || (() => Promise.resolve([])),
+    enabled: pending.length > 0,
+  });
+  const [selected, setSelected] = useState<Record<string, string>>({});
+  const [newNames, setNewNames] = useState<Record<string, string>>({});
+  const [savingId, setSavingId] = useState<string>();
+
+  async function confirm(transactionId: string) {
+    const merchantKey = selected[transactionId];
+    const newDisplayName = newNames[transactionId]?.trim();
+    if (!merchantKey && !newDisplayName) return;
+    setSavingId(transactionId);
+    try {
+      await api.identifyTransactionMerchant(transactionId, merchantKey ? { merchantKey } : { newDisplayName });
+      toast("Pix identificado. Ele agora aparece no estabelecimento escolhido.");
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["pending-pix"] }),
+        client.invalidateQueries({ queryKey: ["merchants"] }),
+        client.invalidateQueries({ queryKey: ["merchant-options"] }),
+        client.invalidateQueries({ queryKey: ["merchant-aliases"] }),
+        client.invalidateQueries({ queryKey: ["financial-report"] }),
+        client.invalidateQueries({ queryKey: ["transactions"] }),
+      ]);
+    } catch (error: any) {
+      toast(`Não foi possível identificar o Pix: ${error?.message || error}`, "error");
+    } finally {
+      setSavingId(undefined);
+    }
+  }
+
+  const options = merchantOptions.map((merchant) => ({
+    value: merchant.merchantKey,
+    label: merchant.displayName,
+  }));
+
+  return (
+    <article className="panel pending-pix-panel" aria-labelledby="pending-pix-title">
+      <div className="panel-title merchants-heading">
+        <div>
+          <h2 id="pending-pix-title">Pix pendentes de identificação</h2>
+          <span>Eles continuam nos totais. Só entram em Estabelecimentos depois da sua confirmação.</span>
+        </div>
+        <span className="merchants-total">{pending.length} pendentes</span>
+      </div>
+      {isLoading && <LoadingState label="Carregando Pix pendentes…" />}
+      {isError && <ErrorState message="Não foi possível carregar os Pix pendentes." onRetry={() => void refetch()} />}
+      {!isLoading && !isError && pending.length === 0 && (
+        <EmptyState
+          title="Nenhum Pix pendente"
+          description="Pix com identificação confiável e lançamentos já confirmados ficam na lista de estabelecimentos."
+        />
+      )}
+      {!isLoading && !isError && pending.length > 0 && (
+        <div className="pending-pix-list" role="list" aria-live="polite">
+          {pending.map((item) => {
+            const selectedKey = selected[item.id] ?? "";
+            const newName = newNames[item.id] ?? "";
+            const saving = savingId === item.id;
+            return (
+              <div className="pending-pix-row" role="listitem" key={item.id}>
+                <div className="pending-pix-summary">
+                  <strong>Pix sem identificação</strong>
+                  <span>
+                    {shortDate(item.date)} · {money(item.amountInCents)}
+                    {item.category ? ` · ${item.category}` : ""}
+                  </span>
+                  <details>
+                    <summary>Ver texto original do banco</summary>
+                    <small>{item.originalDescription}</small>
+                  </details>
+                </div>
+                {item.suggestedMerchantKey && (
+                  <div className="pending-pix-suggestion">
+                    <span>
+                      Sugestão: <strong>{item.suggestedMerchantName}</strong>
+                    </span>
+                    <small>{item.suggestionReason}</small>
+                    <button
+                      type="button"
+                      className="secondary compact"
+                      onClick={() => {
+                        setSelected((current) => ({
+                          ...current,
+                          [item.id]: item.suggestedMerchantKey!,
+                        }));
+                        setNewNames((current) => ({ ...current, [item.id]: "" }));
+                      }}
+                    >
+                      Usar sugestão
+                    </button>
+                  </div>
+                )}
+                <div className="pending-pix-identification">
+                  <Select
+                    ariaLabel={`Estabelecimento para o Pix de ${shortDate(item.date)} no valor de ${money(item.amountInCents)}`}
+                    value={selectedKey}
+                    onChange={(value) => {
+                      setSelected((current) => ({ ...current, [item.id]: value }));
+                      if (value) setNewNames((current) => ({ ...current, [item.id]: "" }));
+                    }}
+                    options={[{ value: "", label: "Escolher estabelecimento existente" }, ...options]}
+                  />
+                  <span className="muted">ou</span>
+                  <label>
+                    <span>Novo nome</span>
+                    <input
+                      aria-label={`Novo nome para o Pix de ${shortDate(item.date)} no valor de ${money(item.amountInCents)}`}
+                      value={newName}
+                      onChange={(event) => {
+                        setNewNames((current) => ({ ...current, [item.id]: event.target.value }));
+                        if (event.target.value) {
+                          setSelected((current) => ({ ...current, [item.id]: "" }));
+                        }
+                      }}
+                      placeholder="Ex.: Feira do bairro"
+                      maxLength={120}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    aria-label={`Confirmar identificação do Pix de ${shortDate(item.date)} no valor de ${money(item.amountInCents)}`}
+                    onClick={() => void confirm(item.id)}
+                    disabled={saving || (!selectedKey && !newName.trim())}
+                  >
+                    {saving ? "Confirmando…" : "Confirmar identificação"}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </article>
   );
 }
 

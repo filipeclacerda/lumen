@@ -31,8 +31,10 @@ import type {
   InstallmentPlanInput,
   InstallmentPlanResult,
   MerchantAlias,
+  MerchantOption,
   MerchantPage,
   MerchantPageFilter,
+  PendingPixTransaction,
   NetWorthPoint,
   OnboardingInput,
   OnboardingResult,
@@ -293,6 +295,18 @@ const demoMerchants: MerchantPage["items"] = Object.values(
     return groups;
   }, {}),
 ).sort((a, b) => b.transactionCount - a.transactionCount || a.originalName.localeCompare(b.originalName));
+const demoPendingPix: PendingPixTransaction[] = [
+  {
+    id: "demo-pix-pending",
+    date: "2026-06-18",
+    originalDescription: "Pix emitido outra IF",
+    amountInCents: -3500,
+    category: "Alimentação",
+    suggestedMerchantKey: "CAFÉ DO CENTRO",
+    suggestedMerchantName: "CAFÉ DO CENTRO",
+    suggestionReason: "Mesmo valor e categoria em pelo menos dois lançamentos confirmados",
+  },
+];
 
 const isTauri = () => "__TAURI_INTERNALS__" in window;
 const demoProfile = (): UserProfile | null => {
@@ -870,6 +884,50 @@ export const api = {
               displayName: merchant.alias!,
             })),
         ),
+  merchantOptions: (): Promise<MerchantOption[]> =>
+    isTauri()
+      ? invoke("list_merchant_options")
+      : Promise.resolve(
+          demoMerchants.map((merchant) => ({
+            merchantKey: merchant.merchantKey,
+            displayName: merchant.alias ?? merchant.originalName,
+          })),
+        ),
+  pendingPixTransactions: (): Promise<PendingPixTransaction[]> =>
+    isTauri() ? invoke("list_pending_pix_transactions") : Promise.resolve([...demoPendingPix]),
+  identifyTransactionMerchant: async (
+    transactionId: string,
+    identification: { merchantKey?: string; newDisplayName?: string },
+  ): Promise<void> => {
+    if (isTauri()) {
+      return invoke("identify_transaction_merchant", {
+        input: { transactionId, ...identification },
+      });
+    }
+    const pendingIndex = demoPendingPix.findIndex((item) => item.id === transactionId);
+    if (pendingIndex < 0) return;
+    const pending = demoPendingPix[pendingIndex];
+    const existingIndex = demoMerchants.findIndex((item) => item.merchantKey === identification.merchantKey);
+    if (existingIndex >= 0) {
+      const existing = demoMerchants[existingIndex];
+      demoMerchants[existingIndex] = {
+        ...existing,
+        amountInCents: existing.amountInCents + Math.abs(pending.amountInCents),
+        transactionCount: existing.transactionCount + 1,
+      };
+    } else if (identification.newDisplayName) {
+      const merchantKey = `DEMO:${transactionId}`;
+      demoMerchants.push({
+        merchant: identification.newDisplayName,
+        merchantKey,
+        originalName: merchantKey,
+        alias: identification.newDisplayName,
+        amountInCents: Math.abs(pending.amountInCents),
+        transactionCount: 1,
+      });
+    }
+    demoPendingPix.splice(pendingIndex, 1);
+  },
   saveMerchantAlias: async (merchantKey: string, displayName: string): Promise<string> => {
     if (isTauri()) return invoke("save_merchant_alias", { input: { merchantKey, displayName } });
     const merchant = demoMerchants.find((item) => item.merchantKey === merchantKey);

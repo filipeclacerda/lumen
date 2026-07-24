@@ -11,11 +11,14 @@ import type { CategoryMergeImpact } from "../../shared/types";
 const mocks = vi.hoisted(() => ({
   listMerchantsPage: vi.fn(),
   merchantAliases: vi.fn(),
+  merchantOptions: vi.fn(),
   saveMerchantAlias: vi.fn(),
   deleteMerchantAlias: vi.fn(),
   archiveCategory: vi.fn(),
   previewCategoryMerge: vi.fn(),
   mergeCategory: vi.fn(),
+  pendingPixTransactions: vi.fn(),
+  identifyTransactionMerchant: vi.fn(),
   toast: vi.fn(),
 }));
 
@@ -26,11 +29,14 @@ vi.mock("../../shared/api", () => ({
     accounts: vi.fn().mockResolvedValue([]),
     listMerchantsPage: mocks.listMerchantsPage,
     merchantAliases: mocks.merchantAliases,
+    merchantOptions: mocks.merchantOptions,
     saveMerchantAlias: mocks.saveMerchantAlias,
     deleteMerchantAlias: mocks.deleteMerchantAlias,
     archiveCategory: mocks.archiveCategory,
     previewCategoryMerge: mocks.previewCategoryMerge,
     mergeCategory: mocks.mergeCategory,
+    pendingPixTransactions: mocks.pendingPixTransactions,
+    identifyTransactionMerchant: mocks.identifyTransactionMerchant,
   },
 }));
 vi.mock("../../shared/ui/toast", () => ({ useToast: () => mocks.toast }));
@@ -73,6 +79,10 @@ describe("CategoriesRules merchants", () => {
     mocks.merchantAliases.mockResolvedValue([
       { id: "alias-1", merchantKey: "MERCADO ORIGINAL", displayName: "Mercado do bairro" },
     ]);
+    mocks.merchantOptions.mockResolvedValue([
+      { merchantKey: "MERCADO ORIGINAL", displayName: "Mercado do bairro" },
+      { merchantKey: "PIX RECEBIDO CLIENTE", displayName: "Cliente recorrente" },
+    ]);
     mocks.saveMerchantAlias.mockResolvedValue("alias-1");
     mocks.deleteMerchantAlias.mockResolvedValue(undefined);
     mocks.archiveCategory.mockResolvedValue(undefined);
@@ -100,6 +110,8 @@ describe("CategoriesRules merchants", () => {
       archivedTargets: 0,
       movedChildren: 0,
     });
+    mocks.pendingPixTransactions.mockResolvedValue([]);
+    mocks.identifyTransactionMerchant.mockResolvedValue(undefined);
   });
 
   afterEach(cleanup);
@@ -344,5 +356,33 @@ describe("CategoriesRules merchants", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Restaurar/ }));
     await waitFor(() => expect(mocks.deleteMerchantAlias).toHaveBeenCalledWith("alias-1"));
+  });
+
+  it("keeps a generic Pix separate until the user confirms a new name", async () => {
+    mocks.pendingPixTransactions.mockResolvedValue([
+      {
+        id: "pix-1",
+        date: "2026-07-20",
+        originalDescription: "Pix emitido outra IF",
+        amountInCents: -3500,
+        category: "Alimentação",
+      },
+    ]);
+    await openMerchants();
+
+    expect(screen.getByText("Pix sem identificação")).toBeTruthy();
+    fireEvent.click(screen.getByText("Ver texto original do banco"));
+    expect(screen.getByText("Pix emitido outra IF")).toBeTruthy();
+
+    fireEvent.change(screen.getByRole("textbox", { name: /Novo nome para o Pix/ }), {
+      target: { value: "Feira do bairro" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Confirmar identificação do Pix/ }));
+
+    await waitFor(() =>
+      expect(mocks.identifyTransactionMerchant).toHaveBeenCalledWith("pix-1", {
+        newDisplayName: "Feira do bairro",
+      }),
+    );
   });
 });

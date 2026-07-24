@@ -52,8 +52,10 @@ pub fn run() {
                 infrastructure::database::connect_app_database(&data_dir),
             )
             .map_err(|e| Box::<dyn std::error::Error>::from(format!("{e:?}")))?;
-            // Idempotent maintenance, but it can touch many imported rows after an upgrade.
-            // Run it after the app is managed so opening the window is not gated by the backfill.
+            // Finish the one-time legacy PIX classification before the UI can cache merchant
+            // groupings. Confirmed and newly imported rows are never revisited.
+            tauri::async_runtime::block_on(commands::backfill_pending_pix_identification_impl(&db))
+                .map_err(|e| Box::<dyn std::error::Error>::from(format!("{e:?}")))?;
             let db_for_backfill = db.clone();
             app.manage(AppState {
                 db,
@@ -182,6 +184,9 @@ pub fn run() {
             commands::sync_recurring_transactions,
             commands::backfill_merchant_keys,
             commands::list_merchant_aliases,
+            commands::list_merchant_options,
+            commands::list_pending_pix_transactions,
+            commands::identify_transaction_merchant,
             commands::save_merchant_alias,
             commands::delete_merchant_alias,
             commands::net_worth_history,

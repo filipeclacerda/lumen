@@ -12,6 +12,8 @@ pub struct ImportCandidate {
     pub is_pix: bool,
     #[serde(default)]
     pub is_own_account_pix: bool,
+    #[serde(default)]
+    pub needs_merchant_identification: bool,
     pub amount_in_cents: i64,
     pub external_id: Option<String>,
     pub suggested_category_id: Option<String>,
@@ -166,6 +168,13 @@ pub fn is_own_account_pix_description(value: &str) -> bool {
     })
 }
 
+/// PIX descriptions are not structured counterparty identifiers. Until an importer
+/// exposes a bank-provided identity field, every third-party PIX requires explicit
+/// confirmation; own-account PIX remains handled by the transfer flow.
+pub fn needs_pix_merchant_identification(value: &str) -> bool {
+    is_pix_description(value) && !is_own_account_pix_description(value)
+}
+
 pub fn mapping_signature(
     headers: &[String],
     delimiter: &str,
@@ -246,6 +255,37 @@ mod tests {
             assert!(
                 !is_own_account_pix_description(description),
                 "did not expect an own-account PIX in {description:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn flags_only_pix_without_a_distinctive_counterparty() {
+        for description in [
+            "Pix emitido outra IF",
+            "PIX.EMIT.OUT IF",
+            "Pix recebido",
+            "PIX - transferência",
+            "Pix emitido outra IF 123456",
+            "PIX enviado 24/07/2026",
+            "PIX recebido E2E 123456789",
+            "PIX DEVOLUÇÃO",
+            "PIX AGENDADO",
+            "PIX CRÉDITO",
+            "PIX DÉBITO",
+            "PIX IFOOD",
+            "Pix emitido outra IF JOAO SILVA",
+            "PIX QRS MERCADO CENTRAL",
+        ] {
+            assert!(
+                needs_pix_merchant_identification(description),
+                "expected unidentified PIX in {description:?}"
+            );
+        }
+        for description in ["PIX IF-MSM", "Compra no PIXEL DESIGN"] {
+            assert!(
+                !needs_pix_merchant_identification(description),
+                "did not expect unidentified PIX in {description:?}"
             );
         }
     }

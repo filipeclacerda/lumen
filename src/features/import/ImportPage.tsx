@@ -1824,7 +1824,9 @@ function groupCandidates(
         .slice(0, 3);
       return {
         key,
-        label: items[0].merchantKey || items[0].description,
+        label: items[0].needsMerchantIdentification
+          ? "Pix sem identificação"
+          : items[0].merchantKey || items[0].description,
         candidates: items,
         suggestions,
         totalInCents: items.reduce((total, candidate) => total + candidate.amountInCents, 0),

@@ -225,7 +225,8 @@ pub(crate) async fn load_report_rows_for_month(
     source: &str,
 ) -> Result<Vec<ReportRow>, AppError> {
     let rows = sqlx::query(
-        "SELECT t.date, strftime('%Y-%m',t.date) month, t.merchant_key,
+        "SELECT t.date, strftime('%Y-%m',t.date) month,
+         CASE WHEN t.merchant_identification_status!='pending' THEN t.merchant_key END merchant_key,
          COALESCE(ma.display_name, t.merchant_key, t.description) merchant_label, t.amount_cents,
          a.kind account_kind, t.category_id, c.name category_name, c.color category_color, c.kind category_kind,
          (SELECT l.kind FROM transaction_links l
@@ -728,7 +729,8 @@ async fn list_merchants_page_impl(
         ));
     }
     let rows = sqlx::query(
-        "SELECT t.date, strftime('%Y-%m',t.date) month, t.merchant_key,
+        "SELECT t.date, strftime('%Y-%m',t.date) month,
+         CASE WHEN t.merchant_identification_status!='pending' THEN t.merchant_key END merchant_key,
          COALESCE(t.merchant_key, t.description) original_name, ma.display_name merchant_alias,
          COALESCE(ma.display_name, t.merchant_key, t.description) merchant_label, t.amount_cents,
          a.kind account_kind, t.category_id, c.name category_name, c.color category_color, c.kind category_kind,
@@ -738,6 +740,7 @@ async fn list_merchants_page_impl(
          LEFT JOIN categories c ON c.id=t.category_id
          LEFT JOIN merchant_aliases ma ON ma.merchant_key=t.merchant_key
          WHERE t.deleted_at IS NULL AND a.deleted_at IS NULL
+         AND t.merchant_identification_status!='pending' AND t.merchant_key IS NOT NULL
          AND NOT EXISTS (
              SELECT 1 FROM transaction_links l
              WHERE l.debit_transaction_id=t.id OR l.credit_transaction_id=t.id
@@ -765,10 +768,9 @@ async fn list_merchants_page_impl(
         if expense <= 0 {
             continue;
         }
-        let key = report_row
-            .merchant_key
-            .clone()
-            .unwrap_or_else(|| report_row.merchant_label.clone());
+        let Some(key) = report_row.merchant_key.clone() else {
+            continue;
+        };
         let original_name: String = row.get("original_name");
         let alias: Option<String> = row.get("merchant_alias");
         let merchant = merchant_map
@@ -855,7 +857,8 @@ async fn generate_financial_report_impl(
         filter.start_month.clone()
     };
     let rows=sqlx::query(
-        "SELECT t.date, strftime('%Y-%m',t.date) month, t.merchant_key,
+        "SELECT t.date, strftime('%Y-%m',t.date) month,
+         CASE WHEN t.merchant_identification_status!='pending' THEN t.merchant_key END merchant_key,
          COALESCE(ma.display_name, t.merchant_key, t.description) merchant_label, t.amount_cents,
          a.kind account_kind, t.category_id, c.name category_name, c.color category_color, c.kind category_kind,
          (SELECT l.kind FROM transaction_links l
@@ -962,21 +965,19 @@ async fn generate_financial_report_impl(
             0,
         ));
         checked_add_i64(&mut category.2, expense)?;
-        let merchant_group_key = row
-            .merchant_key
-            .clone()
-            .unwrap_or_else(|| row.merchant_label.clone());
-        let merchant = merchant_map.entry(merchant_group_key).or_insert((
-            row.merchant_label.clone(),
-            row.merchant_key.clone(),
-            0,
-            0,
-        ));
-        checked_add_i64(&mut merchant.2, expense)?;
-        merchant.3 = merchant
-            .3
-            .checked_add(1)
-            .ok_or_else(financial_metrics_overflow)?;
+        if let Some(merchant_group_key) = row.merchant_key.clone() {
+            let merchant = merchant_map.entry(merchant_group_key).or_insert((
+                row.merchant_label.clone(),
+                row.merchant_key.clone(),
+                0,
+                0,
+            ));
+            checked_add_i64(&mut merchant.2, expense)?;
+            merchant.3 = merchant
+                .3
+                .checked_add(1)
+                .ok_or_else(financial_metrics_overflow)?;
+        }
         if row.account_kind == "credit_card" {
             checked_add_i64(&mut card, expense)?;
         } else {
@@ -1729,6 +1730,54 @@ mod tests {
         assert_eq!(page.total_count, 2);
         assert_eq!(page.items[0].original_name, "ALFA");
         assert_eq!(page.items[1].original_name, "BETA");
+    }
+
+    #[tokio::test]
+    async fn pending_pix_counts_in_expenses_but_not_in_merchants() {
+        let (_directory, db, _account_id) = setup().await;
+        insert_expense(
+            &db,
+            "pix-pending",
+            "2026-06-01",
+            "Pix emitido outra IF",
+            -3500,
+        )
+        .await;
+        sqlx::query(
+            "UPDATE transactions
+             SET merchant_key=NULL,merchant_identification_status='pending'
+             WHERE id='pix-pending'",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+
+        let report = generate_financial_report_impl(
+            ReportFilter {
+                start_month: "2026-06".into(),
+                end_month: "2026-06".into(),
+                source: "all".into(),
+                account_id: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.summary.expenses_in_cents, 3500);
+        assert!(report.merchants.is_empty());
+
+        let page = list_merchants_page_impl(
+            MerchantPageFilter {
+                search: None,
+                limit: None,
+                offset: None,
+                sort: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+        assert_eq!(page.total_count, 0);
     }
 
     #[tokio::test]

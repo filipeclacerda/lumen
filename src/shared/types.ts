@@ -93,6 +93,8 @@ export type Transaction = {
   accountKind: AccountType;
   date: string;
   description: string;
+  originalDescription?: string;
+  isImported?: boolean;
   amountInCents: number;
   categoryId?: string;
   category?: string;
@@ -229,6 +231,7 @@ export type ImportCandidate = {
   externalId?: string;
   isPix?: boolean;
   isOwnAccountPix?: boolean;
+  needsMerchantIdentification?: boolean;
   suggestedCategoryId?: string;
   suggestedCategoryName?: string;
   suggestedRuleId?: string;
@@ -467,6 +470,17 @@ export type MerchantPageFilter = {
 };
 export type MerchantPage = Page<MerchantReport>;
 export type MerchantAlias = { id: string; merchantKey: string; displayName: string };
+export type MerchantOption = { merchantKey: string; displayName: string };
+export type PendingPixTransaction = {
+  id: string;
+  date: string;
+  originalDescription: string;
+  amountInCents: number;
+  category?: string;
+  suggestedMerchantKey?: string;
+  suggestedMerchantName?: string;
+  suggestionReason?: string;
+};
 export type DailyReportPoint = { date: string; amountInCents: number; cumulativeInCents: number };
 export type GoalProgress = {
   targetId: string;
