@@ -1270,7 +1270,6 @@ pub const PT_BR_CATEGORY_VOCABULARY: &[VocabularyEntry] = &[
             "DROGARIA",
             "HOSPITAL",
             "CLINICA MEDICA",
-            "DROGARIA ARAUJO",
             "CLINICA ODONTOLOGICA",
             "LABORATORIO CLINICO",
             "DROGASIL",
