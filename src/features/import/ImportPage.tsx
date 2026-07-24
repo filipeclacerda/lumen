@@ -1726,7 +1726,7 @@ export function ImportPage() {
       )}
 
       {creatingCard && (
-        <Modal title="Novo cartão" onClose={() => setCreatingCard(false)}>
+        <Modal title="Novo cartão" className="import-card-creation-dialog" onClose={() => setCreatingCard(false)}>
           <p className="muted">Cadastre um cartão de crédito para vincular a esta fatura.</p>
           <div className="modal-form">
             <label>
@@ -1753,6 +1753,7 @@ export function ImportPage() {
         configureKind={pendingCardPath ? "card" : mappingState ? "mapping" : undefined}
         hasCards={cards.length > 0}
         cardSelected={Boolean(cardAccountId)}
+        cardCreationOpen={creatingCard}
       />
     </section>
   );

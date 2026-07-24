@@ -84,33 +84,43 @@ export function ImportTutorial({
   configureKind,
   hasCards = false,
   cardSelected = false,
+  cardCreationOpen = false,
 }: {
   configureKind?: ConfigureKind;
   hasCards?: boolean;
   cardSelected?: boolean;
+  cardCreationOpen?: boolean;
 }) {
   const navigate = useNavigate();
   const { activeGuide, guides, pause, dismiss, complete, goToStep } = useQuickStartGuide();
   const phase = guides.import?.phase ?? "choose";
   const content =
-    phase === "configure" && configureKind === "card"
-      ? cardSelected
-        ? {
-            target: '[data-import-tutorial="configure-card-review"]',
-            title: "Confira os dados da fatura",
-            description:
-              "O Lumen pré-selecionou um cartão e pode ter identificado o vencimento pelo arquivo. Confirme se cartão e vencimento estão corretos e clique em Revisar fatura para conferir as compras antes de importar.",
-            icon: Settings2,
-          }
-        : {
-            target: '[data-import-tutorial="configure-card"]',
-            title: hasCards ? "Selecione o cartão da fatura" : "Cadastre o cartão da fatura",
-            description: hasCards
-              ? "Escolha o cartão ao qual esta fatura pertence, confira o vencimento e clique em Revisar fatura para conferir as compras antes de importar."
-              : "Você ainda não tem um cartão cadastrado. Use o botão + para cadastrar o cartão da fatura; depois selecione-o, confira o vencimento e clique em Revisar fatura.",
-            icon: Settings2,
-          }
-      : phaseContent[phase];
+    phase === "configure" && cardCreationOpen
+      ? {
+          target: ".import-card-creation-dialog",
+          title: "Cadastre o novo cartão",
+          description:
+            "Dê um nome que identifique este cartão e clique em Salvar cartão. Depois, confira o vencimento e revise a fatura.",
+          icon: Settings2,
+        }
+      : phase === "configure" && configureKind === "card"
+        ? cardSelected
+          ? {
+              target: '[data-import-tutorial="configure-card-review"]',
+              title: "Confira os dados da fatura",
+              description:
+                "O Lumen pré-selecionou um cartão e pode ter identificado o vencimento pelo arquivo. Confirme se cartão e vencimento estão corretos e clique em Revisar fatura para conferir as compras antes de importar.",
+              icon: Settings2,
+            }
+          : {
+              target: '[data-import-tutorial="configure-card"]',
+              title: hasCards ? "Selecione o cartão da fatura" : "Cadastre o cartão da fatura",
+              description: hasCards
+                ? "Escolha o cartão ao qual esta fatura pertence, confira o vencimento e clique em Revisar fatura para conferir as compras antes de importar."
+                : "Você ainda não tem um cartão cadastrado. Use o botão + para cadastrar o cartão da fatura; depois selecione-o, confira o vencimento e clique em Revisar fatura.",
+              icon: Settings2,
+            }
+        : phaseContent[phase];
 
   useEffect(() => {
     if (activeGuide !== "import") return;
@@ -136,8 +146,10 @@ export function ImportTutorial({
     <GuideCoachmark
       active
       target={content.target}
-      targetPadding={phase === "review" || (phase === "configure" && configureKind === "card") ? 6 : 0}
-      initialPlacement={phase === "configure" && configureKind === "card" ? "left" : undefined}
+      targetPadding={
+        phase === "review" || (phase === "configure" && (configureKind === "card" || cardCreationOpen)) ? 6 : 0
+      }
+      initialPlacement={phase === "configure" && configureKind === "card" && !cardCreationOpen ? "left" : undefined}
       className="import-tutorial"
       role="region"
       labelledBy="import-tutorial-title"

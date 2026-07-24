@@ -249,6 +249,69 @@ describe("ImportTutorial", () => {
     expect(screen.getByText(/clique em Revisar fatura/)).toBeTruthy();
   });
 
+  it("moves the highlight to the complete card dialog while it is open", async () => {
+    useQuickStartGuide.getState().start("import");
+    useQuickStartGuide.getState().setImportPhase("configure");
+    const view = render(
+      <MemoryRouter>
+        <div data-import-tutorial="configure-card">Seletor de cartão</div>
+        <div className="import-card-creation-dialog">Cadastro completo do cartão</div>
+        <ImportTutorial configureKind="card" cardCreationOpen />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("heading", { name: "Cadastre o novo cartão" })).toBeTruthy();
+    expect(screen.getByText(/Dê um nome que identifique este cartão/)).toBeTruthy();
+
+    const backgroundTarget = document.querySelector('[data-import-tutorial="configure-card"]') as HTMLElement;
+    vi.spyOn(backgroundTarget, "getBoundingClientRect").mockReturnValue({
+      top: 80,
+      right: 900,
+      bottom: 150,
+      left: 500,
+      width: 400,
+      height: 70,
+      x: 500,
+      y: 80,
+      toJSON: () => ({}),
+    });
+    const dialogTarget = document.querySelector(".import-card-creation-dialog") as HTMLElement;
+    vi.spyOn(dialogTarget, "getBoundingClientRect").mockReturnValue({
+      top: 100,
+      right: 760,
+      bottom: 360,
+      left: 300,
+      width: 460,
+      height: 260,
+      x: 300,
+      y: 100,
+      toJSON: () => ({}),
+    });
+    fireEvent(window, new Event("resize"));
+
+    await waitFor(() => {
+      const highlight = document.querySelector(".quick-start-guide__highlight") as HTMLElement;
+      expect(Number.parseFloat(highlight.style.top)).toBeCloseTo(94);
+      expect(Number.parseFloat(highlight.style.left)).toBeCloseTo(294);
+      expect(Number.parseFloat(highlight.style.width)).toBeCloseTo(472);
+      expect(Number.parseFloat(highlight.style.height)).toBeCloseTo(272);
+    });
+
+    view.rerender(
+      <MemoryRouter>
+        <div data-import-tutorial="configure-card">Seletor de cartão</div>
+        <ImportTutorial configureKind="card" />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("heading", { name: "Cadastre o cartão da fatura" })).toBeTruthy();
+    await waitFor(() => {
+      const highlight = document.querySelector(".quick-start-guide__highlight") as HTMLElement;
+      expect(Number.parseFloat(highlight.style.top)).toBeCloseTo(74);
+      expect(Number.parseFloat(highlight.style.left)).toBeCloseTo(494);
+    });
+  });
+
   it("can be paused or permanently dismissed", () => {
     useQuickStartGuide.getState().start("import");
     const view = render(
