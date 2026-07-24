@@ -26,10 +26,10 @@ const steps = [
   },
   {
     route: "/transactions",
-    target: '[data-quick-guide="transactions-filters"]',
+    target: '[data-quick-guide="transactions-filter-panel"]',
     title: "Corrija e encontre pendências",
     description:
-      "Use busca e filtros para localizar lançamentos. A categoria pode ser alterada diretamente; padrões recorrentes podem ser automatizados em Categorias e regras.",
+      "Combine período, origem, conta, status e categoria para localizar pendências. Depois, altere a categoria na própria lista ou automatize padrões recorrentes em Categorias e regras.",
     icon: ListChecks,
   },
   {

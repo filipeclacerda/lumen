@@ -78,11 +78,39 @@ const phaseContent: Record<
   },
 };
 
-export function ImportTutorial() {
+type ConfigureKind = "card" | "mapping";
+
+export function ImportTutorial({
+  configureKind,
+  hasCards = false,
+  cardSelected = false,
+}: {
+  configureKind?: ConfigureKind;
+  hasCards?: boolean;
+  cardSelected?: boolean;
+}) {
   const navigate = useNavigate();
   const { activeGuide, guides, pause, dismiss, complete, goToStep } = useQuickStartGuide();
   const phase = guides.import?.phase ?? "choose";
-  const content = phaseContent[phase];
+  const content =
+    phase === "configure" && configureKind === "card"
+      ? cardSelected
+        ? {
+            target: '[data-import-tutorial="configure-card-review"]',
+            title: "Confira os dados da fatura",
+            description:
+              "O Lumen pré-selecionou um cartão e pode ter identificado o vencimento pelo arquivo. Confirme se cartão e vencimento estão corretos e clique em Revisar fatura para conferir as compras antes de importar.",
+            icon: Settings2,
+          }
+        : {
+            target: '[data-import-tutorial="configure-card"]',
+            title: hasCards ? "Selecione o cartão da fatura" : "Cadastre o cartão da fatura",
+            description: hasCards
+              ? "Escolha o cartão ao qual esta fatura pertence, confira o vencimento e clique em Revisar fatura para conferir as compras antes de importar."
+              : "Você ainda não tem um cartão cadastrado. Use o botão + para cadastrar o cartão da fatura; depois selecione-o, confira o vencimento e clique em Revisar fatura.",
+            icon: Settings2,
+          }
+      : phaseContent[phase];
 
   useEffect(() => {
     if (activeGuide !== "import") return;
@@ -108,6 +136,8 @@ export function ImportTutorial() {
     <GuideCoachmark
       active
       target={content.target}
+      targetPadding={phase === "review" || (phase === "configure" && configureKind === "card") ? 6 : 0}
+      initialPlacement={phase === "configure" && configureKind === "card" ? "left" : undefined}
       className="import-tutorial"
       role="region"
       labelledBy="import-tutorial-title"

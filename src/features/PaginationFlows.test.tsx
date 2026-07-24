@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetQuickStartGuideForTests, restartQuickStartGuide, useQuickStartGuide } from "../shared/quickStartGuide";
 import type { CreditCardInvoicePage, TransactionPage } from "../shared/types";
 import { AccountsCards } from "./accounts/AccountsCards";
 import { Transactions } from "./transactions/Transactions";
@@ -49,6 +50,7 @@ function renderScreen(component: React.ReactNode, initialEntry = "/") {
 describe("paginated screens", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetQuickStartGuideForTests();
     mocks.accounts.mockResolvedValue([]);
     mocks.categories.mockResolvedValue([]);
     mocks.creditCardInvoicesPage.mockResolvedValue({ items: [], totalCount: 0 });
@@ -64,6 +66,33 @@ describe("paginated screens", () => {
     const dialog = await screen.findByRole("dialog", { name: "Nova transação" });
     expect(dialog.querySelector("button.active")?.textContent).toBe("Receita");
     await waitFor(() => expect(screen.getByLabelText("Localização atual").textContent).toBe("/transactions"));
+  });
+
+  it("presents the detailed filters during the transaction guide and restores the closed state", async () => {
+    restartQuickStartGuide();
+    useQuickStartGuide.getState().goToStep(1);
+    renderScreen(<Transactions />, "/transactions");
+
+    await waitFor(() => expect(document.querySelector('[data-quick-guide="transactions-filter-panel"]')).toBeTruthy());
+    expect(screen.getByRole("button", { name: "Filtros" }).getAttribute("aria-expanded")).toBe("true");
+
+    useQuickStartGuide.getState().pause("complete");
+
+    await waitFor(() => expect(document.querySelector('[data-quick-guide="transactions-filter-panel"]')).toBeNull());
+    expect(screen.getByRole("button", { name: "Filtros" }).getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("keeps filters open after the guide when they were already open", async () => {
+    renderScreen(<Transactions />, "/transactions");
+    fireEvent.click(screen.getByRole("button", { name: "Filtros" }));
+    expect(document.querySelector('[data-quick-guide="transactions-filter-panel"]')).toBeTruthy();
+
+    restartQuickStartGuide();
+    useQuickStartGuide.getState().goToStep(1);
+    useQuickStartGuide.getState().pause("complete");
+
+    await waitFor(() => expect(document.querySelector('[data-quick-guide="transactions-filter-panel"]')).toBeTruthy());
+    expect(screen.getByRole("button", { name: "Filtros" }).getAttribute("aria-expanded")).toBe("true");
   });
 
   it("consumes the new-account intent before opening the account dialog", async () => {

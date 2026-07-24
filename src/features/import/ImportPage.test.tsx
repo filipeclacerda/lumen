@@ -9,8 +9,10 @@ import {
   CreditCardImportTotals,
   creditCardCategorizationCandidates,
   groupPendingCandidates,
+  importGuidePhaseForActiveScreen,
   importGuidePhaseForScreen,
   ImportReviewGroups,
+  shouldHandoffCompleteGuideToImport,
   summarizeSuggestions,
 } from "./ImportPage";
 
@@ -125,6 +127,72 @@ describe("fase contextual do tutorial", () => {
         hasConfiguration: false,
       }),
     ).toBe("success");
+  });
+
+  it("avança da configuração para a revisão quando a prévia da fatura fica disponível", () => {
+    expect(
+      importGuidePhaseForScreen({
+        currentPhase: "configure",
+        pendingCommit: false,
+        hasPreview: true,
+        hasConfiguration: false,
+      }),
+    ).toBe("review");
+  });
+
+  it("entrega a primeira etapa do tour completo à ajuda contextual quando o arquivo já foi lido", () => {
+    expect(
+      shouldHandoffCompleteGuideToImport({
+        activeGuide: "complete",
+        completeStepIndex: 0,
+        phase: "configure",
+      }),
+    ).toBe(true);
+    expect(
+      shouldHandoffCompleteGuideToImport({
+        activeGuide: "complete",
+        completeStepIndex: 0,
+        phase: "review",
+      }),
+    ).toBe(true);
+  });
+
+  it("mantém o tour completo enquanto a área de upload ainda é o alvo válido", () => {
+    expect(
+      shouldHandoffCompleteGuideToImport({
+        activeGuide: "complete",
+        completeStepIndex: 0,
+        phase: "choose",
+      }),
+    ).toBe(false);
+    expect(
+      shouldHandoffCompleteGuideToImport({
+        activeGuide: "complete",
+        completeStepIndex: 1,
+        phase: "configure",
+      }),
+    ).toBe(false);
+  });
+
+  it("ignora uma fase antiga concluída ao refazer o tour completo", () => {
+    expect(
+      importGuidePhaseForActiveScreen({
+        activeGuide: "complete",
+        currentPhase: "success",
+        pendingCommit: false,
+        hasPreview: false,
+        hasConfiguration: false,
+      }),
+    ).toBe("choose");
+    expect(
+      importGuidePhaseForActiveScreen({
+        activeGuide: "complete",
+        currentPhase: "success",
+        pendingCommit: false,
+        hasPreview: false,
+        hasConfiguration: true,
+      }),
+    ).toBe("configure");
   });
 });
 

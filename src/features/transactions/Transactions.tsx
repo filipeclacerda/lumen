@@ -20,12 +20,13 @@ import {
   Undo2,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "../../shared/api";
 import { money, shortDate, suggestRulePattern } from "../../shared/format";
 import { currentMonth } from "../../shared/period";
+import { useQuickStartGuide } from "../../shared/quickStartGuide";
 import { CategorySelect } from "../../shared/ui/CategorySelect";
 import { DatePicker, MonthPicker } from "../../shared/ui/CalendarPicker";
 import { MoneyInput } from "../../shared/ui/MoneyInput";
@@ -119,6 +120,10 @@ export function Transactions() {
   const [search, setSearch] = useState(qParam);
   const [debouncedSearch, setDebouncedSearch] = useState(qParam);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const completeGuideActive = useQuickStartGuide(
+    (state) => state.mode === "tour" && state.activeGuide === "complete" && state.guides.complete.stepIndex === 1,
+  );
+  const advancedFiltersBeforeGuide = useRef<boolean | undefined>(undefined);
   const [exporting, setExporting] = useState(false);
   const toast = useToast();
   const [page, setPage] = useState(0);
@@ -160,6 +165,20 @@ export function Transactions() {
     const timeout = setTimeout(() => setDebouncedSearch(search), 300);
     return () => clearTimeout(timeout);
   }, [search]);
+
+  useEffect(() => {
+    if (completeGuideActive) {
+      if (advancedFiltersBeforeGuide.current === undefined) {
+        advancedFiltersBeforeGuide.current = advancedOpen;
+      }
+      if (!advancedOpen) setAdvancedOpen(true);
+      return;
+    }
+    if (advancedFiltersBeforeGuide.current === undefined) return;
+    const previousState = advancedFiltersBeforeGuide.current;
+    advancedFiltersBeforeGuide.current = undefined;
+    if (advancedOpen !== previousState) setAdvancedOpen(previousState);
+  }, [advancedOpen, completeGuideActive]);
 
   useEffect(() => {
     if (!qParam) return;
@@ -636,7 +655,7 @@ export function Transactions() {
           ))}
         </div>
         {advancedOpen && (
-          <div className="transaction-filter-panel">
+          <div className="transaction-filter-panel" data-quick-guide="transactions-filter-panel">
             <label>
               <CalendarRange size={15} /> De
               <MonthPicker

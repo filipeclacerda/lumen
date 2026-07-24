@@ -303,6 +303,39 @@ export function importGuidePhaseForScreen({
   return "choose";
 }
 
+export function shouldHandoffCompleteGuideToImport({
+  activeGuide,
+  completeStepIndex,
+  phase,
+}: {
+  activeGuide: "complete" | "import" | null;
+  completeStepIndex: number;
+  phase: ImportGuidePhase;
+}) {
+  return activeGuide === "complete" && completeStepIndex === 0 && phase !== "choose";
+}
+
+export function importGuidePhaseForActiveScreen({
+  activeGuide,
+  currentPhase,
+  pendingCommit,
+  hasPreview,
+  hasConfiguration,
+}: {
+  activeGuide: "complete" | "import" | null;
+  currentPhase?: ImportGuidePhase;
+  pendingCommit: boolean;
+  hasPreview: boolean;
+  hasConfiguration: boolean;
+}) {
+  return importGuidePhaseForScreen({
+    currentPhase: activeGuide === "import" ? currentPhase : undefined,
+    pendingCommit,
+    hasPreview,
+    hasConfiguration,
+  });
+}
+
 export function ImportPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -330,6 +363,7 @@ export function ImportPage() {
   const activeGuide = useQuickStartGuide((state) => state.activeGuide);
   const guideMode = useQuickStartGuide((state) => state.mode);
   const completeGuideStatus = useQuickStartGuide((state) => state.guides.complete.status);
+  const completeGuideStepIndex = useQuickStartGuide((state) => state.guides.complete.stepIndex);
   const importGuideProgress = useQuickStartGuide((state) => state.guides.import);
   const restartGuide = useQuickStartGuide((state) => state.restart);
   const setImportPhase = useQuickStartGuide((state) => state.setImportPhase);
@@ -432,18 +466,31 @@ export function ImportPage() {
   }, [activeGuide, bootstrap, completeGuideStatus, guideMode, importGuideProgress?.status, restartGuide]);
 
   useEffect(() => {
-    if (activeGuide !== "import") return;
-    const phase = importGuidePhaseForScreen({
+    const phase = importGuidePhaseForActiveScreen({
+      activeGuide,
       currentPhase: importGuideProgress?.phase,
       pendingCommit: Boolean(pendingCommit),
       hasPreview: Boolean(bankPreview || cardPreview),
       hasConfiguration: Boolean(pendingCardPath || mappingState),
     });
-    if (phase !== importGuideProgress?.phase) setImportPhase(phase);
+
+    if (
+      shouldHandoffCompleteGuideToImport({
+        activeGuide,
+        completeStepIndex: completeGuideStepIndex,
+        phase,
+      })
+    ) {
+      setImportPhase(phase);
+      return;
+    }
+
+    if (activeGuide === "import" && phase !== importGuideProgress?.phase) setImportPhase(phase);
   }, [
     activeGuide,
     bankPreview,
     cardPreview,
+    completeGuideStepIndex,
     importGuideProgress?.phase,
     mappingState,
     pendingCardPath,
@@ -1004,7 +1051,6 @@ export function ImportPage() {
       {canStartImport && (
         <article
           className={`dropzone import-dropzone${isDraggingFile ? " dragging" : ""}`}
-          data-import-tutorial="choose"
           onDragEnter={handleDropzoneDrag}
           onDragOver={handleDropzoneDrag}
           onDragLeave={handleDropzoneLeave}
@@ -1016,7 +1062,7 @@ export function ImportPage() {
             Arraste um CSV, OFX ou PDF para esta área. O aplicativo reconhece automaticamente extratos e faturas; para
             outros CSVs, você pode mapear as colunas e salvar o layout.
           </p>
-          <button ref={chooseFileRef} onClick={choose} disabled={isReadingFile}>
+          <button ref={chooseFileRef} data-import-tutorial="choose" onClick={choose} disabled={isReadingFile}>
             {isReadingFile ? "Lendo arquivo..." : "Escolher arquivo"}
           </button>
           <div className="import-trouble-menu">
@@ -1123,8 +1169,8 @@ export function ImportPage() {
       )}
 
       {pendingCardPath && (
-        <article className="panel card-import-setup" data-import-tutorial="configure">
-          <div className="panel-title">
+        <article className="panel card-import-setup">
+          <div className="panel-title" data-import-tutorial="configure">
             <div>
               <p className="eyebrow">FATURA DETECTADA</p>
               <h2>Em qual cartão importar?</h2>
@@ -1137,10 +1183,11 @@ export function ImportPage() {
             <FileText size={16} />
             <span>{pendingCardPath.split(/[\\/]/).pop()}</span>
           </div>
-          <div className="card-import-form">
+          <div className="card-import-form" data-import-tutorial="configure-card-review">
             <CardPicker
               label="Cartão"
               required
+              tutorialTarget="configure-card"
               cards={cards}
               value={cardAccountId}
               onChange={setCardAccountId}
@@ -1163,8 +1210,8 @@ export function ImportPage() {
       )}
 
       {mappingState && (
-        <article className="panel import-mapping-panel" data-import-tutorial="configure">
-          <div className="panel-title">
+        <article className="panel import-mapping-panel">
+          <div className="panel-title" data-import-tutorial="configure">
             <div>
               <p className="eyebrow">CSV PERSONALIZADO</p>
               <h2>Mapeie as colunas do arquivo</h2>
@@ -1375,8 +1422,8 @@ export function ImportPage() {
       )}
 
       {bankPreview && (
-        <article className="panel import-review-panel" data-import-tutorial="review">
-          <div className="panel-title">
+        <article className="panel import-review-panel">
+          <div className="panel-title" data-import-tutorial="review">
             <h2>Prévia de {bankPreview.fileName}</h2>
             <span>{bankPreview.candidates.length} registros</span>
           </div>
@@ -1483,8 +1530,8 @@ export function ImportPage() {
       )}
 
       {cardPreview && (
-        <article className="panel import-review-panel" data-import-tutorial="review">
-          <div className="panel-title">
+        <article className="panel import-review-panel">
+          <div className="panel-title" data-import-tutorial="review">
             <div>
               <p className="eyebrow">FATURA DE CARTÃO</p>
               <h2>{cardPreview.fileName}</h2>
@@ -1700,7 +1747,11 @@ export function ImportPage() {
           </div>
         </Modal>
       )}
-      <ImportTutorial />
+      <ImportTutorial
+        configureKind={pendingCardPath ? "card" : mappingState ? "mapping" : undefined}
+        hasCards={cards.length > 0}
+        cardSelected={Boolean(cardAccountId)}
+      />
     </section>
   );
 }
@@ -2363,6 +2414,7 @@ function CardPicker({
   onChange,
   onCreate,
   required,
+  tutorialTarget,
 }: {
   label: string;
   cards: { id: string; name: string }[];
@@ -2370,10 +2422,11 @@ function CardPicker({
   onChange: (id: string) => void;
   onCreate: () => void;
   required?: boolean;
+  tutorialTarget?: string;
 }) {
   const empty = cards.length === 0;
   return (
-    <div className="card-picker">
+    <div className="card-picker" data-import-tutorial={tutorialTarget}>
       <span className="card-picker-label">
         {label}
         {required && <span className="req"> *</span>}
