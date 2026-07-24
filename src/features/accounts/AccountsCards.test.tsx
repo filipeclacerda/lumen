@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountsCards } from "./AccountsCards";
-import type { BalanceCheckpoint, ReconciliationPreview } from "../../shared/types";
+import type { AccountBalanceSummary, BalanceCheckpoint, ReconciliationPreview } from "../../shared/types";
 
 const mocks = vi.hoisted(() => ({
   accounts: vi.fn(),
@@ -221,10 +221,12 @@ describe("AccountsCards balance reconciliation", () => {
       differenceInCents,
     });
     renderAccounts();
-    await screen.findByRole("button", { name: "Conferir saldo" });
-    expect(screen.queryByRole("button", { name: "Conferir saldo" })?.textContent).toBe("Conferir saldo");
-    expect(screen.getAllByRole("button", { name: "Conferir saldo" })).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "Conferir saldo" }));
+    await screen.findByRole("button", { name: "Conferir saldo de Conta corrente" });
+    expect(screen.queryByRole("button", { name: "Conferir saldo de Conta corrente" })?.textContent).toBe(
+      "Conferir saldo",
+    );
+    expect(screen.getAllByRole("button", { name: "Conferir saldo de Conta corrente" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Conferir saldo de Conta corrente" }));
     fireEvent.change(screen.getByLabelText("Data do saldo"), { target: { value: "2026-07-10" } });
     fireEvent.change(screen.getByLabelText("Saldo informado"), { target: { value: "1000,00" } });
     fireEvent.click(screen.getByRole("button", { name: "Ver diferença" }));
@@ -274,6 +276,42 @@ describe("AccountsCards balance reconciliation", () => {
     await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith("Saldo conferido com sucesso."));
   });
 
+  it("mantém saldo, apoio e ações em regiões consistentes para conta e cartão", async () => {
+    renderAccounts();
+
+    const balanceAction = await screen.findByRole("button", { name: "Conferir saldo de Conta corrente" });
+    const bankCard = balanceAction.closest(".account-card");
+    const cardCard = screen.getByText("Cartão principal").closest(".account-card");
+
+    expect(bankCard?.querySelector(".account-card-header")).toBeTruthy();
+    expect(bankCard?.querySelector(".account-card-support")).toBeTruthy();
+    expect(bankCard?.querySelector(".account-card-footer")).toBeTruthy();
+    expect(balanceAction.classList.contains("secondary")).toBe(true);
+    expect(bankCard?.querySelector(".account-card-balance")?.textContent).toContain("Saldo atual");
+    expect(bankCard?.querySelector(".account-card-balance")?.textContent).toContain("R$ 1.000,00");
+
+    expect(cardCard?.querySelector(".account-card-header")).toBeTruthy();
+    expect(cardCard?.querySelector(".account-card-support")).toBeNull();
+    expect(cardCard?.querySelector(".account-card-footer")).toBeTruthy();
+    expect(cardCard?.querySelector(".account-balance-button")).toBeNull();
+    expect(screen.getByRole("button", { name: "Renomear Cartão principal" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Arquivar Cartão principal" })).toBeTruthy();
+  });
+
+  it("não apresenta diagnóstico financeiro enquanto o resumo ainda carrega", async () => {
+    const summaries = deferred<AccountBalanceSummary[]>();
+    mocks.accountBalanceSummaries.mockReturnValue(summaries.promise);
+
+    renderAccounts();
+
+    expect(await screen.findByText("Carregando resumo…")).toBeTruthy();
+    expect(screen.getByText("Carregando projeção…")).toBeTruthy();
+    expect(screen.queryByText("Precisa conferir")).toBeNull();
+    expect(screen.queryByText("Projeção indisponível")).toBeNull();
+
+    summaries.resolve([]);
+  });
+
   it("expõe diferença não zero sem oferecer criação de ajuste", async () => {
     mocks.accountBalanceSummaries.mockResolvedValue([
       {
@@ -301,7 +339,7 @@ describe("AccountsCards balance reconciliation", () => {
     const second = deferred<ReconciliationPreview>();
     mocks.reconciliationPreview.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
     renderAccounts();
-    fireEvent.click(await screen.findByRole("button", { name: "Conferir saldo" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Conferir saldo de Conta corrente" }));
 
     const date = screen.getByLabelText("Data do saldo");
     const balance = screen.getByLabelText("Saldo informado");
@@ -360,11 +398,11 @@ describe("AccountsCards balance reconciliation", () => {
 
     renderAccounts();
 
+    expect(await screen.findByText("Em 30 dias")).toBeTruthy();
     expect(
-      await screen.findByText(
-        (_, element) => element?.tagName === "SMALL" && element.textContent === "Em 30 dias: -R$ 50,00 · 2 previstos",
-      ),
+      screen.getByText((_, element) => element?.tagName === "STRONG" && element.textContent === "-R$ 50,00"),
     ).toBeTruthy();
+    expect(screen.getByText("2 lançamentos previstos")).toBeTruthy();
     expect(screen.getByText("Atenção: saldo pode ficar negativo em 03/08.")).toBeTruthy();
   });
 

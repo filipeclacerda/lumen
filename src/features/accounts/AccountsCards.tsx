@@ -65,7 +65,11 @@ export function AccountsCards() {
     isError: accountsError,
     refetch: refetchAccounts,
   } = useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
-  const { data: accountBalanceSummaries = [] } = useQuery({
+  const {
+    data: accountBalanceSummaries = [],
+    isLoading: balanceSummariesLoading,
+    isError: balanceSummariesError,
+  } = useQuery({
     queryKey: ["account-balance-summaries"],
     queryFn: api.accountBalanceSummaries,
   });
@@ -304,49 +308,72 @@ export function AccountsCards() {
             return (
               <article
                 id={`account-${account.id}`}
+                aria-labelledby={`account-${account.id}-name`}
                 className={`account-card${accountQuery && account.name.toLocaleLowerCase("pt-BR") === accountQuery.toLocaleLowerCase("pt-BR") ? " command-target" : ""}`}
                 key={account.id}
               >
-                <div className={`metric-icon ${account.kind === "credit_card" ? "red" : "green"}`}>
-                  {account.kind === "credit_card" ? <CreditCard /> : <Landmark />}
-                </div>
-                <div>
-                  <small>{account.kind === "credit_card" ? "Cartão de crédito" : "Conta"}</small>
-                  <h3>{account.name}</h3>
-                  {account.kind !== "credit_card" && (
-                    <small>
-                      {balanceSummary && !balanceSummary.needsReconciliation && balanceSummary.lastReconciledAt
-                        ? `Conferido em ${dayMonth(balanceSummary.lastReconciledAt)}`
-                        : "Precisa conferir"}
-                    </small>
-                  )}
-                </div>
-                <div className="account-card-right">
-                  <strong>{money(balanceSummary?.realizedBalanceInCents ?? account.balanceInCents)}</strong>
-                  {account.kind !== "credit_card" && balanceSummary && (
-                    <>
-                      <small>
-                        Em 30 dias: {money(balanceSummary.forecastBalanceInCents)}
-                        {balanceSummary.scheduledCount > 0
-                          ? ` · ${balanceSummary.scheduledCount} ${balanceSummary.scheduledCount === 1 ? "previsto" : "previstos"}`
-                          : ""}
+                <div className="account-card-header">
+                  <div className={`metric-icon ${account.kind === "credit_card" ? "red" : "green"}`}>
+                    {account.kind === "credit_card" ? <CreditCard /> : <Landmark />}
+                  </div>
+                  <div className="account-card-identity">
+                    <small>{account.kind === "credit_card" ? "Cartão de crédito" : "Conta"}</small>
+                    <h3 id={`account-${account.id}-name`}>{account.name}</h3>
+                    {account.kind !== "credit_card" && (
+                      <small className="account-card-status">
+                        {balanceSummariesLoading
+                          ? "Carregando resumo…"
+                          : balanceSummariesError
+                            ? "Resumo indisponível"
+                            : balanceSummary && !balanceSummary.needsReconciliation && balanceSummary.lastReconciledAt
+                              ? `Conferido em ${dayMonth(balanceSummary.lastReconciledAt)}`
+                              : "Precisa conferir"}
                       </small>
-                      {balanceSummary.minimumBalanceInCents < 0 && (
-                        <small className="negative">
-                          Atenção: saldo pode ficar negativo
-                          {balanceSummary.minimumBalanceDate
-                            ? ` em ${dayMonth(balanceSummary.minimumBalanceDate)}`
-                            : ""}
-                          .
-                        </small>
+                    )}
+                  </div>
+                  <div className="account-card-balance">
+                    <small>Saldo atual</small>
+                    <strong>{money(balanceSummary?.realizedBalanceInCents ?? account.balanceInCents)}</strong>
+                  </div>
+                </div>
+                {account.kind !== "credit_card" && (
+                  <div className="account-card-support">
+                    <div className="account-card-forecast">
+                      {balanceSummariesLoading ? (
+                        <small>Carregando projeção…</small>
+                      ) : balanceSummariesError ? (
+                        <small>Projeção indisponível no momento.</small>
+                      ) : balanceSummary ? (
+                        <>
+                          <small>Em 30 dias</small>
+                          <strong>{money(balanceSummary.forecastBalanceInCents)}</strong>
+                          {balanceSummary.scheduledCount > 0 && (
+                            <small>
+                              {balanceSummary.scheduledCount}{" "}
+                              {balanceSummary.scheduledCount === 1 ? "lançamento previsto" : "lançamentos previstos"}
+                            </small>
+                          )}
+                        </>
+                      ) : (
+                        <small>Projeção indisponível</small>
                       )}
-                    </>
-                  )}
+                    </div>
+                    {balanceSummary && balanceSummary.minimumBalanceInCents < 0 && (
+                      <small className="negative account-card-warning">
+                        Atenção: saldo pode ficar negativo
+                        {balanceSummary.minimumBalanceDate ? ` em ${dayMonth(balanceSummary.minimumBalanceDate)}` : ""}.
+                      </small>
+                    )}
+                  </div>
+                )}
+                <div className="account-card-footer">
                   {account.kind !== "credit_card" && (
                     <button
-                      className="text-button account-balance-button"
+                      className="secondary account-balance-button"
+                      aria-label={`Conferir saldo de ${account.name}`}
                       onClick={() => setBalanceReconciliationAccount(account)}
                     >
+                      <CheckCircle2 size={16} aria-hidden="true" />
                       Conferir saldo
                     </button>
                   )}
