@@ -5,6 +5,86 @@ Todas as mudanças relevantes deste projeto são documentadas neste arquivo.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o
 projeto adota o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.9.0] - 2026-07-25
+
+Atualização ampla de confiabilidade e organização financeira, com novos fluxos
+de conciliação, revisão de pendências e importação guiada sem abrir mão do
+armazenamento local.
+
+### Adicionado
+
+- **Central de revisão de dados** para reunir transações sem categoria ou
+  pendentes, saldos que precisam ser conferidos e pagamentos de cartão ainda
+  não conciliados.
+- **Conferência de saldo por conta** com registro do saldo informado em uma
+  data, comparação com o razão e projeções de saldo realizado, pendente, futuro
+  e mínimo, sem transformar diferenças em receitas ou despesas.
+- **Conciliação de pagamentos de cartão** entre débito bancário, crédito no
+  cartão e fatura, com escolha explícita dos vínculos e possibilidade de
+  desfazer a conciliação.
+- **Parcelamento manual no cartão** de 2 a 48 vezes, preservando o total exato em
+  centavos e apresentando previamente datas e valores das parcelas.
+- **Revisão guiada das importações** por estabelecimento, com sugestões de
+  categoria, ações em lote, tutorial dedicado e tratamento separado de Pix e
+  transferências entre contas próprias.
+- **Identificação confirmada de Pix importados**: descrições genéricas ficam
+  pendentes até o usuário associá-las a um estabelecimento existente ou a um
+  novo nome, preservando o texto original do banco.
+- **União segura de categorias** com prévia do impacto e migração de
+  transações, regras, recorrências, subcategorias e metas compatíveis.
+- **Seletor de calendário compartilhado** para datas e meses, com navegação por
+  teclado e uso consistente em importações, recorrências, relatórios e
+  transações.
+
+### Alterado
+
+- O onboarding foi redesenhado para registrar objetivo financeiro, meta mensal
+  e modo inicial de uso, além de oferecer uma orientação mais clara para
+  importar dados, lançar manualmente ou conhecer o aplicativo.
+- Transferências vinculadas agora podem ser editadas como uma unidade,
+  desvinculadas com restauração das categorias anteriores, excluídas e
+  recuperadas com as duas pernas preservadas.
+- Orçamentos e metas por categoria podem incluir subcategorias, e relatórios,
+  patrimônio, projeções e indicadores passam a compartilhar regras financeiras
+  mais consistentes para sinais, vínculos e lançamentos excluídos.
+- A tela de contas e cartões passa a destacar previsões, risco de saldo negativo
+  e conciliações pendentes; a janela principal usa uma área maior e centralizada
+  quando o monitor comporta 1600 × 900 px.
+- Tutoriais, seletores de categoria, modais e estados de erro receberam
+  melhorias de foco, posicionamento, continuidade, responsividade e anúncios
+  para leitores de tela.
+
+### Corrigido
+
+- Compras, estornos e pagamentos de faturas passam a manter totais e sinais
+  separados corretamente, incluindo a correção dos dados existentes por
+  migration.
+- Ações genéricas deixam de alterar isoladamente lançamentos protegidos por
+  vínculos de transferência ou pagamento de cartão.
+- O vocabulário de categorização foi ampliado e teve duplicidades removidas,
+  melhorando sugestões sem classificar Pix genéricos automaticamente.
+- Invalidações de cache após mutações financeiras foram centralizadas para
+  evitar resumos, relatórios, orçamento e patrimônio desatualizados.
+
+### Testes e qualidade
+
+- Ampliada a cobertura de importação, conciliação, parcelamento, transferências,
+  categorias, orçamento, onboarding, relatórios, saldos, seletores, tutoriais e
+  invalidação de consultas.
+- Adicionadas validações de compatibilidade entre tipos de categoria, métricas
+  financeiras compartilhadas, projeção de fluxo de caixa e um limite de erro
+  amigável para telas carregadas sob demanda.
+- Novas migrations aditivas preservam o histórico de categorias, checkpoints,
+  parcelas, vínculos e identificação de estabelecimentos, com índices e
+  restrições para reforçar a integridade local.
+
+### Projeto
+
+- O fluxo de release passa a localizar drafts pela listagem de releases e usa a
+  permissão necessária para validar suas notas antes da matriz de builds.
+- Adicionados o patrocínio pelo GitHub, um plano de divulgação e fontes locais
+  para a nova apresentação do onboarding.
+
 ## [0.8.1] - 2026-07-21
 
 Correções de usabilidade nos seletores de categoria e refinamentos na janela
@@ -559,3 +639,4 @@ erros, com cadastro rápido de cartão sem sair do fluxo.
 [0.3.7]: https://github.com/filipeclacerda/lumen/compare/v0.3.6...v0.3.7
 [0.4.0]: https://github.com/filipeclacerda/lumen/compare/v0.3.7...v0.4.0
 [0.7.0]: https://github.com/filipeclacerda/lumen/compare/v0.6.0...v0.7.0
+[0.9.0]: https://github.com/filipeclacerda/lumen/compare/v0.8.1...v0.9.0
