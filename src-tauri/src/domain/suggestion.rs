@@ -1,4 +1,5 @@
 use std::{
+    cmp::Ordering,
     collections::{HashMap, HashSet},
     sync::OnceLock,
 };
@@ -243,6 +244,34 @@ struct VocabularySearchIndex {
     phrases: Vec<IndexedVocabularyPhrase>,
     by_anchor: HashMap<String, Vec<usize>>,
     by_compact: HashMap<String, Vec<usize>>,
+    truncated_prefix_categories: HashMap<String, Option<&'static str>>,
+}
+
+const MIN_APPROXIMATE_TOKEN_LENGTH: usize = 6;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum ApproximateMatchKind {
+    Truncation,
+    Typo,
+}
+
+#[derive(Debug)]
+struct ApproximateVocabularyMatch<'a> {
+    phrase: &'a IndexedVocabularyPhrase,
+    kind: ApproximateMatchKind,
+    distance: usize,
+    exact_tokens: usize,
+    window_start: usize,
+    window_len: usize,
+}
+
+#[derive(Debug)]
+struct ApproximateWindowMatch {
+    kind: ApproximateMatchKind,
+    distance: usize,
+    exact_tokens: usize,
+    window_start: usize,
+    window_len: usize,
 }
 
 impl VocabularySearchIndex {
@@ -250,6 +279,7 @@ impl VocabularySearchIndex {
         let mut phrases = Vec::new();
         let mut by_anchor: HashMap<String, Vec<usize>> = HashMap::new();
         let mut by_compact: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut truncated_prefix_categories: HashMap<String, Option<&'static str>> = HashMap::new();
 
         for entry in PT_BR_CATEGORY_VOCABULARY {
             for phrase in entry.phrases {
@@ -259,6 +289,20 @@ impl VocabularySearchIndex {
                     .collect::<Vec<_>>();
                 if tokens.is_empty() {
                     continue;
+                }
+                for token in &tokens {
+                    let characters = token.chars().collect::<Vec<_>>();
+                    for prefix_length in MIN_APPROXIMATE_TOKEN_LENGTH..characters.len() {
+                        let prefix = characters[..prefix_length].iter().collect::<String>();
+                        truncated_prefix_categories
+                            .entry(prefix)
+                            .and_modify(|owner| {
+                                if *owner != Some(entry.category_id) {
+                                    *owner = None;
+                                }
+                            })
+                            .or_insert(Some(entry.category_id));
+                    }
                 }
                 let compact = tokens.concat();
                 let anchor = tokens
@@ -287,6 +331,7 @@ impl VocabularySearchIndex {
             phrases,
             by_anchor,
             by_compact,
+            truncated_prefix_categories,
         }
     }
 
@@ -333,6 +378,213 @@ impl VocabularySearchIndex {
         });
         matches
     }
+
+    fn approximate_matching_phrases(
+        &self,
+        description: &str,
+    ) -> Vec<ApproximateVocabularyMatch<'_>> {
+        let tokens = canonical_search_tokens(description);
+        if tokens.is_empty() {
+            return Vec::new();
+        }
+
+        let mut matches = Vec::new();
+        for phrase in &self.phrases {
+            if phrase.tokens.len() > tokens.len() {
+                continue;
+            }
+
+            let best = tokens
+                .windows(phrase.tokens.len())
+                .enumerate()
+                .filter_map(|(window_start, window)| {
+                    self.approximate_window_match(
+                        &tokens,
+                        window,
+                        window_start,
+                        phrase.category_id,
+                        &phrase.tokens,
+                    )
+                })
+                .min_by(compare_approximate_window_matches);
+
+            if let Some(best) = best {
+                matches.push(ApproximateVocabularyMatch {
+                    phrase,
+                    kind: best.kind,
+                    distance: best.distance,
+                    exact_tokens: best.exact_tokens,
+                    window_start: best.window_start,
+                    window_len: best.window_len,
+                });
+            }
+        }
+
+        let ambiguous = matches
+            .iter()
+            .fold(
+                HashMap::<(usize, usize, ApproximateMatchKind, usize, usize), Option<&str>>::new(),
+                |mut grouped, item| {
+                    let key = (
+                        item.window_start,
+                        item.window_len,
+                        item.kind,
+                        item.distance,
+                        item.exact_tokens,
+                    );
+                    grouped
+                        .entry(key)
+                        .and_modify(|owner| {
+                            if *owner != Some(item.phrase.category_id) {
+                                *owner = None;
+                            }
+                        })
+                        .or_insert(Some(item.phrase.category_id));
+                    grouped
+                },
+            )
+            .into_iter()
+            .filter_map(|(key, owner)| owner.is_none().then_some(key))
+            .collect::<HashSet<_>>();
+
+        matches.retain(|item| {
+            !ambiguous.contains(&(
+                item.window_start,
+                item.window_len,
+                item.kind,
+                item.distance,
+                item.exact_tokens,
+            ))
+        });
+        matches.sort_by(compare_approximate_matches);
+        matches
+    }
+
+    fn approximate_window_match(
+        &self,
+        all_tokens: &[String],
+        window: &[String],
+        window_start: usize,
+        category_id: &'static str,
+        phrase_tokens: &[String],
+    ) -> Option<ApproximateWindowMatch> {
+        let mut kind = ApproximateMatchKind::Truncation;
+        let mut distance = 0;
+        let mut exact_tokens = 0;
+        let mut has_approximate_token = false;
+
+        for (offset, (actual, expected)) in window.iter().zip(phrase_tokens).enumerate() {
+            if actual == expected {
+                exact_tokens += 1;
+                continue;
+            }
+
+            let is_last_description_token = window_start + offset + 1 == all_tokens.len();
+            let is_unambiguous_truncation = is_last_description_token
+                && actual.chars().count() >= MIN_APPROXIMATE_TOKEN_LENGTH
+                && expected.starts_with(actual)
+                && actual.chars().count() < expected.chars().count()
+                && self
+                    .truncated_prefix_categories
+                    .get(actual)
+                    .copied()
+                    .flatten()
+                    == Some(category_id);
+            if is_unambiguous_truncation {
+                has_approximate_token = true;
+                continue;
+            }
+
+            let token_distance = approximate_token_distance(actual, expected)?;
+            has_approximate_token = true;
+            kind = ApproximateMatchKind::Typo;
+            distance += token_distance;
+        }
+
+        has_approximate_token.then_some(ApproximateWindowMatch {
+            kind,
+            distance,
+            exact_tokens,
+            window_start,
+            window_len: window.len(),
+        })
+    }
+}
+
+fn compare_approximate_window_matches(
+    left: &ApproximateWindowMatch,
+    right: &ApproximateWindowMatch,
+) -> Ordering {
+    left.kind
+        .cmp(&right.kind)
+        .then_with(|| left.distance.cmp(&right.distance))
+        .then_with(|| right.exact_tokens.cmp(&left.exact_tokens))
+        .then_with(|| left.window_start.cmp(&right.window_start))
+}
+
+fn compare_approximate_matches(
+    left: &ApproximateVocabularyMatch<'_>,
+    right: &ApproximateVocabularyMatch<'_>,
+) -> Ordering {
+    left.kind
+        .cmp(&right.kind)
+        .then_with(|| left.distance.cmp(&right.distance))
+        .then_with(|| right.exact_tokens.cmp(&left.exact_tokens))
+        .then_with(|| right.phrase.tokens.len().cmp(&left.phrase.tokens.len()))
+        .then_with(|| right.phrase.compact.len().cmp(&left.phrase.compact.len()))
+        .then_with(|| left.phrase.order.cmp(&right.phrase.order))
+        .then_with(|| left.window_start.cmp(&right.window_start))
+}
+
+fn approximate_token_distance(actual: &str, expected: &str) -> Option<usize> {
+    let actual_length = actual.chars().count();
+    let expected_length = expected.chars().count();
+    let longest = actual_length.max(expected_length);
+    if actual_length < MIN_APPROXIMATE_TOKEN_LENGTH
+        || expected_length < MIN_APPROXIMATE_TOKEN_LENGTH
+    {
+        return None;
+    }
+
+    let maximum_distance = if longest <= 8 { 1 } else { 2 };
+    if actual_length.abs_diff(expected_length) > maximum_distance {
+        return None;
+    }
+    let distance = damerau_levenshtein_distance(actual, expected);
+    (distance > 0 && distance <= maximum_distance).then_some(distance)
+}
+
+fn damerau_levenshtein_distance(left: &str, right: &str) -> usize {
+    let left = left.chars().collect::<Vec<_>>();
+    let right = right.chars().collect::<Vec<_>>();
+    let mut distances = vec![vec![0; right.len() + 1]; left.len() + 1];
+
+    for (index, row) in distances.iter_mut().enumerate() {
+        row[0] = index;
+    }
+    for (index, cell) in distances[0].iter_mut().enumerate() {
+        *cell = index;
+    }
+
+    for left_index in 1..=left.len() {
+        for right_index in 1..=right.len() {
+            let substitution_cost = usize::from(left[left_index - 1] != right[right_index - 1]);
+            distances[left_index][right_index] = (distances[left_index - 1][right_index] + 1)
+                .min(distances[left_index][right_index - 1] + 1)
+                .min(distances[left_index - 1][right_index - 1] + substitution_cost);
+
+            if left_index > 1
+                && right_index > 1
+                && left[left_index - 1] == right[right_index - 2]
+                && left[left_index - 2] == right[right_index - 1]
+            {
+                distances[left_index][right_index] = distances[left_index][right_index]
+                    .min(distances[left_index - 2][right_index - 2] + 1);
+            }
+        }
+    }
+
+    distances[left.len()][right.len()]
 }
 
 fn vocabulary_search_index() -> &'static VocabularySearchIndex {
@@ -506,7 +758,19 @@ pub fn shortlist_categories(
         });
     }
 
-    for phrase in vocabulary_search_index().matching_phrases(description) {
+    let vocabulary_index = vocabulary_search_index();
+    let exact_vocabulary_matches = vocabulary_index.matching_phrases(description);
+    let approximate_vocabulary_matches = vocabulary_index.approximate_matching_phrases(description);
+    let vocabulary_matches = exact_vocabulary_matches
+        .into_iter()
+        .map(|phrase| (phrase, false))
+        .chain(
+            approximate_vocabulary_matches
+                .into_iter()
+                .map(|matched| (matched.phrase, true)),
+        );
+
+    for (phrase, is_approximate) in vocabulary_matches {
         if result.len() == 3 {
             break;
         }
@@ -519,6 +783,8 @@ pub fn shortlist_categories(
             continue;
         }
         if !generic_vocabulary_match_allowed(phrase.category_id, phrase.phrase, &folded_description)
+            || (is_approximate
+                && !generic_vocabulary_approximate_match_allowed(phrase.category_id, phrase.phrase))
         {
             continue;
         }
@@ -527,7 +793,11 @@ pub fn shortlist_categories(
             category_id: category.id.clone(),
             category_name: category.name.clone(),
             source: CategorySuggestionSource::Vocabulary,
-            reason: format!("Descrição lembra {}", phrase.phrase),
+            reason: if is_approximate {
+                format!("Descrição semelhante a {}", phrase.phrase)
+            } else {
+                format!("Descrição lembra {}", phrase.phrase)
+            },
         });
     }
     result
@@ -562,6 +832,13 @@ fn generic_vocabulary_match_allowed(category_id: &str, phrase: &str, description
     !blocked_contexts
         .iter()
         .any(|blocked| contains_phrase(description, blocked))
+}
+
+fn generic_vocabulary_approximate_match_allowed(category_id: &str, phrase: &str) -> bool {
+    !matches!(
+        (category_id, phrase),
+        ("fuel", "POSTO") | ("insurance", "SEGURO") | ("education", "ESCOLA")
+    )
 }
 
 #[cfg(test)]
@@ -670,6 +947,132 @@ mod tests {
             false
         )
         .is_none());
+    }
+
+    #[test]
+    fn truncated_subscription_token_creates_bank_and_card_shortcuts() {
+        let categories = vec![category("subscriptions", "Assinaturas", "expense", 1)];
+        let index = SuggestionIndex::new(&[]);
+
+        for context in [SuggestionContext::Bank, SuggestionContext::CreditCard] {
+            let choices = shortlist_categories(
+                "OPENAI CHATGPT SUBSCR",
+                "OPENAI CHATGPT SUBSCR",
+                -10_000,
+                context,
+                false,
+                &categories,
+                &index,
+            );
+            assert_eq!(
+                choices.first().map(|choice| choice.category_id.as_str()),
+                Some("subscriptions")
+            );
+            assert_eq!(
+                choices.first().map(|choice| choice.source),
+                Some(CategorySuggestionSource::Vocabulary)
+            );
+            assert!(choices[0].reason.contains("SUBSCRIPTION"));
+        }
+    }
+
+    #[test]
+    fn fuzzy_vocabulary_handles_typos_across_categories_and_composed_phrases() {
+        let categories = vec![
+            category("health", "Saúde", "expense", 1),
+            category("subscriptions", "Assinaturas", "expense", 2),
+        ];
+        let index = SuggestionIndex::new(&[]);
+
+        let health = shortlist_categories(
+            "DROGSAIL",
+            "DROGSAIL",
+            -2500,
+            SuggestionContext::Bank,
+            false,
+            &categories,
+            &index,
+        );
+        assert_eq!(health[0].category_id, "health");
+
+        let subscription = shortlist_categories(
+            "MICROSOFFT 365",
+            "MICROSOFFT 365",
+            -4500,
+            SuggestionContext::Bank,
+            false,
+            &categories,
+            &index,
+        );
+        assert_eq!(subscription[0].category_id, "subscriptions");
+    }
+
+    #[test]
+    fn fuzzy_vocabulary_keeps_short_tokens_exact_and_rejects_cross_category_ties() {
+        let categories = vec![category("fuel", "Combustível", "expense", 1)];
+        let index = SuggestionIndex::new(&[]);
+        assert!(shortlist_categories(
+            "POSTA",
+            "POSTA",
+            -1000,
+            SuggestionContext::Bank,
+            false,
+            &categories,
+            &index,
+        )
+        .is_empty());
+
+        let ambiguous_index = VocabularySearchIndex {
+            phrases: vec![
+                IndexedVocabularyPhrase {
+                    category_id: "first",
+                    phrase: "ABCDEF",
+                    tokens: vec!["ABCDEF".into()],
+                    compact: "ABCDEF".into(),
+                    order: 0,
+                },
+                IndexedVocabularyPhrase {
+                    category_id: "second",
+                    phrase: "ABXDEF",
+                    tokens: vec!["ABXDEF".into()],
+                    compact: "ABXDEF".into(),
+                    order: 1,
+                },
+            ],
+            by_anchor: HashMap::new(),
+            by_compact: HashMap::new(),
+            truncated_prefix_categories: HashMap::new(),
+        };
+        assert!(ambiguous_index
+            .approximate_matching_phrases("ABYDEF")
+            .is_empty());
+    }
+
+    #[test]
+    fn exact_vocabulary_matches_rank_before_fuzzy_matches_and_stay_bounded() {
+        let categories = vec![
+            category("subscriptions", "Assinaturas", "expense", 1),
+            category("restaurants", "Restaurantes", "expense", 2),
+            category("health", "Saúde", "expense", 3),
+        ];
+        let index = SuggestionIndex::new(&[]);
+        let choices = shortlist_categories(
+            "NETFLIX IFOOD DROGSAIL",
+            "NETFLIX IFOOD DROGSAIL",
+            -5000,
+            SuggestionContext::Bank,
+            false,
+            &categories,
+            &index,
+        );
+
+        assert_eq!(choices.len(), 3);
+        assert_eq!(choices[0].category_id, "subscriptions");
+        assert_eq!(choices[1].category_id, "restaurants");
+        assert_eq!(choices[2].category_id, "health");
+        assert!(choices[0].reason.starts_with("Descrição lembra"));
+        assert!(choices[1].reason.starts_with("Descrição lembra"));
+        assert!(choices[2].reason.starts_with("Descrição semelhante"));
     }
 
     #[test]
@@ -1014,6 +1417,30 @@ mod tests {
         assert_eq!(
             choices.first().map(|choice| choice.category_id.as_str()),
             Some("health")
+        );
+
+        assert!(shortlist_categories(
+            "DROGSAIL",
+            "DROGSAIL",
+            6800,
+            SuggestionContext::Bank,
+            false,
+            &categories,
+            &index,
+        )
+        .is_empty());
+        assert_eq!(
+            shortlist_categories(
+                "DROGSAIL",
+                "ESTORNO DROGSAIL",
+                6800,
+                SuggestionContext::Bank,
+                true,
+                &categories,
+                &index,
+            )[0]
+            .category_id,
+            "health"
         );
     }
 

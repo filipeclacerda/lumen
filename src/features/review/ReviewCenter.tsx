@@ -71,7 +71,7 @@ export function ReviewCenter({ loadReview = loadReviewFromApi }: { loadReview?: 
         />
       )}
       {data && data.totalCount === 0 && (
-        <article className="panel review-center__complete" role="status">
+        <article className="panel review-center__complete" role="status" data-quick-guide="review-center">
           <CheckCircle2 size={28} aria-hidden="true" />
           <div>
             <h2>Tudo em ordem</h2>
@@ -81,7 +81,7 @@ export function ReviewCenter({ loadReview = loadReviewFromApi }: { loadReview?: 
       )}
       {data && data.totalCount > 0 && (
         <>
-          <div className="review-center__summary" aria-label="Resumo das pendências">
+          <div className="review-center__summary" aria-label="Resumo das pendências" data-quick-guide="review-center">
             <CircleDollarSign size={24} aria-hidden="true" />
             <div>
               <strong>

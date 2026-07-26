@@ -168,7 +168,7 @@ export function RecurringTransactions() {
         />
       )}
       {contentReady && (
-        <div className="rules-layout">
+        <div className="rules-layout" data-quick-guide="recurring-editor">
           <article className="panel rule-editor recurring-editor">
             <div className="panel-title">
               <h2>{editing ? "Editar recorrência" : "Nova recorrência"}</h2>

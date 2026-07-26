@@ -79,7 +79,7 @@ describe("paginated screens", () => {
 
   it("presents the detailed filters during the transaction guide and restores the closed state", async () => {
     restartQuickStartGuide();
-    useQuickStartGuide.getState().goToStep(1);
+    useQuickStartGuide.getState().goToLesson("transactions-filters");
     renderScreen(<Transactions />, "/transactions");
 
     await waitFor(() => expect(document.querySelector('[data-quick-guide="transactions-filter-panel"]')).toBeTruthy());
@@ -97,7 +97,7 @@ describe("paginated screens", () => {
     expect(document.querySelector('[data-quick-guide="transactions-filter-panel"]')).toBeTruthy();
 
     restartQuickStartGuide();
-    useQuickStartGuide.getState().goToStep(1);
+    useQuickStartGuide.getState().goToLesson("transactions-filters");
     useQuickStartGuide.getState().pause("complete");
 
     await waitFor(() => expect(document.querySelector('[data-quick-guide="transactions-filter-panel"]')).toBeTruthy());

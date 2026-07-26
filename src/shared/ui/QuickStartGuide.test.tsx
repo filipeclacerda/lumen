@@ -24,22 +24,41 @@ function GuideSurface() {
       <Location />
       {location.pathname === "/import" && <div data-import-tutorial="choose">Escolha o arquivo</div>}
       {location.pathname === "/transactions" && (
-        <div data-quick-guide="transactions-filter-panel">Filtros detalhados</div>
+        <>
+          <div data-quick-guide="transactions-list">Lista de transações</div>
+          <div data-quick-guide="transactions-filter-panel">Filtros detalhados</div>
+        </>
+      )}
+      {location.pathname === "/review" && <div data-quick-guide="review-center">Central de pendências</div>}
+      {location.pathname === "/accounts" && <div data-quick-guide="accounts-overview">Contas e cartões</div>}
+      {location.pathname === "/recurring" && <div data-quick-guide="recurring-editor">Recorrências</div>}
+      {location.pathname === "/budget" && <div data-quick-guide="budget-overview">Orçamento</div>}
+      {location.pathname === "/categories" && (
+        <>
+          <div data-quick-guide="categories-structure">Estrutura de categorias</div>
+          <div data-quick-guide="categories-rules">Regras de categorias</div>
+        </>
       )}
       {location.pathname === "/" && <div data-quick-guide="overview">Resumo mensal</div>}
-      {location.pathname === "/reports" && <div data-quick-guide="reports-filters">Filtros dos relatórios</div>}
+      {location.pathname === "/reports" && (
+        <>
+          <div data-quick-guide="reports-filters">Filtros dos relatórios</div>
+          <div data-quick-guide="reports-kpis">Indicadores dos relatórios</div>
+          <div data-quick-guide="reports-categories">Categorias dos relatórios</div>
+        </>
+      )}
       {location.pathname === "/settings" && <div data-quick-guide="backup">Backup completo</div>}
     </>
   );
 }
 
-function renderGuide(hasTransactions = false) {
+function renderGuide() {
   return render(
     <MemoryRouter initialEntries={["/settings"]}>
       <Routes>
         <Route path="*" element={<GuideSurface />} />
       </Routes>
-      <QuickStartGuide hasTransactions={hasTransactions} />
+      <QuickStartGuide />
     </MemoryRouter>,
   );
 }
@@ -80,48 +99,49 @@ describe("QuickStartGuide", () => {
     queueQuickStartGuide();
     renderGuide();
 
-    const invitation = screen.getByRole("dialog", { name: "Aprenda com seus próprios dados" });
+    const invitation = screen.getByRole("dialog", { name: "Conheça o Lumen com seus próprios dados" });
     expect(invitation.getAttribute("aria-modal")).toBe("false");
     expect(screen.getByTestId("location").textContent).toBe("/settings");
 
     fireEvent.click(screen.getByRole("button", { name: "Começar" }));
 
     await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/import"));
-    expect(screen.getByRole("heading", { name: "Comece pelo arquivo exportado" })).toBeTruthy();
-    expect(screen.getByLabelText("Etapa 1 de 5")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Traga seus dados com segurança" })).toBeTruthy();
+    expect(screen.getByRole("progressbar", { name: "Importação: etapa 1 de 14" })).toBeTruthy();
   });
 
-  it("hands the first step to the contextual import guide", async () => {
+  it("keeps the complete guide independent from the contextual import guide", async () => {
     restartQuickStartGuide();
     renderGuide();
-    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/import"));
-
-    fireEvent.click(screen.getByRole("button", { name: "Começar importação" }));
-
-    expect(useQuickStartGuide.getState().activeGuide).toBe("import");
-    expect(useQuickStartGuide.getState().guides.complete.status).toBe("paused");
-    expect(screen.queryByRole("heading", { name: "Comece pelo arquivo exportado" })).toBeNull();
-  });
-
-  it("shows the import overview without starting the contextual guide when there are transactions", async () => {
-    restartQuickStartGuide();
-    renderGuide(true);
 
     await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/import"));
-    expect(screen.getByRole("heading", { name: "Comece pelo arquivo exportado" })).toBeTruthy();
-    expect(screen.getByLabelText("Etapa 1 de 5")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Começar importação" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Traga seus dados com segurança" })).toBeTruthy();
+    expect(screen.getByRole("progressbar", { name: "Importação: etapa 1 de 14" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Voltar" }).hasAttribute("disabled")).toBe(true);
     expect(useQuickStartGuide.getState().activeGuide).toBe("complete");
     expect(useQuickStartGuide.getState().guides.import?.status).not.toBe("active");
 
-    for (const route of ["/transactions", "/", "/reports", "/settings?section=data"]) {
+    for (const route of [
+      "/transactions",
+      "/transactions",
+      "/review",
+      "/accounts",
+      "/recurring",
+      "/budget",
+      "/categories?tab=categories",
+      "/categories?tab=rules",
+      "/",
+      "/reports",
+      "/reports",
+      "/reports",
+      "/settings?section=data",
+    ]) {
       fireEvent.click(screen.getByRole("button", { name: "Avançar" }));
       await waitFor(() => expect(screen.getByTestId("location").textContent).toBe(route));
     }
 
     expect(screen.getByRole("heading", { name: "Proteja seu histórico local" })).toBeTruthy();
-    expect(screen.getByLabelText("Etapa 5 de 5")).toBeTruthy();
+    expect(screen.getByRole("progressbar", { name: "Backup: etapa 14 de 14" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Concluir" }));
 
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -140,7 +160,7 @@ describe("QuickStartGuide", () => {
     view.rerender(
       <MemoryRouter initialEntries={["/import"]}>
         <div data-import-tutorial="choose">Escolha o arquivo</div>
-        <QuickStartGuide hasTransactions={false} />
+        <QuickStartGuide />
       </MemoryRouter>,
     );
     fireEvent.click(screen.getByRole("button", { name: "Encerrar tutorial" }));
@@ -289,12 +309,12 @@ describe("QuickStartGuide", () => {
         <Routes>
           <Route path="*" element={<Location />} />
         </Routes>
-        <QuickStartGuide hasTransactions={false} />
+        <QuickStartGuide />
       </MemoryRouter>,
     );
 
     await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/import"));
-    expect(screen.getByRole("button", { name: "Começar importação" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Avançar" })).toBeTruthy();
     const dialog = screen.getByRole("dialog");
     expect(dialog.parentElement?.parentElement).toBe(document.body);
     expect(dialog.classList.contains("is-corner")).toBe(true);

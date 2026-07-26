@@ -153,7 +153,11 @@ describe("Onboarding", () => {
     );
     expect(onFinished).toHaveBeenCalledWith("/import?action=choose");
     expect(useQuickStartGuide.getState().activeGuide).toBe("import");
-    expect(useQuickStartGuide.getState().guides.import).toEqual({ status: "active", phase: "choose" });
+    expect(useQuickStartGuide.getState().guides.import).toEqual({
+      status: "active",
+      phase: "choose",
+      lessonId: "choose-files",
+    });
   });
 
   it("routes manual and tour choices to their appropriate experiences", async () => {

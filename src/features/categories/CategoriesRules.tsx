@@ -380,7 +380,7 @@ export function CategoriesRules() {
       {message && <p className="notice">{message}</p>}
 
       {tab === "rules" && (
-        <div className="rules-layout rules-workspace">
+        <div className="rules-layout rules-workspace" data-quick-guide="categories-rules">
           <article className="panel rule-editor rules-form-card">
             <div className="panel-title">
               <h2>{rule.id ? "Editar regra" : "Nova regra"}</h2>
@@ -608,7 +608,7 @@ export function CategoriesRules() {
       )}
 
       {tab === "categories" && (
-        <div className="rules-layout categories-layout">
+        <div className="rules-layout categories-layout" data-quick-guide="categories-structure">
           <article className="panel rule-editor category-editor-panel">
             <div className="panel-title category-editor-heading">
               <div>

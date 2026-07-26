@@ -1,6 +1,6 @@
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
+use sqlx::{sqlite::SqliteRow, Row, SqliteConnection, SqlitePool};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use tauri::State;
@@ -34,7 +34,7 @@ mod installments;
 pub use installments::*;
 
 use crate::{
-    application::state::{AppState, ImportSession},
+    application::state::{AppState, CreditCardImportSession, ImportSession},
     domain::{
         categorization::{
             first_match, CategorizationInput, CategorizationRule, MovementType, RuleOperator,
@@ -3168,6 +3168,25 @@ pub async fn preview_import(
 }
 
 #[tauri::command]
+pub async fn get_import_preview(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> Result<ImportPreview, AppError> {
+    let session = state
+        .sessions
+        .lock()
+        .await
+        .get(&session_id)
+        .cloned()
+        .ok_or(AppError::SessionExpired)?;
+    Ok(ImportPreview {
+        session_id,
+        file_name: session.file_name,
+        candidates: session.candidates,
+    })
+}
+
+#[tauri::command]
 pub async fn preview_mapped_bank_import(
     path: String,
     account_id: String,
@@ -3411,6 +3430,311 @@ pub struct CommitImportResult {
     batch_id: String,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum ImportBatchSessionKind {
+    Bank,
+    CreditCard,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportBatchSessionRef {
+    file_id: String,
+    kind: ImportBatchSessionKind,
+    session_id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportBatchValidationIssue {
+    file_id: String,
+    source_row: usize,
+    message: String,
+    conflicting_file_id: Option<String>,
+    conflicting_source_row: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportBatchValidation {
+    issues: Vec<ImportBatchValidationIssue>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportBatchFileCommitResult {
+    file_id: String,
+    kind: ImportBatchSessionKind,
+    file_name: String,
+    count: usize,
+    batch_id: Option<String>,
+    invoice_id: Option<String>,
+    payment_transaction_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportBatchCommitResult {
+    total_count: usize,
+    files: Vec<ImportBatchFileCommitResult>,
+}
+
+#[derive(Clone)]
+enum BatchImportSession {
+    Bank(ImportSession),
+    CreditCard(CreditCardImportSession),
+}
+
+impl BatchImportSession {
+    fn file_name(&self) -> &str {
+        match self {
+            Self::Bank(session) => &session.file_name,
+            Self::CreditCard(session) => &session.file_name,
+        }
+    }
+
+    fn has_included_items(&self) -> bool {
+        match self {
+            Self::Bank(session) => session
+                .candidates
+                .iter()
+                .any(|candidate| candidate.included),
+            Self::CreditCard(session) => session.items.iter().any(|item| item.included),
+        }
+    }
+}
+
+async fn load_batch_import_sessions(
+    files: &[ImportBatchSessionRef],
+    state: &AppState,
+) -> Result<Vec<(ImportBatchSessionRef, BatchImportSession)>, AppError> {
+    if files.is_empty() {
+        return Err(AppError::Validation(
+            "Selecione ao menos um arquivo para importar".into(),
+        ));
+    }
+    let mut seen_file_ids = HashSet::new();
+    let mut seen_sessions = HashSet::new();
+    let bank_sessions = state.sessions.lock().await;
+    let card_sessions = state.credit_card_sessions.lock().await;
+    let mut result = Vec::with_capacity(files.len());
+    for file in files {
+        if file.file_id.trim().is_empty()
+            || !seen_file_ids.insert(file.file_id.clone())
+            || !seen_sessions.insert((file.kind, file.session_id.clone()))
+        {
+            return Err(AppError::Validation(
+                "A fila de importação contém um arquivo inválido".into(),
+            ));
+        }
+        let session = match file.kind {
+            ImportBatchSessionKind::Bank => bank_sessions
+                .get(&file.session_id)
+                .cloned()
+                .map(BatchImportSession::Bank),
+            ImportBatchSessionKind::CreditCard => card_sessions
+                .get(&file.session_id)
+                .cloned()
+                .map(BatchImportSession::CreditCard),
+        }
+        .ok_or(AppError::SessionExpired)?;
+        result.push((file.clone(), session));
+    }
+    Ok(result)
+}
+
+async fn validate_batch_import_sessions(
+    files: &[(ImportBatchSessionRef, BatchImportSession)],
+    db: &SqlitePool,
+) -> Result<ImportBatchValidation, AppError> {
+    let mut seen: HashMap<String, (String, usize)> = HashMap::new();
+    let mut issues = Vec::new();
+
+    for (file, session) in files {
+        let candidates: Vec<(&str, &ImportCandidate, String)> = match session {
+            BatchImportSession::Bank(session) => session
+                .candidates
+                .iter()
+                .filter(|candidate| candidate.included)
+                .map(|candidate| {
+                    (
+                        session.account_id.as_str(),
+                        candidate,
+                        fingerprint(&session.account_id, candidate),
+                    )
+                })
+                .collect(),
+            BatchImportSession::CreditCard(session) => session
+                .items
+                .iter()
+                .filter(|item| item.included)
+                .map(|item| {
+                    (
+                        session.account_id.as_str(),
+                        &item.candidate,
+                        crate::domain::credit_card::item_fingerprint(&session.account_id, item),
+                    )
+                })
+                .collect(),
+        };
+        for (account_id, candidate, fingerprint_value) in candidates {
+            let external = candidate
+                .external_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let key = match external {
+                Some(external) => format!("{account_id}:external:{external}"),
+                None => format!("{account_id}:fingerprint:{fingerprint_value}"),
+            };
+            if let Some((conflicting_file_id, conflicting_source_row)) = seen.get(&key) {
+                issues.push(ImportBatchValidationIssue {
+                    file_id: file.file_id.clone(),
+                    source_row: candidate.source_row,
+                    message: "Este lançamento também está selecionado em outro arquivo do lote"
+                        .into(),
+                    conflicting_file_id: Some(conflicting_file_id.clone()),
+                    conflicting_source_row: Some(*conflicting_source_row),
+                });
+                continue;
+            }
+            seen.insert(key, (file.file_id.clone(), candidate.source_row));
+            let already_imported = match external {
+                Some(external) => sqlx::query_scalar::<_, i64>(
+                    "SELECT EXISTS(SELECT 1 FROM transactions WHERE account_id=? AND external_id=? AND deleted_at IS NULL)",
+                )
+                .bind(account_id)
+                .bind(external)
+                .fetch_one(db)
+                .await?
+                    != 0,
+                None => sqlx::query_scalar::<_, i64>(
+                    "SELECT EXISTS(SELECT 1 FROM transactions WHERE account_id=? AND fingerprint=? AND deleted_at IS NULL)",
+                )
+                .bind(account_id)
+                .bind(fingerprint_value)
+                .fetch_one(db)
+                .await?
+                    != 0,
+            };
+            if already_imported {
+                issues.push(ImportBatchValidationIssue {
+                    file_id: file.file_id.clone(),
+                    source_row: candidate.source_row,
+                    message: "Este lançamento já foi importado nesta conta".into(),
+                    conflicting_file_id: None,
+                    conflicting_source_row: None,
+                });
+            }
+        }
+    }
+    Ok(ImportBatchValidation { issues })
+}
+
+#[tauri::command]
+pub async fn validate_import_batch(
+    files: Vec<ImportBatchSessionRef>,
+    state: State<'_, AppState>,
+) -> Result<ImportBatchValidation, AppError> {
+    let sessions = load_batch_import_sessions(&files, &state).await?;
+    validate_batch_import_sessions(&sessions, &state.db).await
+}
+
+#[tauri::command]
+pub async fn commit_import_batch(
+    files: Vec<ImportBatchSessionRef>,
+    state: State<'_, AppState>,
+) -> Result<ImportBatchCommitResult, AppError> {
+    let _commit_guard = state.import_commit.lock().await;
+    let sessions = load_batch_import_sessions(&files, &state).await?;
+    let validation = validate_batch_import_sessions(&sessions, &state.db).await?;
+    if !validation.issues.is_empty() {
+        return Err(AppError::Validation(
+            "Corrija os lançamentos duplicados antes de confirmar o lote".into(),
+        ));
+    }
+
+    let mut transaction = state.db.begin().await?;
+    let mut total_count = 0;
+    let mut results = Vec::with_capacity(sessions.len());
+    for (file, session) in sessions {
+        if !session.has_included_items() {
+            results.push(ImportBatchFileCommitResult {
+                file_id: file.file_id,
+                kind: file.kind,
+                file_name: session.file_name().to_string(),
+                count: 0,
+                batch_id: None,
+                invoice_id: None,
+                payment_transaction_ids: Vec::new(),
+            });
+            continue;
+        }
+        match session {
+            BatchImportSession::Bank(session) => {
+                let file_name = session.file_name.clone();
+                let result = commit_import_in_transaction(session, &mut transaction).await?;
+                total_count += result.count;
+                results.push(ImportBatchFileCommitResult {
+                    file_id: file.file_id,
+                    kind: file.kind,
+                    file_name,
+                    count: result.count,
+                    batch_id: Some(result.batch_id),
+                    invoice_id: None,
+                    payment_transaction_ids: Vec::new(),
+                });
+            }
+            BatchImportSession::CreditCard(session) => {
+                let file_name = session.file_name.clone();
+                let (result, batch_id, count) =
+                    commit_credit_card_import_in_transaction(session, &mut transaction).await?;
+                total_count += count;
+                results.push(ImportBatchFileCommitResult {
+                    file_id: file.file_id,
+                    kind: file.kind,
+                    file_name,
+                    count,
+                    batch_id: Some(batch_id),
+                    invoice_id: Some(result.invoice_id),
+                    payment_transaction_ids: result.payment_transaction_ids,
+                });
+            }
+        }
+    }
+    if total_count == 0 {
+        return Err(AppError::Validation(
+            "Não há lançamentos selecionados para importar".into(),
+        ));
+    }
+    transaction.commit().await?;
+    let bank_ids: HashSet<_> = files
+        .iter()
+        .filter(|file| file.kind == ImportBatchSessionKind::Bank)
+        .map(|file| file.session_id.as_str())
+        .collect();
+    let card_ids: HashSet<_> = files
+        .iter()
+        .filter(|file| file.kind == ImportBatchSessionKind::CreditCard)
+        .map(|file| file.session_id.as_str())
+        .collect();
+    state
+        .sessions
+        .lock()
+        .await
+        .retain(|id, _| !bank_ids.contains(id.as_str()));
+    state
+        .credit_card_sessions
+        .lock()
+        .await
+        .retain(|id, _| !card_ids.contains(id.as_str()));
+    Ok(ImportBatchCommitResult {
+        total_count,
+        files: results,
+    })
+}
+
 #[tauri::command]
 pub async fn commit_import(
     session_id: String,
@@ -3433,6 +3757,16 @@ async fn commit_import_impl(
     session: ImportSession,
     db: &SqlitePool,
 ) -> Result<CommitImportResult, AppError> {
+    let mut tx = db.begin().await?;
+    let result = commit_import_in_transaction(session, &mut tx).await?;
+    tx.commit().await?;
+    Ok(result)
+}
+
+async fn commit_import_in_transaction(
+    session: ImportSession,
+    tx: &mut SqliteConnection,
+) -> Result<CommitImportResult, AppError> {
     if !session
         .candidates
         .iter()
@@ -3442,7 +3776,6 @@ async fn commit_import_impl(
             "Selecione ao menos um lançamento".into(),
         ));
     }
-    let mut tx = db.begin().await?;
     let mut seen_external = HashSet::new();
     let mut seen_fingerprint = HashSet::new();
     for candidate in session
@@ -3518,7 +3851,6 @@ async fn commit_import_impl(
         }
         count += 1;
     }
-    tx.commit().await?;
     Ok(CommitImportResult { count, batch_id })
 }
 
@@ -5523,6 +5855,88 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn batch_validation_requires_a_choice_for_duplicates_between_files() {
+        let (_directory, db, account_id) = suggestion_test_setup().await;
+        let mut first = candidate("Mercado", -2500);
+        first.source_row = 1;
+        first.external_id = Some("same-entry".into());
+        let mut second = first.clone();
+        second.source_row = 7;
+        let files = vec![
+            (
+                ImportBatchSessionRef {
+                    file_id: "first".into(),
+                    kind: ImportBatchSessionKind::Bank,
+                    session_id: "one".into(),
+                },
+                BatchImportSession::Bank(ImportSession {
+                    account_id: account_id.clone(),
+                    file_name: "first.csv".into(),
+                    candidates: vec![first],
+                }),
+            ),
+            (
+                ImportBatchSessionRef {
+                    file_id: "second".into(),
+                    kind: ImportBatchSessionKind::Bank,
+                    session_id: "two".into(),
+                },
+                BatchImportSession::Bank(ImportSession {
+                    account_id,
+                    file_name: "second.csv".into(),
+                    candidates: vec![second],
+                }),
+            ),
+        ];
+
+        let validation = validate_batch_import_sessions(&files, &db).await.unwrap();
+        assert_eq!(validation.issues.len(), 1);
+        assert_eq!(validation.issues[0].file_id, "second");
+        assert_eq!(
+            validation.issues[0].conflicting_file_id.as_deref(),
+            Some("first")
+        );
+    }
+
+    #[tokio::test]
+    async fn shared_batch_transaction_rolls_back_the_first_file_when_the_next_fails() {
+        let (_directory, db, account_id) = suggestion_test_setup().await;
+        let mut first = candidate("Mercado", -2500);
+        first.external_id = Some("same-entry".into());
+        let second = first.clone();
+        let mut transaction = db.begin().await.unwrap();
+        commit_import_in_transaction(
+            ImportSession {
+                account_id: account_id.clone(),
+                file_name: "first.csv".into(),
+                candidates: vec![first],
+            },
+            &mut transaction,
+        )
+        .await
+        .unwrap();
+        assert!(commit_import_in_transaction(
+            ImportSession {
+                account_id,
+                file_name: "second.csv".into(),
+                candidates: vec![second],
+            },
+            &mut transaction,
+        )
+        .await
+        .is_err());
+        drop(transaction);
+
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM import_batches")
+                .fetch_one(&db)
+                .await
+                .unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
     async fn explicit_rule_always_wins_over_history_suggestion() {
         let (_directory, db, account_id) = suggestion_test_setup().await;
         for i in 0..3 {
@@ -5747,6 +6161,38 @@ mod tests {
             candidates[0].category_suggestions[0].source,
             crate::domain::import::CategorySuggestionSource::Vocabulary
         );
+    }
+
+    #[tokio::test]
+    async fn truncated_subscription_descriptor_is_only_shortlisted_in_bank_and_card_previews() {
+        let (_directory, db, account_id) = suggestion_test_setup().await;
+
+        for credit_card_context in [false, true] {
+            let mut candidates = vec![candidate("OPENAI CHATGPT SUBSCR", -10_000)];
+            apply_category_suggestions_to(
+                &db,
+                &account_id,
+                &[],
+                candidates.iter_mut(),
+                credit_card_context,
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(candidates[0].suggested_category_id, None);
+            assert_eq!(candidates[0].suggestion_source, None);
+            assert_eq!(
+                candidates[0]
+                    .category_suggestions
+                    .first()
+                    .map(|suggestion| suggestion.category_id.as_str()),
+                Some("subscriptions")
+            );
+            assert_eq!(
+                candidates[0].category_suggestions[0].source,
+                crate::domain::import::CategorySuggestionSource::Vocabulary
+            );
+        }
     }
 
     #[tokio::test]

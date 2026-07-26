@@ -15,6 +15,9 @@ import type {
   CategoryTrendPoint,
   CommitImportResult,
   CreditCardImportCommitResult,
+  ImportBatchCommitResult,
+  ImportBatchSessionRef,
+  ImportBatchValidation,
   CreditCardImportPreview,
   CreditCardInvoice,
   CreditCardInvoicePage,
@@ -598,6 +601,7 @@ export const api = {
     invoke("export_import_template", { path, templateKind }),
   previewImport: (path: string, accountId: string): Promise<ImportPreview> =>
     invoke("preview_import", { path, accountId }),
+  getImportPreview: (sessionId: string): Promise<ImportPreview> => invoke("get_import_preview", { sessionId }),
   previewMappedBankImport: (path: string, accountId: string, mapping: CsvMappingDraft): Promise<ImportPreview> =>
     invoke("preview_mapped_bank_import", { path, accountId, mapping }),
   updateImportCandidate: (
@@ -617,6 +621,8 @@ export const api = {
   createCreditCardAccount: (name: string): Promise<string> => invoke("create_credit_card_account", { name }),
   previewCreditCardImport: (path: string, accountId: string, dueDate?: string): Promise<CreditCardImportPreview> =>
     invoke("preview_credit_card_import", { path, accountId, dueDate: dueDate || null }),
+  getCreditCardImportPreview: (sessionId: string): Promise<CreditCardImportPreview> =>
+    invoke("get_credit_card_import_preview", { sessionId }),
   previewMappedCreditCardImport: (
     path: string,
     accountId: string,
@@ -644,6 +650,10 @@ export const api = {
     invoke("update_credit_card_import_categories", { sessionId, sourceRows, categoryId: categoryId || null }),
   commitCreditCardImport: (sessionId: string): Promise<CreditCardImportCommitResult> =>
     invoke("commit_credit_card_import", { sessionId }),
+  validateImportBatch: (files: ImportBatchSessionRef[]): Promise<ImportBatchValidation> =>
+    invoke("validate_import_batch", { files }),
+  commitImportBatch: (files: ImportBatchSessionRef[]): Promise<ImportBatchCommitResult> =>
+    invoke("commit_import_batch", { files }),
   creditCardInvoices: async (): Promise<CreditCardInvoice[]> => (isTauri() ? invoke("list_credit_card_invoices") : []),
   creditCardInvoicesPage: async (filter: { limit?: number; offset?: number }): Promise<CreditCardInvoicePage> => {
     if (isTauri()) return invoke("list_credit_card_invoices_page", { filter });

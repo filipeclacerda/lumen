@@ -258,7 +258,7 @@ export function App() {
           </LazyErrorBoundary>
         </div>
       </main>
-      <QuickStartGuide hasTransactions={bootstrap.hasTransactions} />
+      <QuickStartGuide />
       <MaintenanceRestartNotice />
     </div>
   );

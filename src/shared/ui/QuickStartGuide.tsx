@@ -4,72 +4,53 @@ import {
   ChevronLeft,
   ChevronRight,
   FileUp,
+  HardDrive,
   LayoutDashboard,
   ListChecks,
-  Settings,
+  Repeat,
+  Settings2,
+  SlidersHorizontal,
   Sparkles,
+  Tags,
+  Wallet,
+  WalletCards,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import { useEffect, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
+import { completeGuideLessonIndex, completeGuideLessons, type GuideIconName } from "../guideLessons";
 import { useQuickStartGuide } from "../quickStartGuide";
 import { GuideCoachmark } from "./GuideCoachmark";
+import { GuideLessonContent, GuideLessonProgress } from "./GuideLessonContent";
 
-const steps = [
-  {
-    route: "/import",
-    target: '[data-import-tutorial="choose"]',
-    title: "Comece pelo arquivo exportado",
-    description:
-      "Selecione um CSV, OFX ou PDF exportado pelo banco ou cartão. O arquivo é processado neste computador e nenhum lançamento é salvo antes da sua confirmação.",
-    icon: FileUp,
-  },
-  {
-    route: "/transactions",
-    target: '[data-quick-guide="transactions-filter-panel"]',
-    title: "Corrija e encontre pendências",
-    description:
-      "Combine período, origem, conta, status e categoria para localizar pendências. Depois, altere a categoria na própria lista ou automatize padrões recorrentes em Categorias e regras.",
-    icon: ListChecks,
-  },
-  {
-    route: "/",
-    target: '[data-quick-guide="overview"]',
-    title: "Leia um mês de cada vez",
-    description:
-      "Confira receitas, despesas, investimentos e saldo do mês selecionado. O navegador de período atualiza todos os indicadores.",
-    icon: LayoutDashboard,
-  },
-  {
-    route: "/reports",
-    target: '[data-quick-guide="reports-filters"]',
-    title: "Compare usando o mesmo recorte",
-    description:
-      "Defina período, conta e origem antes de comparar totais e categorias. Pontos de atenção levam às pendências que precisam de revisão.",
-    icon: BarChart3,
-  },
-  {
-    route: "/settings?section=data",
-    target: '[data-quick-guide="backup"]',
-    title: "Proteja seu histórico local",
-    description:
-      "Crie um backup após importar e antes de mudanças importantes. O banco e os backups ainda não são criptografados; proteja o computador e o arquivo.",
-    icon: Settings,
-  },
-] as const;
+const lessonIcons: Record<GuideIconName, LucideIcon> = {
+  accounts: WalletCards,
+  backup: HardDrive,
+  budget: Wallet,
+  categories: Tags,
+  dashboard: LayoutDashboard,
+  file: FileUp,
+  filters: SlidersHorizontal,
+  recurring: Repeat,
+  reports: BarChart3,
+  review: ListChecks,
+  rules: Settings2,
+  transactions: ListChecks,
+};
 
-export function QuickStartGuide({ hasTransactions }: { hasTransactions: boolean }) {
+export function QuickStartGuide() {
   const navigate = useNavigate();
-  const { activeGuide, mode, guides, resume, goToStep, pause, dismiss, complete } = useQuickStartGuide();
-  const stepIndex = Math.min(guides.complete.stepIndex, steps.length - 1);
-  const step = steps[stepIndex];
+  const { activeGuide, mode, guides, resume, goToLesson, pause, dismiss, complete } = useQuickStartGuide();
+  const lessonIndex = completeGuideLessonIndex(guides.complete.lessonId);
+  const lesson = completeGuideLessons[lessonIndex];
   const invitation = mode === "invitation";
   const visible = mode !== "closed" && (invitation || activeGuide === "complete");
 
   useEffect(() => {
     if (mode !== "tour" || activeGuide !== "complete") return;
-    navigate(step.route);
-  }, [activeGuide, mode, navigate, step.route]);
+    navigate(lesson.route);
+  }, [activeGuide, lesson.route, mode, navigate]);
 
   useEffect(() => {
     if (!visible) return;
@@ -89,32 +70,38 @@ export function QuickStartGuide({ hasTransactions }: { hasTransactions: boolean 
 
   if (!visible) return null;
 
-  const Icon = invitation ? Sparkles : step.icon;
+  const Icon = invitation ? Sparkles : lessonIcons[lesson.icon];
   const title = invitation
-    ? stepIndex > 0
+    ? lessonIndex > 0
       ? "Continue de onde parou"
-      : "Aprenda com seus próprios dados"
-    : step.title;
-  const description = invitation
-    ? stepIndex > 0
-      ? `Retome a orientação na etapa ${stepIndex + 1} de ${steps.length}.`
-      : "O guia acompanha sua primeira importação, a revisão dos lançamentos e a leitura do mês. Você pode pausar a qualquer momento."
-    : step.description;
+      : "Conheça o Lumen com seus próprios dados"
+    : lesson.title;
+  const summary = invitation
+    ? lessonIndex > 0
+      ? `Retome o guia na etapa ${lessonIndex + 1} de ${completeGuideLessons.length}: ${lesson.chapter}.`
+      : "O guia percorre as áreas principais e explica o que observar antes de você agir."
+    : lesson.summary;
+  const points = invitation
+    ? [
+        "Você pode pausar a qualquer momento e retomar em Configurações.",
+        "Os destaques não bloqueiam os controles nem executam ações por você.",
+      ]
+    : lesson.points;
 
   const startOrResume = () => resume("complete");
 
-  const startImport = () => {
-    resume("import");
-    navigate("/import?action=choose");
+  const goToAdjacentLesson = (nextIndex: number) => {
+    const nextLesson = completeGuideLessons[Math.min(Math.max(nextIndex, 0), completeGuideLessons.length - 1)];
+    goToLesson(nextLesson.id);
   };
 
   return (
     <GuideCoachmark
       active
-      target={invitation ? undefined : step.target}
+      target={invitation ? undefined : lesson.target}
       labelledBy="quick-start-guide-title"
       describedBy="quick-start-guide-description"
-      focusKey={`${mode}-${stepIndex}`}
+      focusKey={`${mode}-${lesson.id}`}
       focusOnOpen
     >
       {(positionControl: ReactNode) => (
@@ -124,11 +111,7 @@ export function QuickStartGuide({ hasTransactions }: { hasTransactions: boolean 
               <Icon size={19} />
             </div>
             <div>
-              {!invitation && (
-                <span>
-                  Etapa {stepIndex + 1} de {steps.length}
-                </span>
-              )}
+              {!invitation && <span>GUIA DO LUMEN · ETAPA {lessonIndex + 1}</span>}
               <h2 id="quick-start-guide-title">{title}</h2>
             </div>
             <div className="quick-start-guide__header-actions">
@@ -144,17 +127,13 @@ export function QuickStartGuide({ hasTransactions }: { hasTransactions: boolean 
               </button>
             </div>
           </div>
-          <p id="quick-start-guide-description">{description}</p>
+          <GuideLessonContent id="quick-start-guide-description" summary={summary} points={points} />
           {!invitation && (
-            <div
-              className="quick-start-guide__progress"
-              aria-label={`Etapa ${stepIndex + 1} de ${steps.length}`}
-              style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}
-            >
-              {steps.map((item, index) => (
-                <i key={item.route} className={index <= stepIndex ? "is-active" : ""} />
-              ))}
-            </div>
+            <GuideLessonProgress
+              current={lessonIndex + 1}
+              total={completeGuideLessons.length}
+              chapter={lesson.chapter}
+            />
           )}
           <div className="quick-start-guide__actions">
             <button
@@ -166,28 +145,24 @@ export function QuickStartGuide({ hasTransactions }: { hasTransactions: boolean 
             </button>
             {invitation ? (
               <button type="button" onClick={startOrResume}>
-                {stepIndex > 0 ? "Continuar" : "Começar"} <ChevronRight size={16} />
-              </button>
-            ) : stepIndex === 0 && !hasTransactions ? (
-              <button type="button" onClick={startImport}>
-                Começar importação <ChevronRight size={16} />
+                {lessonIndex > 0 ? "Continuar" : "Começar"} <ChevronRight size={16} />
               </button>
             ) : (
               <div>
                 <button
                   className="secondary"
                   type="button"
-                  onClick={() => goToStep(stepIndex - 1)}
-                  disabled={stepIndex === 0}
+                  onClick={() => goToAdjacentLesson(lessonIndex - 1)}
+                  disabled={lessonIndex === 0}
                 >
                   <ChevronLeft size={16} /> Voltar
                 </button>
-                {stepIndex === steps.length - 1 ? (
+                {lessonIndex === completeGuideLessons.length - 1 ? (
                   <button type="button" onClick={() => complete("complete")}>
                     Concluir <Check size={16} />
                   </button>
                 ) : (
-                  <button type="button" onClick={() => goToStep(stepIndex + 1)}>
+                  <button type="button" onClick={() => goToAdjacentLesson(lessonIndex + 1)}>
                     Avançar <ChevronRight size={16} />
                   </button>
                 )}

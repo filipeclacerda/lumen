@@ -299,10 +299,15 @@ export function AccountsCards() {
         <ErrorState message="Não foi possível carregar as contas." onRetry={() => void refetchAccounts()} />
       )}
       {!accountsLoading && !accountsError && accounts.length === 0 && (
-        <EmptyState title="Nenhuma conta cadastrada" description="Adicione uma conta para acompanhar seu patrimônio." />
+        <div data-quick-guide="accounts-overview">
+          <EmptyState
+            title="Nenhuma conta cadastrada"
+            description="Adicione uma conta para acompanhar seu patrimônio."
+          />
+        </div>
       )}
       {!accountsLoading && !accountsError && accounts.length > 0 && (
-        <div className="account-grid">
+        <div className="account-grid" data-quick-guide="accounts-overview">
           {accounts.map((account) => {
             const balanceSummary = balanceSummaryByAccount.get(account.id);
             return (

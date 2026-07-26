@@ -1,21 +1,34 @@
 import { create } from "zustand";
+import {
+  DEFAULT_COMPLETE_GUIDE_LESSON_ID,
+  defaultImportLessonByPhase,
+  importGuidePhaseForLesson,
+  isCompleteGuideLessonId,
+  isImportGuideLessonId,
+  legacyV2CompleteLessonIds,
+  type CompleteGuideLessonId,
+  type ImportGuideLessonId,
+  type ImportGuidePhase,
+} from "./guideLessons";
+
+export type { CompleteGuideLessonId, ImportGuideLessonId, ImportGuidePhase } from "./guideLessons";
 
 export const QUICK_START_GUIDE_STORAGE_KEY = "financa-quick-start-guide";
-export const QUICK_START_GUIDE_VERSION = 2;
+export const QUICK_START_GUIDE_VERSION = 3;
 
 export type QuickStartGuideId = "complete" | "import";
 export type QuickStartGuideStatus = "active" | "paused" | "completed" | "dismissed";
 export type QuickStartGuideMode = "closed" | "invitation" | "tour";
-export type ImportGuidePhase = "choose" | "configure" | "review" | "confirm" | "success";
 
 export type CompleteGuideProgress = {
   status: QuickStartGuideStatus;
-  stepIndex: number;
+  lessonId: CompleteGuideLessonId;
 };
 
 export type ImportGuideProgress = {
   status: QuickStartGuideStatus;
   phase: ImportGuidePhase;
+  lessonId: ImportGuideLessonId;
 };
 
 export type StoredQuickStartGuide = {
@@ -24,9 +37,21 @@ export type StoredQuickStartGuide = {
   import?: ImportGuideProgress;
 };
 
-type LegacyStoredQuickStartGuide = {
+type LegacyStoredQuickStartGuideV1 = {
   version: 1;
   status: "pending" | "completed" | "dismissed";
+};
+
+type LegacyStoredQuickStartGuideV2 = {
+  version: 2;
+  complete: {
+    status: QuickStartGuideStatus;
+    stepIndex: number;
+  };
+  import?: {
+    status: QuickStartGuideStatus;
+    phase: ImportGuidePhase;
+  };
 };
 
 type QuickStartGuideStore = {
@@ -39,13 +64,20 @@ type QuickStartGuideStore = {
   dismiss: (guide?: QuickStartGuideId) => void;
   complete: (guide?: QuickStartGuideId) => void;
   restart: (guide: QuickStartGuideId) => void;
-  goToStep: (stepIndex: number) => void;
+  goToLesson: (lessonId: CompleteGuideLessonId) => void;
+  goToImportLesson: (lessonId: ImportGuideLessonId) => void;
   setImportPhase: (phase: ImportGuidePhase) => void;
 };
 
-const DEFAULT_COMPLETE_PROGRESS: CompleteGuideProgress = { status: "paused", stepIndex: 0 };
-const DEFAULT_IMPORT_PROGRESS: ImportGuideProgress = { status: "paused", phase: "choose" };
-const COMPLETE_TOUR_LAST_STEP = 4;
+const DEFAULT_COMPLETE_PROGRESS: CompleteGuideProgress = {
+  status: "paused",
+  lessonId: DEFAULT_COMPLETE_GUIDE_LESSON_ID,
+};
+const DEFAULT_IMPORT_PROGRESS: ImportGuideProgress = {
+  status: "paused",
+  phase: "choose",
+  lessonId: defaultImportLessonByPhase.choose,
+};
 const validStatuses: ReadonlyArray<QuickStartGuideStatus> = ["active", "paused", "completed", "dismissed"];
 const validImportPhases: ReadonlyArray<ImportGuidePhase> = ["choose", "configure", "review", "confirm", "success"];
 
@@ -57,17 +89,45 @@ function isImportPhase(value: unknown): value is ImportGuidePhase {
   return validImportPhases.includes(value as ImportGuidePhase);
 }
 
-function normalizeStepIndex(value: unknown) {
+function normalizeLegacyStepIndex(value: unknown) {
   if (typeof value !== "number" || !Number.isInteger(value)) return 0;
-  return Math.max(0, Math.min(value, COMPLETE_TOUR_LAST_STEP));
+  return Math.max(0, Math.min(value, legacyV2CompleteLessonIds.length - 1));
 }
 
-function migrateLegacyGuide(value: LegacyStoredQuickStartGuide): StoredQuickStartGuide {
+function normalizeImportLesson(phase: ImportGuidePhase, lessonId: unknown) {
+  return isImportGuideLessonId(lessonId) && importGuidePhaseForLesson(lessonId) === phase
+    ? lessonId
+    : defaultImportLessonByPhase[phase];
+}
+
+function migrateLegacyGuideV1(value: LegacyStoredQuickStartGuideV1): StoredQuickStartGuide {
   const status: QuickStartGuideStatus =
     value.status === "pending" ? "paused" : value.status === "completed" ? "completed" : "dismissed";
   return {
     version: QUICK_START_GUIDE_VERSION,
-    complete: { status, stepIndex: 0 },
+    complete: { status, lessonId: DEFAULT_COMPLETE_GUIDE_LESSON_ID },
+  };
+}
+
+function migrateLegacyGuideV2(value: LegacyStoredQuickStartGuideV2): StoredQuickStartGuide | undefined {
+  if (!value.complete || !isStatus(value.complete.status)) return undefined;
+  const stepIndex = normalizeLegacyStepIndex(value.complete.stepIndex);
+  let importProgress: ImportGuideProgress | undefined;
+  if (value.import !== undefined) {
+    if (!isStatus(value.import.status) || !isImportPhase(value.import.phase)) return undefined;
+    importProgress = {
+      status: value.import.status,
+      phase: value.import.phase,
+      lessonId: defaultImportLessonByPhase[value.import.phase],
+    };
+  }
+  if (value.complete.status === "active" && importProgress?.status === "active") {
+    importProgress = { ...importProgress, status: "paused" };
+  }
+  return {
+    version: QUICK_START_GUIDE_VERSION,
+    complete: { status: value.complete.status, lessonId: legacyV2CompleteLessonIds[stepIndex] },
+    ...(importProgress ? { import: importProgress } : {}),
   };
 }
 
@@ -78,31 +138,34 @@ function parseStoredGuide(raw: string): StoredQuickStartGuide | undefined {
       value.version === 1 &&
       (value.status === "pending" || value.status === "completed" || value.status === "dismissed")
     ) {
-      return migrateLegacyGuide(value as LegacyStoredQuickStartGuide);
+      return migrateLegacyGuideV1(value as LegacyStoredQuickStartGuideV1);
     }
+    if (value.version === 2) return migrateLegacyGuideV2(value as unknown as LegacyStoredQuickStartGuideV2);
     if (value.version !== QUICK_START_GUIDE_VERSION || !value.complete || typeof value.complete !== "object") {
       return undefined;
     }
 
     const complete = value.complete as Record<string, unknown>;
-    if (!isStatus(complete.status)) return undefined;
+    if (!isStatus(complete.status) || !isCompleteGuideLessonId(complete.lessonId)) return undefined;
 
     let importProgress: ImportGuideProgress | undefined;
     if (value.import !== undefined) {
       if (!value.import || typeof value.import !== "object") return undefined;
       const candidate = value.import as Record<string, unknown>;
       if (!isStatus(candidate.status) || !isImportPhase(candidate.phase)) return undefined;
-      importProgress = { status: candidate.status, phase: candidate.phase };
+      importProgress = {
+        status: candidate.status,
+        phase: candidate.phase,
+        lessonId: normalizeImportLesson(candidate.phase, candidate.lessonId),
+      };
     }
 
-    const completeProgress = { status: complete.status, stepIndex: normalizeStepIndex(complete.stepIndex) };
-    if (completeProgress.status === "active" && importProgress?.status === "active") {
+    if (complete.status === "active" && importProgress?.status === "active") {
       importProgress = { ...importProgress, status: "paused" };
     }
-
     return {
       version: QUICK_START_GUIDE_VERSION,
-      complete: completeProgress,
+      complete: { status: complete.status, lessonId: complete.lessonId },
       ...(importProgress ? { import: importProgress } : {}),
     };
   } catch {
@@ -126,7 +189,8 @@ function readStoredGuide(): StoredQuickStartGuide | undefined {
     const raw = localStorage.getItem(QUICK_START_GUIDE_STORAGE_KEY);
     if (!raw) return undefined;
     const stored = parseStoredGuide(raw);
-    if (stored && JSON.parse(raw).version === 1) {
+    const version = (JSON.parse(raw) as { version?: unknown }).version;
+    if (stored && version !== QUICK_START_GUIDE_VERSION) {
       writeStoredGuide({ complete: stored.complete, import: stored.import });
     }
     return stored;
@@ -139,7 +203,7 @@ function normalizeStoredGuideForSession(stored: StoredQuickStartGuide | undefine
   if (stored?.import?.status !== "active") return stored;
   const normalized: StoredQuickStartGuide = {
     ...stored,
-    import: { status: "paused", phase: "choose" },
+    import: { status: "paused", phase: "choose", lessonId: defaultImportLessonByPhase.choose },
   };
   writeStoredGuide({ complete: normalized.complete, import: normalized.import });
   return normalized;
@@ -202,7 +266,10 @@ export const useQuickStartGuide = create<QuickStartGuideStore>((set) => {
     start: (guide = "complete") =>
       updateGuide(
         guide,
-        () => (guide === "complete" ? { status: "active", stepIndex: 0 } : { status: "active", phase: "choose" }),
+        () =>
+          guide === "complete"
+            ? { status: "active", lessonId: DEFAULT_COMPLETE_GUIDE_LESSON_ID }
+            : { status: "active", phase: "choose", lessonId: defaultImportLessonByPhase.choose },
         guide,
         "tour",
       ),
@@ -262,15 +329,18 @@ export const useQuickStartGuide = create<QuickStartGuideStore>((set) => {
     restart: (guide) =>
       updateGuide(
         guide,
-        () => (guide === "complete" ? { status: "active", stepIndex: 0 } : { status: "active", phase: "choose" }),
+        () =>
+          guide === "complete"
+            ? { status: "active", lessonId: DEFAULT_COMPLETE_GUIDE_LESSON_ID }
+            : { status: "active", phase: "choose", lessonId: defaultImportLessonByPhase.choose },
         guide,
         "tour",
       ),
-    goToStep: (stepIndex) =>
+    goToLesson: (lessonId) =>
       set((state) => {
         const guides: Omit<StoredQuickStartGuide, "version"> = {
           ...state.guides,
-          complete: { status: "active" as const, stepIndex: normalizeStepIndex(stepIndex) },
+          complete: { status: "active", lessonId },
           ...(state.guides.import?.status === "active"
             ? { import: { ...state.guides.import, status: "paused" as const } }
             : {}),
@@ -278,15 +348,34 @@ export const useQuickStartGuide = create<QuickStartGuideStore>((set) => {
         writeStoredGuide(guides);
         return { guides, activeGuide: "complete", mode: "tour" };
       }),
+    goToImportLesson: (lessonId) =>
+      set((state) => {
+        const phase = importGuidePhaseForLesson(lessonId);
+        const guides: Omit<StoredQuickStartGuide, "version"> = {
+          ...state.guides,
+          complete:
+            state.guides.complete.status === "active"
+              ? { ...state.guides.complete, status: "paused" as const }
+              : state.guides.complete,
+          import: { status: "active", phase, lessonId },
+        };
+        writeStoredGuide(guides);
+        return { guides, activeGuide: "import", mode: "tour" };
+      }),
     setImportPhase: (phase) =>
       set((state) => {
+        const currentImport = state.guides.import;
+        const lessonId =
+          currentImport?.phase === phase
+            ? normalizeImportLesson(phase, currentImport.lessonId)
+            : defaultImportLessonByPhase[phase];
         const guides = {
           ...state.guides,
           complete:
             state.guides.complete.status === "active"
               ? { ...state.guides.complete, status: "paused" as const }
               : state.guides.complete,
-          import: { status: "active" as const, phase },
+          import: { status: "active" as const, phase, lessonId },
         };
         writeStoredGuide(guides);
         return { guides, activeGuide: "import", mode: "tour" };
@@ -299,7 +388,7 @@ export function queueQuickStartGuide() {
   const importProgress = useQuickStartGuide.getState().guides.import;
   const guides = {
     ...useQuickStartGuide.getState().guides,
-    complete: { status: "paused" as const, stepIndex: 0 },
+    complete: { status: "paused" as const, lessonId: DEFAULT_COMPLETE_GUIDE_LESSON_ID },
     ...(importProgress?.status === "active" ? { import: { ...importProgress, status: "paused" as const } } : {}),
   };
   writeStoredGuide(guides);

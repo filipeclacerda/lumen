@@ -124,7 +124,10 @@ export function Transactions() {
   const [debouncedSearch, setDebouncedSearch] = useState(qParam);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const completeGuideActive = useQuickStartGuide(
-    (state) => state.mode === "tour" && state.activeGuide === "complete" && state.guides.complete.stepIndex === 1,
+    (state) =>
+      state.mode === "tour" &&
+      state.activeGuide === "complete" &&
+      state.guides.complete.lessonId === "transactions-filters",
   );
   const advancedFiltersBeforeGuide = useRef<boolean | undefined>(undefined);
   const [exporting, setExporting] = useState(false);
@@ -916,7 +919,7 @@ export function Transactions() {
           </div>
         )}
         <p className="table-hint">Em telas estreitas, deslize horizontalmente para ver todas as colunas e ações.</p>
-        <div className="table-scroll">
+        <div className="table-scroll" data-quick-guide="transactions-list">
           <table className="transactions-table">
             <thead>
               <tr>

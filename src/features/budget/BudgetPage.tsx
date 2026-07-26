@@ -96,40 +96,42 @@ export function BudgetPage() {
         }
       />
 
-      <div className="budget-month-row">
-        <MonthNavigator month={month} onChange={setMonth} />
-      </div>
-
-      {overview && (
-        <div className="budget-totals">
-          <article>
-            <span>Orçado</span>
-            <strong>{money(overview.totals.limitInCents)}</strong>
-          </article>
-          <article>
-            <span>Gasto</span>
-            <strong>{money(overview.totals.spentInCents)}</strong>
-          </article>
-          {!overview.hasOverlappingScopes && (
-            <article>
-              <span>Disponível</span>
-              <strong
-                className={
-                  overview.totals.limitInCents - overview.totals.spentInCents >= 0 ? "positive" : "budget-negative"
-                }
-              >
-                {money(overview.totals.limitInCents - overview.totals.spentInCents)}
-              </strong>
-            </article>
-          )}
+      <div data-quick-guide="budget-overview">
+        <div className="budget-month-row">
+          <MonthNavigator month={month} onChange={setMonth} />
         </div>
-      )}
-      {overview?.hasOverlappingScopes && (
-        <p className="notice" role="status">
-          Algumas linhas incluem categorias que também têm limite próprio. Por isso, o disponível total não é somado;
-          acompanhe o restante em cada linha abaixo.
-        </p>
-      )}
+
+        {overview && (
+          <div className="budget-totals">
+            <article>
+              <span>Orçado</span>
+              <strong>{money(overview.totals.limitInCents)}</strong>
+            </article>
+            <article>
+              <span>Gasto</span>
+              <strong>{money(overview.totals.spentInCents)}</strong>
+            </article>
+            {!overview.hasOverlappingScopes && (
+              <article>
+                <span>Disponível</span>
+                <strong
+                  className={
+                    overview.totals.limitInCents - overview.totals.spentInCents >= 0 ? "positive" : "budget-negative"
+                  }
+                >
+                  {money(overview.totals.limitInCents - overview.totals.spentInCents)}
+                </strong>
+              </article>
+            )}
+          </div>
+        )}
+        {overview?.hasOverlappingScopes && (
+          <p className="notice" role="status">
+            Algumas linhas incluem categorias que também têm limite próprio. Por isso, o disponível total não é somado;
+            acompanhe o restante em cada linha abaixo.
+          </p>
+        )}
+      </div>
 
       {isLoading && <LoadingState variant="panel" label="Calculando seu orçamento…" />}
       {(isError || categoriesError || targetsError) && (

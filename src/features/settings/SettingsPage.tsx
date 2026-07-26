@@ -1072,7 +1072,7 @@ function AboutSection({
         <div className="settings-about-row">
           <div>
             <strong>Tour completo</strong>
-            <small>Reveja as cinco etapas essenciais para importar, revisar e proteger seu histórico.</small>
+            <small>Reveja as 14 etapas para entender cada área do Lumen e agir com segurança.</small>
           </div>
           <button className="secondary" type="button" onClick={restartQuickStartGuide}>
             <BookOpen size={16} /> Refazer tour completo

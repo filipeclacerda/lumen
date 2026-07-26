@@ -334,6 +334,26 @@ export type CreditCardImportCommitResult = {
   invoiceId: string;
   paymentTransactionIds: string[];
 };
+export type ImportBatchSessionKind = "bank" | "credit_card";
+export type ImportBatchSessionRef = { fileId: string; kind: ImportBatchSessionKind; sessionId: string };
+export type ImportBatchValidationIssue = {
+  fileId: string;
+  sourceRow: number;
+  message: string;
+  conflictingFileId?: string;
+  conflictingSourceRow?: number;
+};
+export type ImportBatchValidation = { issues: ImportBatchValidationIssue[] };
+export type ImportBatchFileCommitResult = {
+  fileId: string;
+  kind: ImportBatchSessionKind;
+  fileName: string;
+  count: number;
+  batchId?: string;
+  invoiceId?: string;
+  paymentTransactionIds: string[];
+};
+export type ImportBatchCommitResult = { totalCount: number; files: ImportBatchFileCommitResult[] };
 export type CreditCardInvoice = {
   id: string;
   accountId: string;

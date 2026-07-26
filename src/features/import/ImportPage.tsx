@@ -30,6 +30,14 @@ import { ErrorState, LoadingState } from "../../shared/ui/AsyncState";
 import { Select } from "../../shared/ui/Select";
 import { Tabs } from "../../shared/ui/Tabs";
 import { ImportTutorial, shouldAutoStartImportGuide } from "./ImportTutorial";
+import {
+  batchCategorySuggestions,
+  removeBatchCategoryChoicesForSession,
+  syncBatchCategoryChoiceCandidate,
+  updateBatchCategoryChoices,
+  type BatchCategoryChoice,
+  type BatchCategorySuggestion,
+} from "./batchCategoryLearning";
 import { useQuickStartGuide, type ImportGuidePhase } from "../../shared/quickStartGuide";
 import {
   money,
@@ -50,6 +58,8 @@ import type {
   CsvMappingDraft,
   CsvMappingProfile,
   ImportFileInspection,
+  ImportBatchSessionRef,
+  ImportBatchValidationIssue,
   ImportPreview,
   ImportSourceKind,
   TemplateKind,
@@ -62,6 +72,14 @@ type MappingState = {
   draft: CsvMappingDraft;
   saveProfile: boolean;
   matchedProfile?: CsvMappingProfile;
+};
+
+type QueuedImportFile = { id: string; path: string; label: string };
+type PreparedImportFile = {
+  id: string;
+  label: string;
+  ref: ImportBatchSessionRef;
+  pendingCategories: number;
 };
 
 type LearningDraft = {
@@ -142,7 +160,10 @@ const cardRoles: { value: CsvColumnRole; label: string }[] = [
 ];
 
 export function creditCardCategorizationCandidates(preview?: CreditCardImportPreview) {
-  return preview?.items.filter((item) => !item.isPayment).map((item) => item.candidate) ?? [];
+  return (
+    preview?.items.filter((item) => !item.isPayment).map((item) => ({ ...item.candidate, included: item.included })) ??
+    []
+  );
 }
 
 export function CreditCardImportTotals({ preview }: { preview: CreditCardImportPreview }) {
@@ -306,14 +327,14 @@ export function importGuidePhaseForScreen({
 
 export function shouldHandoffCompleteGuideToImport({
   activeGuide,
-  completeStepIndex,
+  completeLessonId,
   phase,
 }: {
   activeGuide: "complete" | "import" | null;
-  completeStepIndex: number;
+  completeLessonId: string;
   phase: ImportGuidePhase;
 }) {
-  return activeGuide === "complete" && completeStepIndex === 0 && phase !== "choose";
+  return activeGuide === "complete" && completeLessonId === "import-source" && phase !== "choose";
 }
 
 export function importGuidePhaseForActiveScreen({
@@ -343,11 +364,21 @@ export function ImportPage() {
   const client = useQueryClient();
   const [bankPreview, setBankPreview] = useState<ImportPreview>();
   const [cardPreview, setCardPreview] = useState<CreditCardImportPreview>();
+  const [pendingBankPath, setPendingBankPath] = useState("");
+  const [bankAccountId, setBankAccountId] = useState("");
+  const [queuedFiles, setQueuedFiles] = useState<QueuedImportFile[]>([]);
+  const [preparedFiles, setPreparedFiles] = useState<PreparedImportFile[]>([]);
+  const [currentBatchFile, setCurrentBatchFile] = useState<QueuedImportFile>();
+  const [batchMode, setBatchMode] = useState(false);
+  const [batchIssues, setBatchIssues] = useState<ImportBatchValidationIssue[]>([]);
+  const [batchCardCommitSummaries, setBatchCardCommitSummaries] = useState<CreditCardImportCommitResult[]>([]);
+  const [batchCategoryChoices, setBatchCategoryChoices] = useState<BatchCategoryChoice[]>([]);
+  const [pendingMappingProfiles, setPendingMappingProfiles] = useState<CsvMappingDraft[]>([]);
   const [learning, setLearning] = useState<LearningDraft>();
   const [lastChoice, setLastChoice] = useState<LearningDraft>();
   const [lastReviewChoice, setLastReviewChoice] = useState<ReviewUndoChoice>();
   const [previewMode, setPreviewMode] = useState<"review" | "all">("review");
-  const [pendingCommit, setPendingCommit] = useState<"bank" | "card">();
+  const [pendingCommit, setPendingCommit] = useState<"bank" | "card" | "batch">();
   const [mappingState, setMappingState] = useState<MappingState>();
   const [mappingError, setMappingError] = useState("");
   const [pendingCardPath, setPendingCardPath] = useState("");
@@ -364,7 +395,7 @@ export function ImportPage() {
   const activeGuide = useQuickStartGuide((state) => state.activeGuide);
   const guideMode = useQuickStartGuide((state) => state.mode);
   const completeGuideStatus = useQuickStartGuide((state) => state.guides.complete.status);
-  const completeGuideStepIndex = useQuickStartGuide((state) => state.guides.complete.stepIndex);
+  const completeGuideLessonId = useQuickStartGuide((state) => state.guides.complete.lessonId);
   const importGuideProgress = useQuickStartGuide((state) => state.guides.import);
   const restartGuide = useQuickStartGuide((state) => state.restart);
   const setImportPhase = useQuickStartGuide((state) => state.setImportPhase);
@@ -438,16 +469,27 @@ export function ImportPage() {
   const { data: bootstrap } = useQuery({ queryKey: ["bootstrap"], queryFn: api.bootstrap });
   const asyncLoading = categoriesLoading || accountsLoading;
   const asyncError = categoriesError || accountsError;
-  const bankAccount = accounts.find((account) => account.kind !== "credit_card");
+  const bankAccounts = accounts.filter((account) => account.kind !== "credit_card");
+  const bankAccount = bankAccounts.find((account) => account.id === bankAccountId);
   const cards = accounts.filter((account) => account.kind === "credit_card");
-  const bankAccountId = bankAccount?.id;
   const firstCardId = cards[0]?.id ?? "";
-  const canStartImport = !bankPreview && !cardPreview && !pendingCardPath && !mappingState;
+  const canStartImport =
+    !batchMode && !bankPreview && !cardPreview && !pendingBankPath && !pendingCardPath && !mappingState;
+  const hasBatchReadyForConfirmation =
+    batchMode && preparedFiles.length > 0 && !currentBatchFile && queuedFiles.length === 0;
+  const batchFileCount = preparedFiles.length + queuedFiles.length + (currentBatchFile ? 1 : 0);
+  const batchProgress = batchFileCount > 0 ? (preparedFiles.length / batchFileCount) * 100 : 0;
   const bankSummary = useMemo(() => summarizeSuggestions(bankPreview?.candidates ?? []), [bankPreview?.candidates]);
-  const bankGroups = useMemo(() => groupPendingCandidates(bankPreview?.candidates ?? []), [bankPreview?.candidates]);
+  const bankGroups = useMemo(
+    () => groupPendingCandidates(bankPreview?.candidates ?? [], batchCategoryChoices, categories, false),
+    [bankPreview?.candidates, batchCategoryChoices, categories],
+  );
   const cardCandidates = useMemo(() => creditCardCategorizationCandidates(cardPreview), [cardPreview]);
   const cardSummary = useMemo(() => summarizeSuggestions(cardCandidates), [cardCandidates]);
-  const cardGroups = useMemo(() => groupPendingCandidates(cardCandidates), [cardCandidates]);
+  const cardGroups = useMemo(
+    () => groupPendingCandidates(cardCandidates, batchCategoryChoices, categories, true),
+    [cardCandidates, batchCategoryChoices, categories],
+  );
 
   useEffect(() => {
     if (!bootstrap || tutorialAutoStartAttempted.current) return;
@@ -471,14 +513,14 @@ export function ImportPage() {
       activeGuide,
       currentPhase: importGuideProgress?.phase,
       pendingCommit: Boolean(pendingCommit),
-      hasPreview: Boolean(bankPreview || cardPreview),
-      hasConfiguration: Boolean(pendingCardPath || mappingState),
+      hasPreview: Boolean(bankPreview || cardPreview || hasBatchReadyForConfirmation),
+      hasConfiguration: Boolean(pendingBankPath || pendingCardPath || mappingState),
     });
 
     if (
       shouldHandoffCompleteGuideToImport({
         activeGuide,
-        completeStepIndex: completeGuideStepIndex,
+        completeLessonId: completeGuideLessonId,
         phase,
       })
     ) {
@@ -491,9 +533,11 @@ export function ImportPage() {
     activeGuide,
     bankPreview,
     cardPreview,
-    completeGuideStepIndex,
+    completeGuideLessonId,
     importGuideProgress?.phase,
     mappingState,
+    hasBatchReadyForConfirmation,
+    pendingBankPath,
     pendingCardPath,
     pendingCommit,
     setImportPhase,
@@ -510,11 +554,16 @@ export function ImportPage() {
   // Default to the first card so the pre-filled selection counts as chosen.
   useEffect(() => {
     const cardList = accounts.filter((account) => account.kind === "credit_card");
-    if (cardList.length === 0) return;
+    if (cardList.length !== 1) return;
     if (!cardList.some((card) => card.id === cardAccountId)) {
       setCardAccountId(cardList[0].id);
     }
   }, [accounts, cardAccountId]);
+
+  useEffect(() => {
+    const available = accounts.filter((account) => account.kind !== "credit_card");
+    if (available.length === 1 && bankAccountId !== available[0].id) setBankAccountId(available[0].id);
+  }, [accounts, bankAccountId]);
 
   useEffect(() => {
     if (!mappingState) return;
@@ -547,6 +596,7 @@ export function ImportPage() {
   const resetFlow = useCallback(() => {
     setBankPreview(undefined);
     setCardPreview(undefined);
+    setPendingBankPath("");
     setPendingCardPath("");
     setMappingState(undefined);
     setMappingError("");
@@ -569,12 +619,17 @@ export function ImportPage() {
         const kind = await api.detectImportKind(path);
         if (kind === "known_credit_card") {
           setPendingCardPath(path);
-          setCardAccountId(firstCardId);
+          setCardAccountId(cards.length === 1 ? firstCardId : "");
           return;
         }
         if (kind === "known_bank") {
-          if (!bankAccountId) {
+          if (bankAccounts.length === 0) {
             setMessage("Cadastre uma conta bancária antes de importar o extrato.");
+            return;
+          }
+          if (bankAccounts.length > 1 || !bankAccountId) {
+            if (bankAccounts.length > 1) setBankAccountId("");
+            setPendingBankPath(path);
             return;
           }
           setBankPreview(await api.previewImport(path, bankAccountId));
@@ -590,8 +645,10 @@ export function ImportPage() {
           saveProfile: !matchedProfile,
           matchedProfile,
         });
-        if (sourceKind === "credit_card" && firstCardId) {
-          setCardAccountId(firstCardId);
+        if (sourceKind === "credit_card") {
+          setCardAccountId(cards.length === 1 ? firstCardId : "");
+        } else if (bankAccounts.length > 1) {
+          setBankAccountId("");
         }
       } catch (error: any) {
         setMessage(`Não foi possível ler o arquivo: ${error?.message || error}`);
@@ -599,20 +656,39 @@ export function ImportPage() {
         setIsReadingFile(false);
       }
     },
-    [bankAccountId, firstCardId, isReadingFile, resetFlow],
+    [bankAccountId, bankAccounts.length, cards.length, firstCardId, isReadingFile, resetFlow],
+  );
+
+  const startImportPaths = useCallback(
+    async (paths: string[]) => {
+      const uniquePaths = [...new Set(paths.filter(Boolean))];
+      if (uniquePaths.length === 0) return;
+      resetFlow();
+      setPreparedFiles([]);
+      setBatchIssues([]);
+      setBatchCategoryChoices([]);
+      setPendingMappingProfiles([]);
+      setBatchCardCommitSummaries([]);
+      setBatchMode(uniquePaths.length > 1);
+      const files = uniquePaths.map((path, index) => ({
+        id: `${Date.now()}-${index}`,
+        path,
+        label: path.split(/[\\/]/).pop() || "arquivo",
+      }));
+      const [first, ...remaining] = files;
+      setCurrentBatchFile(uniquePaths.length > 1 ? first : undefined);
+      setQueuedFiles(remaining);
+      await processImportPath(first.path);
+    },
+    [processImportPath, resetFlow],
   );
 
   const handleDroppedPaths = useCallback(
     async (paths: string[]) => {
       if (!canStartImport || paths.length === 0) return;
-      if (paths.length > 1) {
-        setIsDraggingFile(false);
-        setMessage("Solte apenas um arquivo por vez para revisar a importação com segurança.");
-        return;
-      }
-      await processImportPath(paths[0]);
+      await startImportPaths(paths);
     },
-    [canStartImport, processImportPath],
+    [canStartImport, startImportPaths],
   );
 
   useEffect(() => {
@@ -655,12 +731,11 @@ export function ImportPage() {
       return;
     }
     const selectedPath = await open({
-      multiple: false,
+      multiple: true,
       filters: [{ name: "Extratos e faturas", extensions: ["csv", "ofx", "pdf"] }],
     });
     if (!selectedPath) return;
-    const path = Array.isArray(selectedPath) ? selectedPath[0] : selectedPath;
-    await processImportPath(path);
+    await startImportPaths(Array.isArray(selectedPath) ? selectedPath : [selectedPath]);
   }
 
   function handleDropzoneDrag(event: DragEvent<HTMLElement>) {
@@ -715,6 +790,12 @@ export function ImportPage() {
     setPendingCardPath("");
   }
 
+  async function previewBank() {
+    if (!pendingBankPath || !bankAccountId) return;
+    setBankPreview(await api.previewImport(pendingBankPath, bankAccountId));
+    setPendingBankPath("");
+  }
+
   async function exportTemplate(templateKind: TemplateKind) {
     if (!("__TAURI_INTERNALS__" in window)) {
       setMessage("Abra o aplicativo desktop para salvar o template em CSV.");
@@ -729,6 +810,10 @@ export function ImportPage() {
 
   async function commitBank(confirmed = false) {
     if (!bankPreview) return;
+    if (batchMode) {
+      await addActiveToBatch("bank");
+      return;
+    }
     if (!confirmed && bankSummary.pending > 0) {
       setPendingCommit("bank");
       return;
@@ -774,6 +859,10 @@ export function ImportPage() {
 
   async function commitCard(confirmed = false) {
     if (!cardPreview) return;
+    if (batchMode) {
+      await addActiveToBatch("credit_card");
+      return;
+    }
     if (!confirmed && cardSummary.pending > 0) {
       setPendingCommit("card");
       return;
@@ -790,6 +879,100 @@ export function ImportPage() {
     finishImportTutorial();
     resetFlow();
     await refresh();
+  }
+
+  async function addActiveToBatch(kind: ImportBatchSessionRef["kind"]) {
+    const preview = kind === "bank" ? bankPreview : cardPreview;
+    if (!preview || !currentBatchFile) return;
+    const candidates =
+      kind === "bank" ? (bankPreview?.candidates ?? []) : creditCardCategorizationCandidates(cardPreview);
+    const pendingCategories = summarizeSuggestions(candidates).pending;
+    const next: PreparedImportFile = {
+      id: currentBatchFile.id,
+      label: currentBatchFile.label,
+      ref: { fileId: currentBatchFile.id, kind, sessionId: preview.sessionId },
+      pendingCategories,
+    };
+    setPreparedFiles((current) => [...current.filter((file) => file.id !== next.id), next]);
+    if (mappingState?.saveProfile) setPendingMappingProfiles((current) => [...current, mappingState.draft]);
+    setBatchIssues([]);
+    resetFlow();
+    const [following, ...remaining] = queuedFiles;
+    setQueuedFiles(remaining);
+    setCurrentBatchFile(following);
+    if (following) await processImportPath(following.path);
+  }
+
+  async function editPreparedBatchFile(file: PreparedImportFile) {
+    try {
+      setPreparedFiles((current) => current.filter((item) => item.id !== file.id));
+      setBatchIssues([]);
+      setCurrentBatchFile({ id: file.id, path: "", label: file.label });
+      resetFlow();
+      if (file.ref.kind === "bank") setBankPreview(await api.getImportPreview(file.ref.sessionId));
+      else setCardPreview(await api.getCreditCardImportPreview(file.ref.sessionId));
+    } catch (error: any) {
+      setMessage(`Não foi possível reabrir a prévia: ${error?.message || error}`);
+      setPreparedFiles((current) => [...current, file]);
+      setCurrentBatchFile(undefined);
+    }
+  }
+
+  async function commitBatch(confirmed = false) {
+    if (preparedFiles.length === 0) return;
+    const pending = preparedFiles.reduce((total, file) => total + file.pendingCategories, 0);
+    if (!confirmed && pending > 0) {
+      setPendingCommit("batch");
+      return;
+    }
+    setPendingCommit(undefined);
+    try {
+      const validation = await api.validateImportBatch(preparedFiles.map((file) => file.ref));
+      if (validation.issues.length > 0) {
+        setBatchIssues(validation.issues);
+        setMessage(
+          "Há lançamentos duplicados no lote. Reabra um dos arquivos indicados e exclua a ocorrência repetida.",
+        );
+        return;
+      }
+      const result = await api.commitImportBatch(preparedFiles.map((file) => file.ref));
+      const cardSummaries = result.files
+        .filter((file) => file.kind === "credit_card" && file.invoiceId)
+        .map((file) => ({ invoiceId: file.invoiceId!, paymentTransactionIds: file.paymentTransactionIds }));
+      setBatchCardCommitSummaries(cardSummaries);
+      setMessage(`${result.totalCount} lançamentos importados com segurança em ${result.files.length} arquivos.`);
+      finishImportTutorial();
+      for (const file of result.files) {
+        if (file.kind === "bank" && file.batchId) await checkForTransferCandidates(file.batchId);
+      }
+      for (const mapping of pendingMappingProfiles) {
+        try {
+          await api.saveCsvMappingProfile(mapping);
+        } catch {
+          setMessage("Importação concluída, mas um layout não pôde ser salvo.");
+        }
+      }
+      setPreparedFiles([]);
+      setQueuedFiles([]);
+      setCurrentBatchFile(undefined);
+      setBatchMode(false);
+      setBatchCategoryChoices([]);
+      setPendingMappingProfiles([]);
+      await refresh();
+    } catch (error: any) {
+      setMessage(`Não foi possível confirmar o lote: ${error?.message || error}`);
+    }
+  }
+
+  function cancelBatch() {
+    resetFlow();
+    setQueuedFiles([]);
+    setPreparedFiles([]);
+    setCurrentBatchFile(undefined);
+    setBatchMode(false);
+    setBatchIssues([]);
+    setBatchCategoryChoices([]);
+    setPendingMappingProfiles([]);
   }
 
   async function maybeSaveMappingProfile() {
@@ -825,11 +1008,26 @@ export function ImportPage() {
     );
   }
 
+  function rememberBatchCategoryChoice(sessionId: string, candidates: ImportCandidate[], categoryId?: string) {
+    if (!batchMode) return;
+    const category = categoryId ? categories.find((item) => item.id === categoryId) : undefined;
+    if (categoryId && !category) return;
+    setBatchCategoryChoices((current) =>
+      updateBatchCategoryChoices(current, sessionId, candidates, category && { id: category.id, name: category.name }),
+    );
+  }
+
+  function syncBatchCategoryChoice(sessionId: string, candidate: ImportCandidate) {
+    if (!batchMode) return;
+    setBatchCategoryChoices((current) => syncBatchCategoryChoiceCandidate(current, sessionId, candidate));
+  }
+
   async function changeBankCategory(sourceRow: number, categoryId?: string) {
     if (!bankPreview) return;
     const candidate = bankPreview.candidates.find((c) => c.sourceRow === sourceRow);
     const oldCategoryId = candidate?.suggestedCategoryId;
     await api.setImportCategory(bankPreview.sessionId, sourceRow, categoryId || undefined);
+    if (candidate) rememberBatchCategoryChoice(bankPreview.sessionId, [candidate], categoryId);
     invalidateLastReviewChoice("bank", [sourceRow]);
     const category = categories.find((item) => item.id === categoryId);
 
@@ -865,7 +1063,9 @@ export function ImportPage() {
 
   async function changeBankGroup(rows: number[], categoryId: string | undefined, representative: ImportCandidate) {
     if (!bankPreview) return;
+    const selected = bankPreview.candidates.filter((candidate) => rows.includes(candidate.sourceRow));
     setBankPreview(await api.setImportCategories(bankPreview.sessionId, rows, categoryId));
+    rememberBatchCategoryChoice(bankPreview.sessionId, selected, categoryId);
     if (categoryId) {
       setLastReviewChoice({
         kind: "bank",
@@ -893,6 +1093,7 @@ export function ImportPage() {
     if (!bankPreview) return;
     try {
       const updated = await api.updateImportCandidate(bankPreview.sessionId, sourceRow, amountInCents, included);
+      syncBatchCategoryChoice(bankPreview.sessionId, updated);
       setBankPreview({
         ...bankPreview,
         candidates: bankPreview.candidates.map((candidate) =>
@@ -913,7 +1114,23 @@ export function ImportPage() {
     const candidateEdited =
       Boolean(item) && (item?.included !== included || item?.candidate.suggestedCategoryId !== categoryId);
 
-    setCardPreview(await api.updateCreditCardImport(cardPreview.sessionId, sourceRow, included, categoryId, dueDate));
+    const updatedPreview = await api.updateCreditCardImport(
+      cardPreview.sessionId,
+      sourceRow,
+      included,
+      categoryId,
+      dueDate,
+    );
+    setCardPreview(updatedPreview);
+    const updatedItem = updatedPreview.items.find((item) => item.candidate.sourceRow === sourceRow);
+    if (updatedItem) {
+      const updatedCandidate = { ...updatedItem.candidate, included: updatedItem.included };
+      if (oldCategoryId !== categoryId) {
+        rememberBatchCategoryChoice(cardPreview.sessionId, [updatedCandidate], categoryId);
+      } else {
+        syncBatchCategoryChoice(cardPreview.sessionId, updatedCandidate);
+      }
+    }
     if (candidateEdited) invalidateLastReviewChoice("card", [sourceRow]);
 
     if (categoryId && oldCategoryId !== categoryId && item) {
@@ -932,7 +1149,11 @@ export function ImportPage() {
 
   async function changeCardGroup(rows: number[], categoryId: string | undefined, representative: ImportCandidate) {
     if (!cardPreview) return;
+    const selected = cardPreview.items
+      .filter((item) => rows.includes(item.candidate.sourceRow))
+      .map((item) => ({ ...item.candidate, included: item.included }));
     setCardPreview(await api.updateCreditCardImportCategories(cardPreview.sessionId, rows, categoryId));
+    rememberBatchCategoryChoice(cardPreview.sessionId, selected, categoryId);
     if (categoryId) {
       setLastReviewChoice({
         kind: "card",
@@ -1047,6 +1268,139 @@ export function ImportPage() {
           message="Não foi possível carregar os dados para importação."
           onRetry={() => void Promise.all([refetchCategories(), refetchAccounts()])}
         />
+      )}
+
+      {batchMode && (
+        <article className="panel import-batch-summary" aria-live="polite" data-import-tutorial="batch-queue">
+          <div className="import-batch-header">
+            <div>
+              <p className="eyebrow">IMPORTAÇÃO EM LOTE</p>
+              <h2>
+                {batchFileCount} {batchFileCount === 1 ? "arquivo" : "arquivos"} no lote
+              </h2>
+              <p>Revise cada arquivo separadamente antes da confirmação conjunta.</p>
+            </div>
+            <div className="import-batch-progress">
+              <div className="import-batch-progress__label">
+                <strong>
+                  {preparedFiles.length} de {batchFileCount}
+                </strong>
+                <span>revisados</span>
+              </div>
+              <div
+                className="import-batch-progress__track"
+                role="progressbar"
+                aria-label="Arquivos revisados no lote"
+                aria-valuemin={0}
+                aria-valuemax={batchFileCount}
+                aria-valuenow={preparedFiles.length}
+              >
+                <i style={{ width: `${batchProgress}%` }} />
+              </div>
+            </div>
+          </div>
+          <ul className="import-batch-files" aria-label="Arquivos do lote">
+            {preparedFiles.map((file, index) => (
+              <li className="import-batch-file import-batch-file--ready" key={file.id}>
+                <span className="import-batch-file__icon" aria-hidden="true">
+                  <Check size={18} />
+                </span>
+                <div className="import-batch-file__content">
+                  <strong>{file.label}</strong>
+                  <div className="import-batch-file__meta">
+                    <span>
+                      Arquivo {index + 1} de {batchFileCount}
+                    </span>
+                    <span className="import-batch-status import-batch-status--ready">Pronto</span>
+                    {file.pendingCategories > 0 && (
+                      <span className="import-batch-status import-batch-status--warning">
+                        {file.pendingCategories}{" "}
+                        {file.pendingCategories === 1 ? "item sem categoria" : "itens sem categoria"}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="import-batch-file__actions">
+                  <button
+                    type="button"
+                    className="text-button"
+                    aria-label={`Reabrir ${file.label}`}
+                    onClick={() => void editPreparedBatchFile(file)}
+                  >
+                    Reabrir
+                  </button>
+                  <button
+                    type="button"
+                    className="text-button import-batch-remove"
+                    aria-label={`Remover ${file.label} do lote`}
+                    onClick={() => {
+                      setPreparedFiles((current) => current.filter((item) => item.id !== file.id));
+                      setBatchCategoryChoices((current) =>
+                        removeBatchCategoryChoicesForSession(current, file.ref.sessionId),
+                      );
+                      setBatchIssues([]);
+                    }}
+                  >
+                    Remover
+                  </button>
+                </div>
+              </li>
+            ))}
+            {currentBatchFile && (
+              <li className="import-batch-file import-batch-file--current" aria-current="step">
+                <span className="import-batch-file__icon" aria-hidden="true">
+                  <FileText size={18} />
+                </span>
+                <div className="import-batch-file__content">
+                  <strong>{currentBatchFile.label}</strong>
+                  <div className="import-batch-file__meta">
+                    <span>
+                      Arquivo {preparedFiles.length + 1} de {batchFileCount}
+                    </span>
+                    <span className="import-batch-status import-batch-status--current">Em revisão agora</span>
+                  </div>
+                </div>
+              </li>
+            )}
+            {queuedFiles.map((file, index) => (
+              <li className="import-batch-file import-batch-file--waiting" key={file.id}>
+                <span className="import-batch-file__icon" aria-hidden="true">
+                  <Circle size={18} />
+                </span>
+                <div className="import-batch-file__content">
+                  <strong>{file.label}</strong>
+                  <div className="import-batch-file__meta">
+                    <span>
+                      Arquivo {preparedFiles.length + (currentBatchFile ? 1 : 0) + index + 1} de {batchFileCount}
+                    </span>
+                    <span className="import-batch-status import-batch-status--waiting">Aguardando revisão</span>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+          {batchIssues.length > 0 && (
+            <div className="form-error" role="alert">
+              {batchIssues.map((issue) => (
+                <p key={`${issue.fileId}-${issue.sourceRow}`}>
+                  Linha {issue.sourceRow}: {issue.message}
+                </p>
+              ))}
+            </div>
+          )}
+          {!currentBatchFile && queuedFiles.length === 0 && (
+            <div className="editor-actions">
+              <button className="secondary" onClick={cancelBatch}>
+                Cancelar lote
+              </button>
+              {preparedFiles.length > 0 && (
+                <button data-import-tutorial="review-confirm" onClick={() => void commitBatch()}>
+                  Confirmar {preparedFiles.length} arquivos
+                </button>
+              )}
+            </div>
+          )}
+        </article>
       )}
 
       {canStartImport && (
@@ -1175,6 +1529,45 @@ export function ImportPage() {
         </article>
       )}
 
+      {pendingBankPath && (
+        <article className="panel card-import-setup">
+          <div className="panel-title" data-import-tutorial="configure">
+            <div>
+              <p className="eyebrow">EXTRATO DETECTADO</p>
+              <h2>Em qual conta importar?</h2>
+            </div>
+            <div className="metric-icon green">
+              <ArrowLeftRight />
+            </div>
+          </div>
+          <div className="file-banner">
+            <FileText size={16} />
+            <span>{pendingBankPath.split(/[\\/]/).pop()}</span>
+          </div>
+          <div className="card-import-form" data-import-tutorial="configure-destination">
+            <label>
+              Conta de destino
+              <Select
+                value={bankAccountId}
+                onChange={setBankAccountId}
+                options={[
+                  { value: "", label: "Selecione a conta" },
+                  ...bankAccounts.map((account) => ({ value: account.id, label: account.name })),
+                ]}
+              />
+            </label>
+            <div className="editor-actions">
+              <button className="secondary" onClick={batchMode ? cancelBatch : resetFlow}>
+                Cancelar
+              </button>
+              <button disabled={!bankAccountId} onClick={() => void previewBank()}>
+                Revisar extrato
+              </button>
+            </div>
+          </div>
+        </article>
+      )}
+
       {pendingCardPath && (
         <article className="panel card-import-setup">
           <div className="panel-title" data-import-tutorial="configure">
@@ -1205,7 +1598,7 @@ export function ImportPage() {
               <DatePicker ariaLabel="Vencimento da fatura" value={cardDueDate} onChange={setCardDueDate} />
             </label>
             <div className="editor-actions">
-              <button className="secondary" onClick={resetFlow}>
+              <button className="secondary" onClick={batchMode ? cancelBatch : resetFlow}>
                 Cancelar
               </button>
               <button disabled={!cardAccountId} onClick={previewCard}>
@@ -1241,7 +1634,7 @@ export function ImportPage() {
             hasCard={Boolean(cardAccountId)}
           />
           <div className="rules-layout">
-            <div className="rule-editor">
+            <div className="rule-editor" data-import-tutorial="configure-mapping-fields">
               <div className="form-row">
                 <label>
                   Tipo do CSV
@@ -1322,6 +1715,21 @@ export function ImportPage() {
                   </label>
                 </div>
               )}
+              {mappingState.draft.sourceKind === "bank" && (
+                <div className="form-row form-row-top">
+                  <label>
+                    Conta de destino <span className="req">*</span>
+                    <Select
+                      value={bankAccountId}
+                      onChange={setBankAccountId}
+                      options={[
+                        { value: "", label: "Selecione a conta" },
+                        ...bankAccounts.map((account) => ({ value: account.id, label: account.name })),
+                      ]}
+                    />
+                  </label>
+                </div>
+              )}
               <label className="check-label">
                 <input
                   type="checkbox"
@@ -1395,7 +1803,7 @@ export function ImportPage() {
               </div>
             </div>
 
-            <article className="panel mapping-sample-panel">
+            <article className="panel mapping-sample-panel" data-import-tutorial="configure-mapping-sample">
               <div className="panel-title">
                 <div>
                   <h2>Amostra do arquivo</h2>
@@ -1430,23 +1838,25 @@ export function ImportPage() {
 
       {bankPreview && (
         <article className="panel import-review-panel">
-          <div className="panel-title" data-import-tutorial="review">
+          <div className="panel-title">
             <h2>Prévia de {bankPreview.fileName}</h2>
             <span>{bankPreview.candidates.length} registros</span>
           </div>
           <SuggestionSummary summary={bankSummary} />
           {lastChoice?.kind === "bank" && (
-            <ChoiceNotice choice={lastChoice} onCreateRule={() => setLearning(lastChoice)} />
+            <ChoiceNotice choice={lastChoice} batchMode={batchMode} onCreateRule={() => setLearning(lastChoice)} />
           )}
-          <Tabs
-            hidePanel
-            value={previewMode}
-            onChange={(value) => setPreviewMode(value as "review" | "all")}
-            tabs={[
-              { id: "review", label: `Revisar (${bankSummary.pending})` },
-              { id: "all", label: `Todas (${bankPreview.candidates.length})` },
-            ]}
-          />
+          <div data-import-tutorial="review-tabs">
+            <Tabs
+              hidePanel
+              value={previewMode}
+              onChange={(value) => setPreviewMode(value as "review" | "all")}
+              tabs={[
+                { id: "review", label: `Revisar (${bankSummary.pending})` },
+                { id: "all", label: `Todas (${bankPreview.candidates.length})` },
+              ]}
+            />
+          </div>
           {previewMode === "review" ? (
             <div role="tabpanel" aria-label="Lançamentos para revisar">
               <ImportReviewGroups
@@ -1521,17 +1931,17 @@ export function ImportPage() {
             </div>
           )}
           <div className="editor-actions">
-            <button className="secondary" onClick={resetFlow}>
+            <button className="secondary" onClick={batchMode ? cancelBatch : resetFlow}>
               Cancelar
             </button>
             <button
-              data-import-tutorial="confirm"
+              data-import-tutorial="review-confirm"
               onClick={() => {
                 setImportPhase("confirm");
                 void commitBank();
               }}
             >
-              Confirmar importação
+              {batchMode ? "Adicionar arquivo ao lote" : "Confirmar importação"}
             </button>
           </div>
         </article>
@@ -1539,7 +1949,7 @@ export function ImportPage() {
 
       {cardPreview && (
         <article className="panel import-review-panel">
-          <div className="panel-title" data-import-tutorial="review">
+          <div className="panel-title">
             <div>
               <p className="eyebrow">FATURA DE CARTÃO</p>
               <h2>{cardPreview.fileName}</h2>
@@ -1563,17 +1973,19 @@ export function ImportPage() {
           <CreditCardImportTotals preview={cardPreview} />
           <SuggestionSummary summary={cardSummary} />
           {lastChoice?.kind === "card" && (
-            <ChoiceNotice choice={lastChoice} onCreateRule={() => setLearning(lastChoice)} />
+            <ChoiceNotice choice={lastChoice} batchMode={batchMode} onCreateRule={() => setLearning(lastChoice)} />
           )}
-          <Tabs
-            hidePanel
-            value={previewMode}
-            onChange={(value) => setPreviewMode(value as "review" | "all")}
-            tabs={[
-              { id: "review", label: `Revisar (${cardSummary.pending})` },
-              { id: "all", label: `Todas (${cardPreview.items.length})` },
-            ]}
-          />
+          <div data-import-tutorial="review-tabs">
+            <Tabs
+              hidePanel
+              value={previewMode}
+              onChange={(value) => setPreviewMode(value as "review" | "all")}
+              tabs={[
+                { id: "review", label: `Revisar (${cardSummary.pending})` },
+                { id: "all", label: `Todas (${cardPreview.items.length})` },
+              ]}
+            />
+          </div>
           {previewMode === "review" ? (
             <div role="tabpanel" aria-label="Itens da fatura para revisar">
               <ImportReviewGroups
@@ -1597,17 +2009,17 @@ export function ImportPage() {
             </div>
           )}
           <div className="editor-actions">
-            <button className="secondary" onClick={resetFlow}>
+            <button className="secondary" onClick={batchMode ? cancelBatch : resetFlow}>
               Cancelar
             </button>
             <button
-              data-import-tutorial="confirm"
+              data-import-tutorial="review-confirm"
               onClick={() => {
                 setImportPhase("confirm");
                 void commitCard();
               }}
             >
-              Confirmar fatura
+              {batchMode ? "Adicionar arquivo ao lote" : "Confirmar fatura"}
             </button>
           </div>
         </article>
@@ -1623,6 +2035,13 @@ export function ImportPage() {
           onReview={(paymentTransactionId) => navigate(cardPaymentReconciliationPath(paymentTransactionId))}
         />
       )}
+      {batchCardCommitSummaries.map((summary) => (
+        <CardImportCommitNotice
+          key={summary.invoiceId}
+          summary={summary}
+          onReview={(paymentTransactionId) => navigate(cardPaymentReconciliationPath(paymentTransactionId))}
+        />
+      ))}
 
       {transferCandidates.length > 0 && (
         <article className="panel">
@@ -1714,16 +2133,28 @@ export function ImportPage() {
 
       {pendingCommit && (
         <Modal title="Importar com categorias pendentes?" onClose={() => setPendingCommit(undefined)}>
-          <div className="modal-form import-pending-dialog">
+          <div className="modal-form import-pending-dialog" data-import-tutorial="confirm-pending">
             <p className="muted">
-              {pendingCommit === "bank" ? bankSummary.pending : cardSummary.pending} lançamentos incluídos ainda estão
-              sem categoria. Você poderá categorizá-los depois em Transações.
+              {pendingCommit === "bank"
+                ? bankSummary.pending
+                : pendingCommit === "card"
+                  ? cardSummary.pending
+                  : preparedFiles.reduce((total, file) => total + file.pendingCategories, 0)}{" "}
+              lançamentos incluídos ainda estão sem categoria. Você poderá categorizá-los depois em Transações.
             </p>
             <div className="editor-actions">
               <button className="secondary" onClick={() => setPendingCommit(undefined)}>
                 Continuar revisando
               </button>
-              <button onClick={() => void (pendingCommit === "bank" ? commitBank(true) : commitCard(true))}>
+              <button
+                onClick={() =>
+                  void (pendingCommit === "bank"
+                    ? commitBank(true)
+                    : pendingCommit === "card"
+                      ? commitCard(true)
+                      : commitBatch(true))
+                }
+              >
                 Importar com pendências
               </button>
             </div>
@@ -1756,10 +2187,12 @@ export function ImportPage() {
         </Modal>
       )}
       <ImportTutorial
-        configureKind={pendingCardPath ? "card" : mappingState ? "mapping" : undefined}
+        configureKind={pendingBankPath ? "bank" : pendingCardPath ? "card" : mappingState ? "mapping" : undefined}
         hasCards={cards.length > 0}
         cardSelected={Boolean(cardAccountId)}
         cardCreationOpen={creatingCard}
+        batchMode={batchMode}
+        hasPreview={Boolean(bankPreview || cardPreview)}
       />
     </section>
   );
@@ -1776,7 +2209,7 @@ type CandidateGroup = {
   key: string;
   label: string;
   candidates: ImportCandidate[];
-  suggestions: ImportCandidate["categorySuggestions"];
+  suggestions: BatchCategorySuggestion[];
   totalInCents: number;
   isPix: boolean;
   isOwnAccountPix: boolean;
@@ -1797,8 +2230,19 @@ export function summarizeSuggestions(candidates: ImportCandidate[]): SuggestionS
     );
 }
 
-export function groupPendingCandidates(candidates: ImportCandidate[]): CandidateGroup[] {
-  return groupCandidates(candidates, (candidate) => !candidate.suggestedCategoryId);
+export function groupPendingCandidates(
+  candidates: ImportCandidate[],
+  batchChoices: BatchCategoryChoice[] = [],
+  categories: Category[] = [],
+  creditCard = false,
+): CandidateGroup[] {
+  return groupCandidates(
+    candidates,
+    (candidate) => !candidate.suggestedCategoryId,
+    batchChoices,
+    categories,
+    creditCard,
+  );
 }
 
 function candidateGroupKey(candidate: ImportCandidate): string {
@@ -1810,6 +2254,9 @@ function candidateGroupKey(candidate: ImportCandidate): string {
 function groupCandidates(
   candidates: ImportCandidate[],
   include: (candidate: ImportCandidate) => boolean,
+  batchChoices: BatchCategoryChoice[] = [],
+  categories: Category[] = [],
+  creditCard = false,
 ): CandidateGroup[] {
   const groups = new Map<string, ImportCandidate[]>();
   for (const candidate of candidates) {
@@ -1821,7 +2268,7 @@ function groupCandidates(
     .map(([key, items]) => {
       const seen = new Set<string>();
       const suggestions = items
-        .flatMap((candidate) => candidate.categorySuggestions)
+        .flatMap((candidate) => batchCategorySuggestions(candidate, batchChoices, categories, creditCard))
         .filter((suggestion) => {
           if (seen.has(suggestion.categoryId)) return false;
           seen.add(suggestion.categoryId);
@@ -1884,7 +2331,11 @@ function SuggestionSummary({ summary }: { summary: SuggestionSummaryData }) {
     { label: "Para revisar", value: summary.pending, className: "pending" },
   ];
   return (
-    <div className="import-suggestion-summary" aria-label="Resumo da categorização">
+    <div
+      className="import-suggestion-summary"
+      aria-label="Resumo da categorização"
+      data-import-tutorial="review-summary"
+    >
       {items.map((item) => (
         <div key={item.label} className={`import-suggestion-stat import-suggestion-stat--${item.className}`}>
           <span>{item.label}</span>
@@ -1895,13 +2346,23 @@ function SuggestionSummary({ summary }: { summary: SuggestionSummaryData }) {
   );
 }
 
-function ChoiceNotice({ choice, onCreateRule }: { choice: LearningDraft; onCreateRule: () => void }) {
+function ChoiceNotice({
+  choice,
+  batchMode,
+  onCreateRule,
+}: {
+  choice: LearningDraft;
+  batchMode: boolean;
+  onCreateRule: () => void;
+}) {
   return (
     <div className="import-choice-notice" role="status">
       <CheckCircle2 size={18} aria-hidden />
       <span>
-        Categoria aplicada a {choice.count} {choice.count === 1 ? "lançamento" : "lançamentos"}. O histórico aprenderá
-        quando você confirmar.
+        Categoria aplicada a {choice.count} {choice.count === 1 ? "lançamento" : "lançamentos"}.{" "}
+        {batchMode
+          ? "Ela aparecerá como sugestão nos próximos arquivos e o histórico aprenderá quando você confirmar."
+          : "O histórico aprenderá quando você confirmar."}
       </span>
       <button type="button" className="text-button" onClick={onCreateRule}>
         Criar regra
@@ -2047,7 +2508,7 @@ export function ImportReviewGroups({
   }
 
   return (
-    <div className="import-review-groups" ref={rootRef} aria-busy={busy}>
+    <div className="import-review-groups" ref={rootRef} aria-busy={busy} data-import-tutorial="review-categories">
       {groups.length === 0 ? (
         <div className="import-review-ready" tabIndex={-1}>
           <CheckCircle2 size={24} aria-hidden />

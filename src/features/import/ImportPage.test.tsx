@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Category, CreditCardImportPreview, ImportCandidate } from "../../shared/types";
+import { updateBatchCategoryChoices } from "./batchCategoryLearning";
 import {
   CardImportCommitNotice,
   cardPaymentReconciliationPath,
@@ -144,14 +145,14 @@ describe("fase contextual do tutorial", () => {
     expect(
       shouldHandoffCompleteGuideToImport({
         activeGuide: "complete",
-        completeStepIndex: 0,
+        completeLessonId: "import-source",
         phase: "configure",
       }),
     ).toBe(true);
     expect(
       shouldHandoffCompleteGuideToImport({
         activeGuide: "complete",
-        completeStepIndex: 0,
+        completeLessonId: "import-source",
         phase: "review",
       }),
     ).toBe(true);
@@ -161,14 +162,14 @@ describe("fase contextual do tutorial", () => {
     expect(
       shouldHandoffCompleteGuideToImport({
         activeGuide: "complete",
-        completeStepIndex: 0,
+        completeLessonId: "import-source",
         phase: "choose",
       }),
     ).toBe(false);
     expect(
       shouldHandoffCompleteGuideToImport({
         activeGuide: "complete",
-        completeStepIndex: 1,
+        completeLessonId: "transactions-list",
         phase: "configure",
       }),
     ).toBe(false);
@@ -202,6 +203,16 @@ describe("prévia da fatura", () => {
 
     expect(creditCardCategorizationCandidates(preview).map((item) => item.sourceRow)).toEqual([1, 2]);
     expect(summarizeSuggestions(creditCardCategorizationCandidates(preview)).pending).toBe(2);
+  });
+
+  it("usa o estado de inclusão do item da fatura na revisão e no aprendizado", () => {
+    const preview = creditCardPreview();
+    preview.items[0].included = false;
+
+    const candidates = creditCardCategorizationCandidates(preview);
+
+    expect(candidates[0].included).toBe(false);
+    expect(summarizeSuggestions(candidates).pending).toBe(1);
   });
 
   it("mostra o total da fatura sem misturar pagamentos anteriores", () => {
@@ -307,6 +318,22 @@ describe("groupPendingCandidates", () => {
     expect(groups).toHaveLength(3);
     expect(groups.filter((group) => group.isPix).map((group) => group.candidates[0].sourceRow)).toEqual([2, 8]);
     expect(groups.find((group) => !group.isPix)?.candidates.map((item) => item.sourceRow)).toEqual([9, 10]);
+  });
+
+  it("incorpora a escolha feita em outro arquivo sem reduzir a pendencia", () => {
+    const previous = candidate({ sourceRow: 2, merchantKey: "PADARIA CENTRAL" });
+    const choices = updateBatchCategoryChoices([], "session-previous", [previous], categories[0]);
+    const current = candidate({ sourceRow: 8, merchantKey: "PADARIA CENTRAL" });
+
+    const groups = groupPendingCandidates([current], choices, categories, false);
+
+    expect(groups[0].suggestions[0]).toMatchObject({
+      categoryId: "food",
+      source: "batch_choice",
+      reason: "Escolhida por você neste lote",
+    });
+    expect(summarizeSuggestions([current]).pending).toBe(1);
+    expect(current.suggestedCategoryId).toBeUndefined();
   });
 });
 

@@ -1,6 +1,6 @@
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::{collections::HashSet, path::PathBuf};
 use tauri::State;
 use uuid::Uuid;
@@ -39,8 +39,8 @@ pub struct CreditCardImportPreview {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreditCardImportCommitResult {
-    invoice_id: String,
-    payment_transaction_ids: Vec<String>,
+    pub(crate) invoice_id: String,
+    pub(crate) payment_transaction_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -294,6 +294,32 @@ pub async fn preview_credit_card_import(
 }
 
 #[tauri::command]
+pub async fn get_credit_card_import_preview(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> Result<CreditCardImportPreview, AppError> {
+    let session = state
+        .credit_card_sessions
+        .lock()
+        .await
+        .get(&session_id)
+        .cloned()
+        .ok_or(AppError::SessionExpired)?;
+    let totals = totals(&session.items)?;
+    Ok(CreditCardImportPreview {
+        session_id,
+        file_name: session.file_name,
+        account_id: session.account_id,
+        due_date: session.due_date,
+        purchases_in_cents: totals.purchases_in_cents,
+        credits_in_cents: totals.credits_in_cents,
+        payments_in_cents: totals.payments_in_cents,
+        total_in_cents: totals.total_in_cents,
+        items: session.items,
+    })
+}
+
+#[tauri::command]
 pub async fn preview_mapped_credit_card_import(
     path: String,
     account_id: String,
@@ -544,6 +570,15 @@ pub(crate) async fn commit_credit_card_import_impl(
     db: &SqlitePool,
 ) -> Result<CreditCardImportCommitResult, AppError> {
     let mut tx = db.begin().await?;
+    let (result, _, _) = commit_credit_card_import_in_transaction(session, &mut tx).await?;
+    tx.commit().await?;
+    Ok(result)
+}
+
+pub(crate) async fn commit_credit_card_import_in_transaction(
+    session: CreditCardImportSession,
+    tx: &mut SqliteConnection,
+) -> Result<(CreditCardImportCommitResult, String, usize), AppError> {
     let mut seen_external = HashSet::new();
     let mut seen_fingerprint = HashSet::new();
     for item in session.items.iter().filter(|x| x.included) {
@@ -570,6 +605,7 @@ pub(crate) async fn commit_credit_card_import_impl(
             "Selecione ao menos um item da fatura".into(),
         ));
     }
+    let count = included.len();
     let totals = totals(&included)?;
     let batch_id = Uuid::new_v4().to_string();
     let invoice_id = Uuid::new_v4().to_string();
@@ -627,11 +663,14 @@ pub(crate) async fn commit_credit_card_import_impl(
                 .await?;
         }
     }
-    tx.commit().await?;
-    Ok(CreditCardImportCommitResult {
-        invoice_id,
-        payment_transaction_ids,
-    })
+    Ok((
+        CreditCardImportCommitResult {
+            invoice_id,
+            payment_transaction_ids,
+        },
+        batch_id,
+        count,
+    ))
 }
 
 #[tauri::command]
