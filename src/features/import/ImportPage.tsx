@@ -19,6 +19,7 @@ import {
   Lightbulb,
   Plus,
   ShieldCheck,
+  Tag,
   TableProperties,
   X,
 } from "lucide-react";
@@ -2525,15 +2526,17 @@ export function ImportReviewGroups({
         </div>
       ) : (
         <div className="import-review-intro">
-          <Lightbulb size={18} aria-hidden />
+          <span className="import-review-intro-icon">
+            <Lightbulb size={18} aria-hidden />
+          </span>
           <div>
-            <strong>Uma etapa por vez</strong>
+            <strong>Revise com tranquilidade</strong>
             <p>
               Escolha uma categoria por estabelecimento. Cada PIX é revisado separadamente para evitar categorizações
               indevidas.
             </p>
           </div>
-          <span className="import-review-intro-hint">Sugestões agilizam a revisão</span>
+          <span className="import-review-intro-hint">Revisão assistida</span>
         </div>
       )}
       {error && (
@@ -2547,25 +2550,25 @@ export function ImportReviewGroups({
       {activeGroup && (
         <div className="import-review-queue" role="region" aria-label="Fila guiada de revisão">
           <div className="import-review-queue-header">
-            <div>
-              <span className="import-review-action-label">Etapa atual</span>
+            <div className="import-review-queue-copy">
+              <span className="import-review-action-label">Revisão de categorias</span>
               <strong>
-                Grupo {queuePosition + 1} de {queueTotal}
+                {pendingCandidates} {pendingCandidates === 1 ? "lançamento pendente" : "lançamentos pendentes"}
               </strong>
-              <small>
-                {pendingCandidates} {pendingCandidates === 1 ? "lançamento" : "lançamentos"} pendentes · escolha uma vez
-              </small>
             </div>
-          </div>
-          <div
-            className="import-review-queue-track"
-            role="progressbar"
-            aria-label="Posição na fila de revisão"
-            aria-valuemin={1}
-            aria-valuemax={queueTotal}
-            aria-valuenow={queuePosition + 1}
-          >
-            <i style={{ width: `${((queuePosition + 1) / queueTotal) * 100}%` }} />
+            <span className="import-review-queue-count" aria-hidden>
+              Grupo {queuePosition + 1} de {queueTotal}
+            </span>
+            <div
+              className="import-review-queue-track"
+              role="progressbar"
+              aria-label="Posição na fila de revisão"
+              aria-valuemin={1}
+              aria-valuemax={queueTotal}
+              aria-valuenow={queuePosition + 1}
+            >
+              <i style={{ width: `${((queuePosition + 1) / queueTotal) * 100}%` }} />
+            </div>
           </div>
           <article
             className="import-review-group"
@@ -2584,12 +2587,23 @@ export function ImportReviewGroups({
             )}
             <div className="import-review-group-main">
               <div className="import-review-group-heading">
-                <span>{activeGroup.isPix ? "LANÇAMENTO PIX" : "ESTABELECIMENTO"}</span>
-                <h3 id="import-review-active-title">{activeGroup.label}</h3>
-                <p className="import-review-group-summary">
-                  {activeGroup.candidates.length} {activeGroup.candidates.length === 1 ? "lançamento" : "lançamentos"} ·{" "}
+                <div className="import-review-group-identity">
+                  <span className="import-review-group-kind">
+                    {activeGroup.isPix ? "LANÇAMENTO PIX" : "ESTABELECIMENTO"}
+                  </span>
+                  <h3 id="import-review-active-title">{activeGroup.label}</h3>
+                  <p>
+                    {activeGroup.candidates.length}{" "}
+                    {activeGroup.candidates.length === 1 ? "lançamento neste grupo" : "lançamentos neste grupo"}
+                  </p>
+                </div>
+                <div
+                  className="import-review-group-amount"
+                  data-flow={activeGroup.totalInCents < 0 ? "expense" : "income"}
+                >
+                  <span>Valor do grupo</span>
                   <strong>{money(activeGroup.totalInCents)}</strong>
-                </p>
+                </div>
               </div>
               <div
                 className={`import-review-group-actions${
@@ -2598,8 +2612,11 @@ export function ImportReviewGroups({
               >
                 {activeGroup.isOwnAccountPix && !creditCard && (
                   <div className="own-account-pix-guidance">
-                    <div>
-                      <span className="import-review-action-label">PIX PARA OUTRA CONTA SUA</span>
+                    <span className="own-account-pix-guidance__icon">
+                      <ArrowLeftRight size={19} aria-hidden />
+                    </span>
+                    <div className="own-account-pix-guidance__copy">
+                      <span className="import-review-action-label">PIX para outra conta sua</span>
                       <strong>Como você quer representar esse caminho?</strong>
                       <p>
                         Se a outra conta também está no Lumen, use Transferência nas duas pontas e vincule-as após a
@@ -2687,15 +2704,20 @@ export function ImportReviewGroups({
                   </div>
                 )}
                 <div className="import-review-category-picker">
-                  <div className="import-review-action-heading">
-                    <span className="import-review-action-label">
-                      {activeGroup.suggestions.length === 0 ? "Escolha uma categoria" : "Todas as categorias"}
+                  <div className="import-review-category-copy">
+                    <span className="import-review-category-icon">
+                      <Tag size={18} aria-hidden />
                     </span>
-                    <small>
-                      {activeGroup.suggestions.length === 0
-                        ? "Sem sugestão segura — procure na lista completa"
-                        : "Ou procure outra opção"}
-                    </small>
+                    <div>
+                      <strong>
+                        {activeGroup.suggestions.length === 0 ? "Escolha uma categoria" : "Prefere outra categoria?"}
+                      </strong>
+                      <small>
+                        {activeGroup.suggestions.length === 0
+                          ? "Sem sugestão segura — procure na lista completa"
+                          : "Abra a lista para ver todas as opções."}
+                      </small>
+                    </div>
                   </div>
                   <CategorySelect
                     categories={categories}
