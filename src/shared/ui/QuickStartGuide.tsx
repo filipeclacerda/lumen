@@ -103,6 +103,8 @@ export function QuickStartGuide() {
       describedBy="quick-start-guide-description"
       focusKey={`${mode}-${lesson.id}`}
       focusOnOpen
+      deferFallbackMs={invitation ? 0 : 800}
+      revealAfterStableMs={invitation ? 0 : 500}
     >
       {(positionControl: ReactNode) => (
         <>

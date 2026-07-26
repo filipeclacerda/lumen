@@ -72,7 +72,7 @@ describe("ImportTutorial", () => {
       <MemoryRouter>
         <div data-import-tutorial="choose">Escolha</div>
         <div data-import-tutorial="review-summary">Resumo</div>
-        <div data-import-tutorial="review-categories">Categorias</div>
+        <div data-import-tutorial="review-category-group">Categorias</div>
         <div data-import-tutorial="review-tabs">Abas</div>
         <button data-import-tutorial="review-confirm">Confirmar</button>
         <ImportTutorial hasPreview />
@@ -111,6 +111,75 @@ describe("ImportTutorial", () => {
       expect(Number.parseFloat(highlight.style.left)).toBeCloseTo(34);
       expect(Number.parseFloat(highlight.style.width)).toBeCloseTo(492);
       expect(Number.parseFloat(highlight.style.height)).toBeCloseTo(82);
+    });
+  });
+
+  it("keeps the card visually hidden until the lesson target is positioned", async () => {
+    useQuickStartGuide.getState().start("import");
+    const view = render(
+      <MemoryRouter>
+        <ImportTutorial />
+      </MemoryRouter>,
+    );
+
+    const region = screen.getByRole("region", { name: "Escolha o arquivo exportado" });
+    const positioner = region.parentElement as HTMLElement;
+    expect(positioner.style.opacity).toBe("0");
+    vi.spyOn(region, "getBoundingClientRect").mockReturnValue({
+      top: 0,
+      right: 400,
+      bottom: 240,
+      left: 0,
+      width: 400,
+      height: 240,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    view.rerender(
+      <MemoryRouter>
+        <div data-import-tutorial="choose">Escolher arquivo</div>
+        <ImportTutorial />
+      </MemoryRouter>,
+    );
+    const target = document.querySelector('[data-import-tutorial="choose"]') as HTMLElement;
+    let targetTop = 120;
+    vi.spyOn(target, "getBoundingClientRect").mockImplementation(() => ({
+      top: targetTop,
+      right: 920,
+      bottom: targetTop + 100,
+      left: 120,
+      width: 800,
+      height: 100,
+      x: 120,
+      y: targetTop,
+      toJSON: () => ({}),
+    }));
+    fireEvent(window, new Event("resize"));
+
+    await waitFor(() => {
+      const positioned = screen.getByRole("region", { name: "Escolha o arquivo exportado" })
+        .parentElement as HTMLElement;
+      expect(positioned.dataset.placement).toBeTruthy();
+      expect(positioned.style.opacity).toBe("0");
+    });
+
+    targetTop = 340;
+    fireEvent(window, new Event("resize"));
+    await waitFor(() => {
+      const highlight = document.querySelector(".quick-start-guide__highlight") as HTMLElement;
+      expect(Number.parseFloat(highlight.style.top)).toBeCloseTo(340);
+      const positioned = screen.getByRole("region", { name: "Escolha o arquivo exportado" })
+        .parentElement as HTMLElement;
+      expect(positioned.style.opacity).toBe("0");
+    });
+
+    await waitFor(() => {
+      const positioned = screen.getByRole("region", { name: "Escolha o arquivo exportado" })
+        .parentElement as HTMLElement;
+      expect(positioned.dataset.placement).toBeTruthy();
+      expect(positioned.style.opacity).toBe("");
     });
   });
 
@@ -319,19 +388,19 @@ describe("ImportTutorial", () => {
     });
   });
 
-  it("walks through the four review lessons without executing screen actions", async () => {
+  it("shows confirmation only after the third category lesson is completed", async () => {
     useQuickStartGuide.getState().start("import");
     useQuickStartGuide.getState().setImportPhase("review");
     const confirmAction = vi.fn();
-    render(
+    const view = render(
       <MemoryRouter>
         <div data-import-tutorial="review-summary">Resumo</div>
-        <div data-import-tutorial="review-categories">Categorias</div>
         <div data-import-tutorial="review-tabs">Abas</div>
         <button data-import-tutorial="review-confirm" onClick={confirmAction}>
           Confirmar
         </button>
-        <ImportTutorial hasPreview />
+        <div data-import-tutorial="review-category-group">Categorias</div>
+        <ImportTutorial hasPreview pendingCategoryCount={2} />
       </MemoryRouter>,
     );
 
@@ -339,20 +408,87 @@ describe("ImportTutorial", () => {
     expect(screen.getByText(/Por regra vem de uma regra explícita/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Avançar" }));
+    expect(await screen.findByRole("heading", { name: "Use “Todas” para a conferência fina" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Avançar" }));
     expect(await screen.findByRole("heading", { name: "Resolva uma categoria por vez" })).toBeTruthy();
     expect(useQuickStartGuide.getState().guides.import?.lessonId).toBe("review-categories");
+    expect(screen.getByText("Faltam 2 lançamentos para categorizar.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Avançar" })).toBeNull();
+    expect(confirmAction).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Avançar" }));
-    expect(await screen.findByRole("heading", { name: "Use “Todas” para a conferência fina" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Ocultar ajuda" }));
+    expect(screen.queryByRole("region", { name: "Resolva uma categoria por vez" })).toBeNull();
+    expect(useQuickStartGuide.getState().guides.import?.status).toBe("active");
+    expect(useQuickStartGuide.getState().guides.import?.lessonId).toBe("review-categories");
+    fireEvent.click(screen.getByRole("button", { name: /Mostrar ajuda de categorização/ }));
+    expect(await screen.findByRole("heading", { name: "Resolva uma categoria por vez" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Ocultar ajuda" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Avançar" }));
+    view.rerender(
+      <MemoryRouter>
+        <div data-import-tutorial="review-summary">Resumo</div>
+        <div data-import-tutorial="review-tabs">Abas</div>
+        <button data-import-tutorial="review-confirm" onClick={confirmAction}>
+          Confirmar
+        </button>
+        <div data-import-tutorial="review-categories-ready">Tudo pronto</div>
+        <ImportTutorial hasPreview pendingCategoryCount={0} />
+      </MemoryRouter>,
+    );
+
     expect(await screen.findByRole("heading", { name: "Confirme somente depois da revisão" })).toBeTruthy();
-    expect(screen.getByText("Continue na tela para seguir")).toBeTruthy();
+    expect(screen.getByText("4 de 4")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Categorias resolvidas" })).toBeNull();
+    expect(useQuickStartGuide.getState().guides.import?.status).toBe("active");
+    expect(useQuickStartGuide.getState().guides.import?.lessonId).toBe("review-confirm");
     expect(confirmAction).not.toHaveBeenCalled();
+  });
 
-    fireEvent.click(screen.getByRole("button", { name: "Voltar" }));
-    expect(await screen.findByRole("heading", { name: "Use “Todas” para a conferência fina" })).toBeTruthy();
-    expect(confirmAction).not.toHaveBeenCalled();
+  it("highlights the entire current category group in the last lesson", async () => {
+    useQuickStartGuide.getState().start("import");
+    useQuickStartGuide.getState().goToImportLesson("review-categories");
+    render(
+      <MemoryRouter>
+        <article data-import-tutorial="review-category-group">Card completo do grupo</article>
+        <ImportTutorial hasPreview pendingCategoryCount={1} />
+      </MemoryRouter>,
+    );
+
+    const target = document.querySelector('[data-import-tutorial="review-category-group"]') as HTMLElement;
+    vi.spyOn(target, "getBoundingClientRect").mockReturnValue({
+      top: 360,
+      right: 952,
+      bottom: 720,
+      left: 72,
+      width: 880,
+      height: 360,
+      x: 72,
+      y: 360,
+      toJSON: () => ({}),
+    });
+    const region = screen.getByRole("region", { name: "Resolva uma categoria por vez" });
+    vi.spyOn(region, "getBoundingClientRect").mockReturnValue({
+      top: 0,
+      right: 400,
+      bottom: 240,
+      left: 0,
+      width: 400,
+      height: 240,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    fireEvent(window, new Event("resize"));
+
+    await waitFor(() => {
+      expect(region.parentElement?.getAttribute("data-placement")).toBe("top");
+      const highlight = document.querySelector(".quick-start-guide__highlight") as HTMLElement;
+      expect(Number.parseFloat(highlight.style.top)).toBeCloseTo(354);
+      expect(Number.parseFloat(highlight.style.left)).toBeCloseTo(66);
+      expect(Number.parseFloat(highlight.style.width)).toBeCloseTo(892);
+      expect(Number.parseFloat(highlight.style.height)).toBeCloseTo(372);
+    });
   });
 
   it("separates required mapping fields from the file sample", async () => {
@@ -402,6 +538,48 @@ describe("ImportTutorial", () => {
     expect(await screen.findByRole("heading", { name: "Faça a validação final do lote" })).toBeTruthy();
   });
 
+  it("applies the category gate before showing the current file action inside a batch", async () => {
+    useQuickStartGuide.getState().start("import");
+    useQuickStartGuide.getState().goToImportLesson("batch-queue");
+    const view = render(
+      <MemoryRouter>
+        <div data-import-tutorial="batch-queue">Fila do lote</div>
+        <div data-import-tutorial="review-summary">Resumo</div>
+        <div data-import-tutorial="review-tabs">Abas</div>
+        <button data-import-tutorial="review-confirm">Adicionar arquivo ao lote</button>
+        <div data-import-tutorial="review-category-group">Categorias</div>
+        <ImportTutorial batchMode hasPreview pendingCategoryCount={1} />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole("heading", { name: "Acompanhe cada arquivo do lote" })).toBeTruthy();
+    for (const title of [
+      "Entenda de onde vieram as categorias",
+      "Use “Todas” para a conferência fina",
+      "Resolva uma categoria por vez",
+    ]) {
+      fireEvent.click(screen.getByRole("button", { name: "Avançar" }));
+      expect(await screen.findByRole("heading", { name: title })).toBeTruthy();
+    }
+
+    expect(screen.getByText("Falta 1 lançamento para categorizar.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Avançar" })).toBeNull();
+
+    view.rerender(
+      <MemoryRouter>
+        <div data-import-tutorial="batch-queue">Fila do lote</div>
+        <div data-import-tutorial="review-summary">Resumo</div>
+        <div data-import-tutorial="review-tabs">Abas</div>
+        <button data-import-tutorial="review-confirm">Adicionar arquivo ao lote</button>
+        <div data-import-tutorial="review-categories-ready">Tudo pronto</div>
+        <ImportTutorial batchMode hasPreview pendingCategoryCount={0} />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole("heading", { name: "Adicione este arquivo ao lote" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Categorias resolvidas" })).toBeNull();
+  });
+
   it("can be paused or permanently dismissed", () => {
     useQuickStartGuide.getState().start("import");
     const view = render(
@@ -424,6 +602,7 @@ describe("ImportTutorial", () => {
 
   it("keeps the success step visible until the user completes it", () => {
     useQuickStartGuide.getState().start("import");
+    useQuickStartGuide.getState().pause("import");
     useQuickStartGuide.getState().setImportPhase("success");
     render(
       <MemoryRouter>
@@ -433,6 +612,7 @@ describe("ImportTutorial", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Importação concluída" })).toBeTruthy();
+    expect(useQuickStartGuide.getState().guides.import?.status).toBe("active");
     fireEvent.click(screen.getByRole("button", { name: "Fechar" }));
     expect(useQuickStartGuide.getState().guides.import?.status).toBe("completed");
   });

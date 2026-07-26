@@ -148,6 +148,81 @@ describe("QuickStartGuide", () => {
     expect(storedQuickStartGuideStatus()).toBe("completed");
   });
 
+  it("does not show the complete guide in the corner while a lazy route is loading", async () => {
+    restartQuickStartGuide();
+    useQuickStartGuide.getState().goToLesson("recurring-editor");
+    const view = render(
+      <MemoryRouter initialEntries={["/recurring"]}>
+        <div data-quick-guide="recurring-editor">Recorrências carregadas</div>
+        <QuickStartGuide />
+      </MemoryRouter>,
+    );
+
+    const recurringDialog = screen.getByRole("dialog", { name: "Cadastre uma vez, acompanhe todo mês" });
+    vi.spyOn(recurringDialog, "getBoundingClientRect").mockReturnValue({
+      top: 0,
+      right: 400,
+      bottom: 240,
+      left: 0,
+      width: 400,
+      height: 240,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    const recurringTarget = document.querySelector('[data-quick-guide="recurring-editor"]') as HTMLElement;
+    vi.spyOn(recurringTarget, "getBoundingClientRect").mockReturnValue({
+      top: 220,
+      right: 1320,
+      bottom: 460,
+      left: 270,
+      width: 1050,
+      height: 240,
+      x: 270,
+      y: 220,
+      toJSON: () => ({}),
+    });
+    fireEvent(window, new Event("resize"));
+    await waitFor(() => expect((recurringDialog.parentElement as HTMLElement).style.opacity).toBe(""));
+
+    useQuickStartGuide.getState().goToLesson("accounts-overview");
+    view.rerender(
+      <MemoryRouter initialEntries={["/accounts"]}>
+        <div>Carregando tela...</div>
+        <QuickStartGuide />
+      </MemoryRouter>,
+    );
+    const loadingDialog = screen.getByRole("dialog", { name: "Separe saldo, crédito e conciliação" });
+    expect((loadingDialog.parentElement as HTMLElement).style.opacity).toBe("0");
+
+    view.rerender(
+      <MemoryRouter initialEntries={["/accounts"]}>
+        <div data-quick-guide="accounts-overview">Contas e cartões carregadas</div>
+        <QuickStartGuide />
+      </MemoryRouter>,
+    );
+    const target = document.querySelector('[data-quick-guide="accounts-overview"]') as HTMLElement;
+    vi.spyOn(target, "getBoundingClientRect").mockReturnValue({
+      top: 220,
+      right: 1320,
+      bottom: 460,
+      left: 270,
+      width: 1050,
+      height: 240,
+      x: 270,
+      y: 220,
+      toJSON: () => ({}),
+    });
+    fireEvent(window, new Event("resize"));
+
+    await waitFor(() => {
+      const positioned = screen.getByRole("dialog", { name: "Separe saldo, crédito e conciliação" })
+        .parentElement as HTMLElement;
+      expect(positioned.dataset.placement).toBeTruthy();
+      expect(positioned.style.opacity).toBe("");
+    });
+  });
+
   it("pauses without permanently dismissing and can be ended explicitly", () => {
     restartQuickStartGuide();
     const view = renderGuide();

@@ -2,6 +2,8 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  Eye,
+  EyeOff,
   FileSearch,
   FileUp,
   Layers3,
@@ -11,7 +13,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   useQuickStartGuide,
@@ -76,6 +78,7 @@ function lessonsForPhase({
   cardCreationOpen,
   batchMode,
   hasPreview,
+  pendingCategoryCount,
 }: {
   phase: ImportGuidePhase;
   configureKind?: ConfigureKind;
@@ -84,6 +87,7 @@ function lessonsForPhase({
   cardCreationOpen: boolean;
   batchMode: boolean;
   hasPreview: boolean;
+  pendingCategoryCount: number;
 }): ImportLesson[] {
   if (phase === "choose") {
     return [
@@ -233,19 +237,6 @@ function lessonsForPhase({
           targetPadding: 6,
         },
         {
-          id: "review-categories",
-          target: '[data-import-tutorial="review-categories"]',
-          title: "Resolva uma categoria por vez",
-          summary: "A fila apresenta somente os lançamentos que ainda precisam de decisão.",
-          points: [
-            "Lançamentos semelhantes são agrupados por estabelecimento; cada PIX é revisado separadamente.",
-            "As sugestões são atalhos, não decisões ocultas. Use Todas as categorias quando nenhuma opção fizer sentido.",
-            "Ao escolher, o próximo grupo entra em foco e você pode voltar à escolha anterior.",
-          ],
-          icon: Tags,
-          targetPadding: 6,
-        },
-        {
           id: "review-all",
           target: '[data-import-tutorial="review-tabs"]',
           title: "Use “Todas” para a conferência fina",
@@ -256,6 +247,23 @@ function lessonsForPhase({
           ],
           icon: FileSearch,
           targetPadding: 6,
+        },
+        {
+          id: "review-categories",
+          target: '[data-import-tutorial="review-category-group"], [data-import-tutorial="review-categories-ready"]',
+          title: pendingCategoryCount > 0 ? "Resolva uma categoria por vez" : "Categorias resolvidas",
+          summary:
+            pendingCategoryCount > 0
+              ? "A fila apresenta somente os lançamentos que ainda precisam de decisão."
+              : "Todos os itens incluídos e não duplicados já possuem categoria.",
+          points: [
+            "Lançamentos semelhantes são agrupados por estabelecimento; cada PIX é revisado separadamente.",
+            "As sugestões são atalhos, não decisões ocultas. Use Todas as categorias quando nenhuma opção fizer sentido.",
+            "Ao escolher, o próximo grupo entra em foco e você pode voltar à escolha anterior.",
+          ],
+          icon: Tags,
+          targetPadding: 6,
+          initialPlacement: "top",
         },
         {
           id: "review-confirm",
@@ -333,6 +341,7 @@ export function ImportTutorial({
   cardCreationOpen = false,
   batchMode = false,
   hasPreview = false,
+  pendingCategoryCount = 0,
 }: {
   configureKind?: ConfigureKind;
   hasCards?: boolean;
@@ -340,8 +349,10 @@ export function ImportTutorial({
   cardCreationOpen?: boolean;
   batchMode?: boolean;
   hasPreview?: boolean;
+  pendingCategoryCount?: number;
 }) {
   const navigate = useNavigate();
+  const [categoryCardHidden, setCategoryCardHidden] = useState(false);
   const { activeGuide, guides, pause, dismiss, complete, goToLesson, goToImportLesson } = useQuickStartGuide();
   const phase = guides.import?.phase ?? "choose";
   const storedLessonId = guides.import?.lessonId;
@@ -353,12 +364,14 @@ export function ImportTutorial({
     cardCreationOpen,
     batchMode,
     hasPreview,
+    pendingCategoryCount,
   });
   const lessonIndex = Math.max(
     0,
     lessons.findIndex((lesson) => lesson.id === storedLessonId),
   );
   const lesson = lessons[lessonIndex];
+  const isReviewCategoryLesson = phase === "review" && lesson?.id === "review-categories";
 
   useEffect(() => {
     if (activeGuide !== "import") return;
@@ -376,6 +389,20 @@ export function ImportTutorial({
     goToImportLesson(lesson.id);
   }, [activeGuide, goToImportLesson, lesson, storedLessonId]);
 
+  useEffect(() => {
+    if (!isReviewCategoryLesson || pendingCategoryCount === 0) {
+      setCategoryCardHidden(false);
+    }
+  }, [isReviewCategoryLesson, pendingCategoryCount]);
+
+  useEffect(() => {
+    if (activeGuide !== "import" || !isReviewCategoryLesson || pendingCategoryCount > 0) return;
+    const confirmationLesson = lessons[lessonIndex + 1];
+    if (confirmationLesson?.id === "review-confirm") {
+      goToImportLesson(confirmationLesson.id);
+    }
+  }, [activeGuide, goToImportLesson, isReviewCategoryLesson, lessonIndex, lessons, pendingCategoryCount]);
+
   if (activeGuide !== "import" || !lesson) return null;
   const Icon = lesson.icon;
 
@@ -391,6 +418,26 @@ export function ImportTutorial({
   };
 
   const isLastLesson = lessonIndex === lessons.length - 1;
+  const pendingCategoryMessage =
+    pendingCategoryCount === 0
+      ? "Categorias concluídas. Avance para conhecer a confirmação."
+      : pendingCategoryCount === 1
+        ? "Falta 1 lançamento para categorizar."
+        : `Faltam ${pendingCategoryCount} lançamentos para categorizar.`;
+
+  if (isReviewCategoryLesson && categoryCardHidden) {
+    return (
+      <button
+        className="secondary import-tutorial__restore"
+        type="button"
+        aria-label={`Mostrar ajuda de categorização. ${pendingCategoryMessage}`}
+        onClick={() => setCategoryCardHidden(false)}
+      >
+        <Eye size={17} aria-hidden />
+        Mostrar ajuda
+      </button>
+    );
+  }
 
   return (
     <GuideCoachmark
@@ -403,6 +450,8 @@ export function ImportTutorial({
       labelledBy="import-tutorial-title"
       describedBy="import-tutorial-description"
       focusKey={lesson.id}
+      deferFallbackMs={800}
+      revealAfterStableMs={500}
     >
       {(positionControl: ReactNode) => (
         <>
@@ -444,13 +493,39 @@ export function ImportTutorial({
                 <button className="text-button" type="button" onClick={() => dismiss("import")}>
                   Encerrar ajuda
                 </button>
+                {isReviewCategoryLesson && (
+                  <button className="text-button" type="button" onClick={() => setCategoryCardHidden(true)}>
+                    <EyeOff size={16} aria-hidden />
+                    Ocultar ajuda
+                  </button>
+                )}
                 <div>
                   {lessonIndex > 0 && (
                     <button className="secondary" type="button" onClick={() => moveLesson(lessonIndex - 1)}>
                       <ChevronLeft size={16} /> Voltar
                     </button>
                   )}
-                  {!isLastLesson ? (
+                  {isReviewCategoryLesson ? (
+                    <>
+                      <span
+                        className="quick-start-guide__continue-hint"
+                        id="import-tutorial-category-status"
+                        role="status"
+                        aria-live="polite"
+                      >
+                        {pendingCategoryMessage}
+                      </span>
+                      {pendingCategoryCount === 0 && (
+                        <button
+                          type="button"
+                          aria-describedby="import-tutorial-category-status"
+                          onClick={() => moveLesson(lessonIndex + 1)}
+                        >
+                          Avançar <ChevronRight size={16} />
+                        </button>
+                      )}
+                    </>
+                  ) : !isLastLesson ? (
                     <button type="button" onClick={() => moveLesson(lessonIndex + 1)}>
                       Avançar <ChevronRight size={16} />
                     </button>

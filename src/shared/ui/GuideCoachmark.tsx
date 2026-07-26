@@ -39,6 +39,8 @@ type GuideCoachmarkProps = {
   describedBy: string;
   focusKey?: string | number;
   focusOnOpen?: boolean;
+  deferFallbackMs?: number;
+  revealAfterStableMs?: number;
   children: (positionControl: ReactNode) => ReactNode;
 };
 
@@ -168,16 +170,38 @@ export function GuideCoachmark({
   describedBy,
   focusKey,
   focusOnOpen = false,
+  deferFallbackMs = 0,
+  revealAfterStableMs = 0,
   children,
 }: GuideCoachmarkProps) {
+  const readinessKey = `${String(focusKey ?? "")}::${target ?? ""}`;
   const [targetElement, setTargetElement] = useState<HTMLElement | null>(null);
   const [targetRect, setTargetRect] = useState<TargetRect>();
   const [position, setPosition] = useState<GuidePosition>();
   const [placementModeIndex, setPlacementModeIndex] = useState(0);
   const [positionAnnouncement, setPositionAnnouncement] = useState("");
   const [pageZoom, setPageZoom] = useState(readPageZoom);
+  const [fallbackReadyKey, setFallbackReadyKey] = useState<string>();
+  const [stableGeometryKey, setStableGeometryKey] = useState<string>();
   const cardRef = useRef<HTMLElement | null>(null);
   const scrolledTarget = useRef<string | undefined>(undefined);
+  const geometryKey =
+    targetRect && position
+      ? [
+          readinessKey,
+          pageZoom,
+          targetRect.top,
+          targetRect.right,
+          targetRect.bottom,
+          targetRect.left,
+          targetRect.width,
+          targetRect.height,
+          position.x,
+          position.y,
+          position.side,
+          position.availableHeight,
+        ].join(":")
+      : undefined;
 
   const updatePosition = useCallback(() => {
     const zoom = readPageZoom();
@@ -293,6 +317,13 @@ export function GuideCoachmark({
     const resizeObserver = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(schedule);
     resizeObserver?.observe(targetElement);
     if (cardRef.current) resizeObserver?.observe(cardRef.current);
+    const layoutObserver = new MutationObserver(schedule);
+    layoutObserver.observe(document.body, {
+      attributes: true,
+      attributeFilter: ["aria-busy", "class", "style"],
+      childList: true,
+      subtree: true,
+    });
     const zoomObserver = new MutationObserver(schedule);
     zoomObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
     zoomObserver.observe(document.body, { attributes: true, attributeFilter: ["style"] });
@@ -301,6 +332,8 @@ export function GuideCoachmark({
     window.visualViewport?.addEventListener("scroll", schedule);
     document.addEventListener("scroll", schedule, true);
     document.addEventListener("scrollend", schedule, true);
+    document.addEventListener("transitionend", schedule, true);
+    document.addEventListener("animationend", schedule, true);
     window.addEventListener("load", settleLayout);
     window.addEventListener("pageshow", settleLayout);
     void document.fonts?.ready.then(settleLayout);
@@ -310,12 +343,15 @@ export function GuideCoachmark({
       for (const timer of settlementTimers) window.clearTimeout(timer);
       settlementTimers.clear();
       resizeObserver?.disconnect();
+      layoutObserver.disconnect();
       zoomObserver.disconnect();
       window.removeEventListener("resize", schedule);
       window.visualViewport?.removeEventListener("resize", schedule);
       window.visualViewport?.removeEventListener("scroll", schedule);
       document.removeEventListener("scroll", schedule, true);
       document.removeEventListener("scrollend", schedule, true);
+      document.removeEventListener("transitionend", schedule, true);
+      document.removeEventListener("animationend", schedule, true);
       window.removeEventListener("load", settleLayout);
       window.removeEventListener("pageshow", settleLayout);
     };
@@ -325,6 +361,18 @@ export function GuideCoachmark({
     setPlacementModeIndex(0);
     setPositionAnnouncement("");
   }, [target]);
+
+  useEffect(() => {
+    if (!active || deferFallbackMs === 0) return;
+    const timer = window.setTimeout(() => setFallbackReadyKey(readinessKey), deferFallbackMs);
+    return () => window.clearTimeout(timer);
+  }, [active, deferFallbackMs, readinessKey]);
+
+  useEffect(() => {
+    if (!active || revealAfterStableMs === 0 || !geometryKey) return;
+    const timer = window.setTimeout(() => setStableGeometryKey(geometryKey), revealAfterStableMs);
+    return () => window.clearTimeout(timer);
+  }, [active, geometryKey, revealAfterStableMs]);
 
   useEffect(() => {
     if (!active || !focusOnOpen) return;
@@ -359,6 +407,10 @@ export function GuideCoachmark({
   ) : null;
 
   const awaitingPosition = !targetElement || !targetRect || !position;
+  const fallbackReady = deferFallbackMs === 0 || fallbackReadyKey === readinessKey;
+  const layoutReady = revealAfterStableMs === 0 || (geometryKey !== undefined && stableGeometryKey === geometryKey);
+  const concealUntilPositioned =
+    placementModeIndex > 0 ? awaitingPosition && !fallbackReady : awaitingPosition ? !fallbackReady : !layoutReady;
   const floatingStyle = position
     ? ({
         position: "fixed",
@@ -406,7 +458,9 @@ export function GuideCoachmark({
     <div
       className={`quick-start-guide-positioner${awaitingPosition ? " is-corner" : ""}`}
       data-placement={position?.side}
-      style={awaitingPosition ? undefined : floatingStyle}
+      style={
+        concealUntilPositioned ? { opacity: 0, pointerEvents: "none" } : awaitingPosition ? undefined : floatingStyle
+      }
     >
       {card}
       {!awaitingPosition && arrowStyle && (

@@ -338,6 +338,18 @@ export function shouldHandoffCompleteGuideToImport({
   return activeGuide === "complete" && completeLessonId === "import-source" && phase !== "choose";
 }
 
+export function shouldOpenReviewTabForImportLesson({
+  activeGuide,
+  phase,
+  lessonId,
+}: {
+  activeGuide: "complete" | "import" | null;
+  phase?: ImportGuidePhase;
+  lessonId?: string;
+}) {
+  return activeGuide === "import" && phase === "review" && lessonId === "review-categories";
+}
+
 export function importGuidePhaseForActiveScreen({
   activeGuide,
   currentPhase,
@@ -543,6 +555,18 @@ export function ImportPage() {
     pendingCommit,
     setImportPhase,
   ]);
+
+  useEffect(() => {
+    if (
+      shouldOpenReviewTabForImportLesson({
+        activeGuide,
+        phase: importGuideProgress?.phase,
+        lessonId: importGuideProgress?.lessonId,
+      })
+    ) {
+      setPreviewMode("review");
+    }
+  }, [activeGuide, importGuideProgress?.lessonId, importGuideProgress?.phase]);
 
   useEffect(() => {
     setPreviewMode("review");
@@ -1255,9 +1279,9 @@ export function ImportPage() {
     <section className="import-page" data-tutorial="import">
       <PageHeader>
         <div>
-          <p className="eyebrow">IMPORTAÇÃO SEGURA</p>
-          <h1>Importar extrato ou fatura</h1>
-          <p className="muted">CSV, OFX e PDF são processados somente neste computador.</p>
+          <p className="eyebrow">IMPORTAÇÃO LOCAL</p>
+          <h1>Importar extratos e faturas</h1>
+          <p className="muted">Selecione um arquivo para importar agora ou vários para revisar em lote.</p>
         </div>
         <button className="secondary" type="button" onClick={() => restartGuide("import")}>
           <BookOpen size={16} /> Como importar
@@ -1411,122 +1435,133 @@ export function ImportPage() {
           onDragOver={handleDropzoneDrag}
           onDragLeave={handleDropzoneLeave}
           onDrop={handleDropzoneDrop}
+          aria-busy={isReadingFile}
         >
-          <FileUp size={42} />
-          <h2>{isDraggingFile ? "Solte o arquivo para importar" : "Arraste ou selecione um arquivo financeiro"}</h2>
-          <p>
-            Arraste um CSV, OFX ou PDF para esta área. O aplicativo reconhece automaticamente extratos e faturas; para
-            outros CSVs, você pode mapear as colunas e salvar o layout.
-          </p>
-          <button
-            className="primary-action"
-            ref={chooseFileRef}
-            data-import-tutorial="choose"
-            onClick={choose}
-            disabled={isReadingFile}
-          >
-            {isReadingFile ? "Lendo arquivo..." : "Escolher arquivo"}
-          </button>
-          <div className="import-trouble-menu">
+          <div className="import-dropzone__primary">
+            <span className="import-dropzone__icon" aria-hidden="true">
+              <FileUp />
+            </span>
+            <div className="import-dropzone__copy">
+              <p className="eyebrow">ARQUIVOS DO SEU COMPUTADOR</p>
+              <h2>{isDraggingFile ? "Solte os arquivos para começar" : "Arraste ou selecione seus arquivos"}</h2>
+              <p>
+                Importe um extrato ou fatura individualmente, ou escolha vários arquivos de uma vez para criar um lote.
+              </p>
+            </div>
             <button
-              ref={troubleMenuTriggerRef}
+              className="primary-action"
+              ref={chooseFileRef}
+              data-import-tutorial="choose"
               type="button"
-              className="text-button"
-              aria-haspopup="dialog"
-              aria-expanded={showTroubleMenu}
-              aria-controls="import-trouble-menu"
-              onClick={() => setShowTroubleMenu((open) => !open)}
+              onClick={choose}
+              disabled={isReadingFile}
             >
-              Enfrentando problemas?
+              <FileUp size={18} />
+              {isReadingFile ? "Lendo arquivos…" : "Selecionar arquivos"}
             </button>
-            {showTroubleMenu && (
-              <div
-                ref={troubleMenuRef}
-                id="import-trouble-menu"
-                role="dialog"
-                aria-label="Ajuda para importar arquivos"
-                style={{
-                  position: "absolute",
-                  top: openUpwards ? "auto" : "calc(100% + 8px)",
-                  bottom: openUpwards ? "calc(100% + 8px)" : "auto",
-                  left: "50%",
-                  transform: "translateX(-50%)",
-                  background: "var(--surface)",
-                  border: "1px solid var(--border-strong)",
-                  padding: "14px",
-                  borderRadius: "14px",
-                  boxShadow: "var(--shadow-md)",
-                  display: "flex",
-                  flexDirection: "column",
-                  zIndex: 10,
-                  minWidth: "240px",
-                  animation: openUpwards ? "slideUp 0.2s ease-out" : "slideDown 0.2s ease-out",
-                }}
-              >
-                <button
-                  className="icon-button"
-                  type="button"
-                  aria-label="Fechar ajuda para importar"
-                  style={{ position: "absolute", top: "4px", right: "4px", background: "transparent", margin: 0 }}
-                  onClick={() => closeTroubleMenu(true)}
-                >
-                  <X size={14} />
-                </button>
-                <p
-                  style={{
-                    margin: "6px 20px 12px 0",
-                    fontSize: "12px",
-                    color: "var(--text-muted)",
-                    textAlign: "left",
-                    lineHeight: 1.4,
-                    fontWeight: 500,
-                  }}
-                >
-                  Baixe nossos templates vazios em CSV e preencha com seus dados de onde estiver.
-                </p>
-                <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                  <button
-                    className="secondary"
-                    type="button"
-                    data-initial-focus
-                    style={{
-                      justifyContent: "flex-start",
-                      width: "100%",
-                      padding: "10px 14px",
-                      borderRadius: "9px",
-                      margin: 0,
-                    }}
-                    onClick={() => {
-                      closeTroubleMenu();
-                      exportTemplate("bank");
-                    }}
-                  >
-                    <Download size={15} /> Template de conta
-                  </button>
-                  <button
-                    className="secondary"
-                    type="button"
-                    style={{
-                      justifyContent: "flex-start",
-                      width: "100%",
-                      padding: "10px 14px",
-                      borderRadius: "9px",
-                      margin: 0,
-                    }}
-                    onClick={() => {
-                      closeTroubleMenu();
-                      exportTemplate("credit_card");
-                    }}
-                  >
-                    <Download size={15} /> Template de cartão
-                  </button>
-                </div>
-              </div>
-            )}
+            <p className="import-dropzone__selection-hint">
+              Você pode selecionar um ou vários arquivos na mesma janela.
+            </p>
+            <ul className="import-dropzone__formats" aria-label="Formatos aceitos">
+              <li>CSV</li>
+              <li>OFX</li>
+              <li>PDF</li>
+            </ul>
           </div>
-          <small>
-            <ShieldCheck size={15} /> Nenhum dado financeiro é enviado para a internet.
-          </small>
+
+          <aside className="import-dropzone__guide" aria-labelledby="import-dropzone-guide-title">
+            <p className="eyebrow">IMPORTAÇÃO ASSISTIDA</p>
+            <h3 id="import-dropzone-guide-title">Você mantém o controle</h3>
+            <ol>
+              <li>
+                <span>1</span>
+                <p>
+                  <strong>Reconhecimento automático</strong>
+                  <small>O Lumen identifica o tipo de cada arquivo.</small>
+                </p>
+              </li>
+              <li>
+                <span>2</span>
+                <p>
+                  <strong>Revisão arquivo por arquivo</strong>
+                  <small>Você escolhe a conta ou o cartão de destino.</small>
+                </p>
+              </li>
+              <li>
+                <span>3</span>
+                <p>
+                  <strong>Confirmação antes de salvar</strong>
+                  <small>Nenhum lançamento entra sem a sua revisão.</small>
+                </p>
+              </li>
+            </ol>
+            <p className="import-dropzone__csv-note">
+              CSV diferente? Você poderá mapear as colunas e salvar esse layout para a próxima importação.
+            </p>
+            <div className="import-trouble-menu">
+              <button
+                ref={troubleMenuTriggerRef}
+                type="button"
+                className="text-button"
+                aria-haspopup="dialog"
+                aria-expanded={showTroubleMenu}
+                aria-controls="import-trouble-menu"
+                onClick={() => setShowTroubleMenu((open) => !open)}
+              >
+                Precisa de um modelo CSV?
+              </button>
+              {showTroubleMenu && (
+                <div
+                  ref={troubleMenuRef}
+                  id="import-trouble-menu"
+                  className={`import-trouble-popover${openUpwards ? " import-trouble-popover--up" : ""}`}
+                  role="dialog"
+                  aria-label="Modelos CSV para importação"
+                >
+                  <button
+                    className="icon-button import-trouble-popover__close"
+                    type="button"
+                    aria-label="Fechar modelos CSV"
+                    onClick={() => closeTroubleMenu(true)}
+                  >
+                    <X size={14} />
+                  </button>
+                  <p>Baixe um modelo vazio e preencha com os seus dados.</p>
+                  <div>
+                    <button
+                      className="secondary"
+                      type="button"
+                      data-initial-focus
+                      onClick={() => {
+                        closeTroubleMenu();
+                        exportTemplate("bank");
+                      }}
+                    >
+                      <Download size={15} /> Modelo de conta
+                    </button>
+                    <button
+                      className="secondary"
+                      type="button"
+                      onClick={() => {
+                        closeTroubleMenu();
+                        exportTemplate("credit_card");
+                      }}
+                    >
+                      <Download size={15} /> Modelo de cartão
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </aside>
+
+          <div className="import-dropzone__privacy">
+            <ShieldCheck size={18} aria-hidden="true" />
+            <p>
+              <strong>Processamento local</strong>
+              <span>Seus arquivos e dados financeiros não saem deste computador.</span>
+            </p>
+          </div>
         </article>
       )}
 
@@ -2194,6 +2229,7 @@ export function ImportPage() {
         cardCreationOpen={creatingCard}
         batchMode={batchMode}
         hasPreview={Boolean(bankPreview || cardPreview)}
+        pendingCategoryCount={bankPreview ? bankSummary.pending : cardPreview ? cardSummary.pending : 0}
       />
     </section>
   );
@@ -2509,9 +2545,9 @@ export function ImportReviewGroups({
   }
 
   return (
-    <div className="import-review-groups" ref={rootRef} aria-busy={busy} data-import-tutorial="review-categories">
+    <div className="import-review-groups" ref={rootRef} aria-busy={busy}>
       {groups.length === 0 ? (
-        <div className="import-review-ready" tabIndex={-1}>
+        <div className="import-review-ready" tabIndex={-1} data-import-tutorial="review-categories-ready">
           <CheckCircle2 size={24} aria-hidden />
           <div>
             <strong>Tudo pronto para confirmar</strong>
@@ -2575,6 +2611,7 @@ export function ImportReviewGroups({
             key={activeGroup.key}
             tabIndex={-1}
             data-group-key={activeGroup.key}
+            data-import-tutorial="review-category-group"
             aria-labelledby="import-review-active-title"
           >
             {undoChoice && onUndo && (

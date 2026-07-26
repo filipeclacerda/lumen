@@ -14,6 +14,7 @@ import {
   importGuidePhaseForScreen,
   ImportReviewGroups,
   shouldHandoffCompleteGuideToImport,
+  shouldOpenReviewTabForImportLesson,
   summarizeSuggestions,
 } from "./ImportPage";
 
@@ -119,6 +120,30 @@ function creditCardPreview(): CreditCardImportPreview {
 afterEach(cleanup);
 
 describe("fase contextual do tutorial", () => {
+  it("abre a aba Revisar somente para a última lição de categorias", () => {
+    expect(
+      shouldOpenReviewTabForImportLesson({
+        activeGuide: "import",
+        phase: "review",
+        lessonId: "review-categories",
+      }),
+    ).toBe(true);
+    expect(
+      shouldOpenReviewTabForImportLesson({
+        activeGuide: "import",
+        phase: "review",
+        lessonId: "review-confirm",
+      }),
+    ).toBe(false);
+    expect(
+      shouldOpenReviewTabForImportLesson({
+        activeGuide: null,
+        phase: "review",
+        lessonId: "review-categories",
+      }),
+    ).toBe(false);
+  });
+
   it("mantém a conclusão visível depois que o fluxo de importação é limpo", () => {
     expect(
       importGuidePhaseForScreen({
@@ -355,6 +380,11 @@ describe("ImportReviewGroups", () => {
     );
     expect(screen.queryByRole("button", { name: "Grupo anterior" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Próximo grupo" })).toBeNull();
+    expect(
+      document.querySelector('article.import-review-group[data-import-tutorial="review-category-group"]'),
+    ).toBeTruthy();
+    expect(document.querySelector(".import-review-category-picker[data-import-tutorial]")).toBeNull();
+    expect(document.querySelector('[data-import-tutorial="review-categories"]')).toBeNull();
   });
 
   it("aplica uma sugestao a todas as sourceRows do grupo", () => {
@@ -398,6 +428,7 @@ describe("ImportReviewGroups", () => {
 
     expect(screen.getByText("Tudo pronto para confirmar")).toBeTruthy();
     expect(screen.getByText("Não há lançamentos incluídos aguardando categoria.")).toBeTruthy();
+    expect(document.querySelector('[data-import-tutorial="review-categories-ready"]')).toBeTruthy();
   });
 
   it("mantem o seletor completo evidente quando nao existe sugestao segura", () => {
