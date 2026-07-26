@@ -173,7 +173,7 @@ export function RecurringTransactions() {
             <div className="panel-title">
               <h2>{editing ? "Editar recorrência" : "Nova recorrência"}</h2>
               {editing && (
-                <button className="text-button" onClick={resetDraft}>
+                <button className="text-button cancel-action" onClick={resetDraft}>
                   Cancelar
                 </button>
               )}

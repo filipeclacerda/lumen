@@ -168,6 +168,7 @@ export function Reports() {
               <Download size={16} /> {exporting ? "Exportando..." : "PDF"}
             </button>
             <button
+              className="primary-action"
               onClick={() =>
                 setEditing({
                   id: "",

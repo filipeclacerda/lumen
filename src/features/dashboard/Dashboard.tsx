@@ -156,7 +156,7 @@ export function Dashboard() {
           <h1>Olá, {profile?.displayName.split(" ")[0] ?? "você"} 👋</h1>
           <p className="muted">Aqui está o retrato do seu mês.</p>
         </div>
-        <button onClick={() => setShowForm(true)}>
+        <button className="primary-action" onClick={() => setShowForm(true)}>
           <Plus size={17} /> Nova transação
         </button>
       </PageHeader>

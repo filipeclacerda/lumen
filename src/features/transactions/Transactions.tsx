@@ -672,6 +672,7 @@ export function Transactions() {
             </button>
           </div>
           <button
+            className="primary-action"
             onClick={() => {
               setNewTransactionType("expense");
               setShowNew(true);

@@ -386,7 +386,7 @@ export function CategoriesRules() {
               <h2>{rule.id ? "Editar regra" : "Nova regra"}</h2>
               {rule.id && (
                 <button
-                  className="text-button"
+                  className="text-button cancel-action"
                   onClick={() => {
                     setRuleInputVersion((version) => version + 1);
                     setRule(emptyRule);
@@ -618,7 +618,7 @@ export function CategoriesRules() {
               </div>
               {categoryDraft.id && (
                 <button
-                  className="text-button"
+                  className="text-button cancel-action"
                   type="button"
                   onClick={() => setCategoryDraft({ name: "", kind: "expense", color: "#497ca5", sortOrder: 0 })}
                 >

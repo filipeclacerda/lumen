@@ -575,9 +575,9 @@
   .onboarding-actions button {
     min-height: var(--control-height);
     justify-content: center;
-    border-color: transparent;
-    background: var(--brand);
-    color: var(--brand-contrast);
+    border-color: var(--action-primary-border);
+    background: var(--action-primary-bg);
+    color: var(--action-primary-fg);
     font-family: var(--font-display);
     font-size: var(--text-sm);
     font-weight: 700;
@@ -585,9 +585,9 @@
   }
 
   .onboarding-actions button.secondary {
-    border-color: var(--border);
-    background: transparent;
-    color: var(--text-muted);
+    border-color: var(--action-cancel-border);
+    background: var(--action-cancel-bg);
+    color: var(--action-cancel-fg);
   }
 
   .onboarding-actions button:disabled {
@@ -2246,10 +2246,9 @@
 }
 
 @layer utilities {
-  /* Ações de página são deliberadamente neutras; o verde sólido fica para
-     confirmações dentro dos fluxos, onde a hierarquia precisa ser explícita. */
-  .page-header > button:not(.danger),
-  .page-header > div + div > button:not(.danger) {
+  /* Ações rotineiras de página seguem neutras; cadastros explícitos usam a variante primária. */
+  .page-header > button:not(.danger):not(.primary-action),
+  .page-header > div + div > button:not(.danger):not(.primary-action) {
     min-height:44px;
     height:44px;
     border:1px solid var(--control-border);
@@ -2257,8 +2256,8 @@
     color:var(--control-fg);
     box-shadow:none;
   }
-  .page-header > button:not(.danger):not(:disabled):hover,
-  .page-header > div + div > button:not(.danger):not(:disabled):hover {
+  .page-header > button:not(.danger):not(.primary-action):not(:disabled):hover,
+  .page-header > div + div > button:not(.danger):not(.primary-action):not(:disabled):hover {
     border-color:var(--control-hover-border);
     background:var(--control-hover-bg);
     color:var(--control-hover-fg);
@@ -2390,6 +2389,68 @@
     color: var(--danger-contrast);
     filter: none;
     transform: none;
+  }
+
+  /* Verde sólido fica reservado a cadastro, salvamento e confirmação explícita. */
+  :is(
+      button.primary-action,
+      .editor-actions > button:not(.secondary):not(.danger):not(.text-button):not(.icon-button),
+      .settings-form-actions > button:not(.secondary):not(.danger):not(.text-button):not(.icon-button),
+      .onboarding-actions > div > button:not(.secondary)
+    ) {
+    border-color: var(--action-primary-border);
+    background: var(--action-primary-bg);
+    color: var(--action-primary-fg);
+    box-shadow: var(--shadow-xs);
+  }
+  button.primary-action {
+    min-height: var(--control-height);
+    height: var(--control-height);
+  }
+  :is(
+      button.primary-action,
+      .editor-actions > button:not(.secondary):not(.danger):not(.text-button):not(.icon-button),
+      .settings-form-actions > button:not(.secondary):not(.danger):not(.text-button):not(.icon-button),
+      .onboarding-actions > div > button:not(.secondary)
+    ):not(:disabled):hover {
+    border-color: var(--action-primary-hover-bg);
+    background: var(--action-primary-hover-bg);
+    color: var(--action-primary-fg);
+    box-shadow: var(--shadow-sm);
+    filter: none;
+    transform: none;
+  }
+
+  /* Alternativas de cancelamento permanecem secundárias, mas não parecem desabilitadas. */
+  :is(.editor-actions, .settings-form-actions, .onboarding-actions) > button.secondary,
+  .onboarding-actions > div > button.secondary,
+  button.cancel-action,
+  button.merchant-action-cancel {
+    border-color: var(--action-cancel-border);
+    background: var(--action-cancel-bg);
+    color: var(--action-cancel-fg);
+    box-shadow: var(--shadow-xs);
+  }
+  :is(.editor-actions, .settings-form-actions, .onboarding-actions) > button.secondary:not(.danger):not(:disabled):hover,
+  .onboarding-actions > div > button.secondary:not(.danger):not(:disabled):hover,
+  button.cancel-action:not(:disabled):hover,
+  button.merchant-action-cancel:not(:disabled):hover {
+    border-color: var(--action-cancel-hover-border);
+    background: var(--control-hover-bg);
+    color: var(--action-cancel-fg);
+    box-shadow: var(--shadow-xs);
+  }
+  :is(
+      button.primary-action,
+      .editor-actions > button:not(.secondary):not(.danger),
+      .settings-form-actions > button:not(.secondary):not(.danger),
+      .onboarding-actions button,
+      button.cancel-action,
+      button.merchant-action-cancel
+    ):focus-visible {
+    border-color: var(--focus);
+    outline: none;
+    box-shadow: var(--ring);
   }
 
   /* Contrato único para controles selecionáveis e seus estados. */

@@ -90,7 +90,7 @@ export function BudgetPage() {
         title="Orçamento"
         description="Defina limites mensais por categoria e acompanhe o consumo em tempo real."
         actions={
-          <button onClick={() => setAdding(true)}>
+          <button className="primary-action" onClick={() => setAdding(true)}>
             <Plus size={16} /> Adicionar categoria ao orçamento
           </button>
         }

@@ -280,7 +280,7 @@ export function AccountsCards() {
           <h1>Contas e cartões</h1>
           <p className="muted">Saldos, faturas e pagamentos conciliados em um só lugar.</p>
         </div>
-        <button onClick={() => setAccountModal({ mode: "new" })}>
+        <button className="primary-action" onClick={() => setAccountModal({ mode: "new" })}>
           <Plus size={17} /> Adicionar conta
         </button>
       </PageHeader>
