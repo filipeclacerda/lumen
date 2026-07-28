@@ -377,6 +377,53 @@ describe("QuickStartGuide", () => {
     });
   });
 
+  it("clips the highlight below the window titlebar", async () => {
+    mockMedia(false);
+    const zoom = 1.25;
+    document.documentElement.style.setProperty("--app-zoom", String(zoom));
+    const titlebar = document.createElement("header");
+    titlebar.className = "window-titlebar";
+    vi.spyOn(titlebar, "getBoundingClientRect").mockReturnValue({
+      top: 0,
+      right: 1280,
+      bottom: 40,
+      left: 0,
+      width: 1280,
+      height: 40,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    document.body.append(titlebar);
+
+    restartQuickStartGuide();
+    renderGuide();
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/import"));
+
+    const target = document.querySelector('[data-import-tutorial="choose"]') as HTMLElement;
+    vi.spyOn(target, "getBoundingClientRect").mockReturnValue({
+      top: 24,
+      right: 260,
+      bottom: 68,
+      left: 40,
+      width: 220,
+      height: 44,
+      x: 40,
+      y: 24,
+      toJSON: () => ({}),
+    });
+    fireEvent(window, new Event("resize"));
+
+    await waitFor(() => {
+      const highlight = document.querySelector(".quick-start-guide__highlight") as HTMLElement;
+      expect(Number.parseFloat(highlight.style.top)).toBeCloseTo(45 / zoom);
+      expect((Number.parseFloat(highlight.style.top) - 4) * zoom).toBeGreaterThanOrEqual(40);
+      expect(Number.parseFloat(highlight.style.height)).toBeCloseTo(23 / zoom);
+    });
+
+    titlebar.remove();
+  });
+
   it("keeps the controls available when a target is missing", async () => {
     restartQuickStartGuide();
     render(

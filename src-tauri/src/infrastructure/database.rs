@@ -1437,7 +1437,47 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap(),
-            28
+            29
+        );
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn v28_upgrade_adds_bills_and_other_expenses_categories() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("v28-expense-categories.db");
+        let connection = database_at_version(&path, 28).await;
+        connection.close().await.unwrap();
+
+        let pool = connect(&path).await.unwrap();
+        let categories = sqlx::query(
+            "SELECT id,name,kind,is_system,deleted_at
+             FROM categories WHERE id IN ('bills','other-expenses') ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(categories.len(), 2);
+        assert_eq!(categories[0].get::<String, _>("id"), "bills");
+        assert_eq!(categories[0].get::<String, _>("name"), "Contas");
+        assert_eq!(categories[0].get::<String, _>("kind"), "expense");
+        assert_eq!(categories[0].get::<i64, _>("is_system"), 1);
+        assert!(categories[0]
+            .get::<Option<String>, _>("deleted_at")
+            .is_none());
+        assert_eq!(categories[1].get::<String, _>("id"), "other-expenses");
+        assert_eq!(categories[1].get::<String, _>("name"), "Outras Despesas");
+        assert_eq!(categories[1].get::<String, _>("kind"), "expense");
+        assert_eq!(categories[1].get::<i64, _>("is_system"), 1);
+        assert!(categories[1]
+            .get::<Option<String>, _>("deleted_at")
+            .is_none());
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT MAX(version) FROM _sqlx_migrations")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            29
         );
         pool.close().await;
     }

@@ -17,7 +17,7 @@ pub struct VocabularyEntry {
 /// Versão do conteúdo embarcado. Incrementar sempre que termos forem adicionados, removidos ou
 /// tiverem sua categoria alterada, para que mudanças de ranking sejam rastreáveis em testes e
 /// notas de versão sem persistir configuração nova no banco.
-pub const PT_BR_CATEGORY_VOCABULARY_VERSION: u32 = 4;
+pub const PT_BR_CATEGORY_VOCABULARY_VERSION: u32 = 5;
 const _: () = assert!(PT_BR_CATEGORY_VOCABULARY_VERSION > 0);
 
 pub const PT_BR_CATEGORY_VOCABULARY: &[VocabularyEntry] = &[
@@ -1042,6 +1042,25 @@ pub const PT_BR_CATEGORY_VOCABULARY: &[VocabularyEntry] = &[
         ],
     },
     VocabularyEntry {
+        category_id: "bills",
+        phrases: &[
+            "INTERNET",
+            "BANDA LARGA",
+            "PROVEDOR DE INTERNET",
+            "CLARO NET",
+            "NET VIRTUA",
+            "VIVO FIBRA",
+            "OI FIBRA",
+            "TIM ULTRAFIBRA",
+            "ALGAR TELECOM",
+            "TELEFONIA",
+            "CONTA DE TELEFONE",
+            "FATURA DE TELEFONE",
+            "PLANO CELULAR",
+            "RECARGA CELULAR",
+        ],
+    },
+    VocabularyEntry {
         category_id: "rent",
         phrases: &[
             "ALUGUEL RESIDENCIAL",
@@ -1850,6 +1869,18 @@ pub const PT_BR_CATEGORY_VOCABULARY: &[VocabularyEntry] = &[
         ],
     },
     VocabularyEntry {
+        category_id: "other-expenses",
+        phrases: &[
+            "OUTRAS DESPESAS",
+            "DESPESA DIVERSA",
+            "DESPESAS DIVERSAS",
+            "GASTOS DIVERSOS",
+            "DOACAO",
+            "CONTRIBUICAO BENEFICENTE",
+            "AJUDA FINANCEIRA",
+        ],
+    },
+    VocabularyEntry {
         category_id: "leisure",
         phrases: &[
             "INGRESSO COM",
@@ -1923,6 +1954,9 @@ pub const PT_BR_CATEGORY_VOCABULARY: &[VocabularyEntry] = &[
             "AZUL VIAGENS",
             "GOL VIAGENS",
             "HOTEL URBANO",
+            "HOTEL",
+            "POUSADA",
+            "HOSTEL",
             "BOOKING COM",
             "HOSTELWORLD",
             "TRIVAGO",
@@ -2024,6 +2058,7 @@ mod tests {
             "apps",
             "transport",
             "utilities",
+            "bills",
             "rent",
             "housing",
             "health",
@@ -2035,6 +2070,7 @@ mod tests {
             "investments",
             "salary",
             "other-income",
+            "other-expenses",
             "leisure",
         ]
         .into_iter()
@@ -2068,6 +2104,7 @@ mod tests {
             ("public-transport", "ONIBUS"),
             ("transport", "OFICINA MECANICA"),
             ("utilities", "CONTA DE LUZ"),
+            ("bills", "INTERNET"),
             ("rent", "ALUGUEL"),
             ("housing", "MATERIAL DE CONSTRUCAO"),
             ("health", "FARMACIA"),
@@ -2075,6 +2112,8 @@ mod tests {
             ("personal-care", "SALAO"),
             ("insurance", "SEGURO"),
             ("leisure", "CINEMA"),
+            ("leisure", "HOTEL"),
+            ("other-expenses", "OUTRAS DESPESAS"),
         ];
 
         for (category_id, expected_tag) in expected_tags {

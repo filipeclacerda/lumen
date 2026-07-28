@@ -826,6 +826,12 @@ fn generic_vocabulary_match_allowed(category_id: &str, phrase: &str, description
             "COMPRA SEGURA",
             "CONEXAO SEGURA",
         ],
+        ("bills", "INTERNET") => &[
+            "INTERNET BANKING",
+            "COMPRA INTERNET",
+            "COMPRA PELA INTERNET",
+            "CARTAO INTERNET",
+        ],
         _ => &[],
     };
 
@@ -837,7 +843,10 @@ fn generic_vocabulary_match_allowed(category_id: &str, phrase: &str, description
 fn generic_vocabulary_approximate_match_allowed(category_id: &str, phrase: &str) -> bool {
     !matches!(
         (category_id, phrase),
-        ("fuel", "POSTO") | ("insurance", "SEGURO") | ("education", "ESCOLA")
+        ("fuel", "POSTO")
+            | ("insurance", "SEGURO")
+            | ("education", "ESCOLA")
+            | ("bills", "INTERNET")
     )
 }
 
@@ -1249,17 +1258,19 @@ mod tests {
             category("apps", "Transporte por aplicativo", "expense", 7),
             category("transport", "Transporte", "expense", 8),
             category("utilities", "Água, luz e gás", "expense", 9),
-            category("housing", "Moradia", "expense", 10),
-            category("health", "Saúde", "expense", 11),
-            category("education", "Educação", "expense", 12),
-            category("personal-care", "Cuidados pessoais", "expense", 13),
-            category("insurance", "Seguros", "expense", 14),
-            category("bank-fees", "Tarifas bancárias", "expense", 15),
-            category("taxes", "Impostos", "expense", 16),
-            category("investments", "Investimentos", "investment", 17),
-            category("leisure", "Lazer", "expense", 18),
-            category("salary", "Salário", "income", 19),
-            category("other-income", "Outras receitas", "income", 20),
+            category("bills", "Contas", "expense", 10),
+            category("housing", "Moradia", "expense", 11),
+            category("health", "Saúde", "expense", 12),
+            category("education", "Educação", "expense", 13),
+            category("personal-care", "Cuidados pessoais", "expense", 14),
+            category("insurance", "Seguros", "expense", 15),
+            category("bank-fees", "Tarifas bancárias", "expense", 16),
+            category("taxes", "Impostos", "expense", 17),
+            category("other-expenses", "Outras Despesas", "expense", 18),
+            category("investments", "Investimentos", "investment", 19),
+            category("leisure", "Lazer", "expense", 20),
+            category("salary", "Salário", "income", 21),
+            category("other-income", "Outras receitas", "income", 22),
         ];
         let history = vec![];
         let index = SuggestionIndex::new(&history);
@@ -1275,6 +1286,7 @@ mod tests {
             ("UBER TRIP SAO PAULO", -2790, "apps"),
             ("SEM PARAR MENSALIDADE", -3590, "transport"),
             ("CEMIG DISTRIBUICAO", -18840, "utilities"),
+            ("VIVO FIBRA FATURA", -11990, "bills"),
             ("LEROY MERLIN", -49990, "housing"),
             ("DROGASIL 1234", -6780, "health"),
             ("ALURA CURSOS ONLINE", -9900, "education"),
@@ -1282,8 +1294,9 @@ mod tests {
             ("TOKIO MARINE SEGURADORA", -14500, "insurance"),
             ("CESTA DE SERVICOS", -3500, "bank-fees"),
             ("DARF RECEITA FEDERAL", -72000, "taxes"),
+            ("DOACAO MENSAL", -5000, "other-expenses"),
             ("XP INVESTIMENTOS APLICACAO", -100000, "investments"),
-            ("CINEMARK INGRESSO", -5200, "leisure"),
+            ("HOTEL FAZENDA", -52000, "leisure"),
             ("CREDITO SALARIO EMPRESA", 500000, "salary"),
             ("RESTITUICAO IRPF", 45000, "other-income"),
         ];
@@ -1315,6 +1328,7 @@ mod tests {
             category("investments", "Investimentos", "investment", 4),
             category("subscriptions", "Assinaturas", "expense", 5),
             category("transfers", "Transferências", "transfer", 6),
+            category("bills", "Contas", "expense", 7),
         ];
         let history = vec![];
         let index = SuggestionIndex::new(&history);
@@ -1326,6 +1340,8 @@ mod tests {
             "APLICACAO DE PROVA ESCOLAR",
             "STREAMING DE DADOS CORPORATIVOS",
             "TRANSFERENCIA RECEBIDA",
+            "INTERNET BANKING TRANSFERENCIA",
+            "COMPRA PELA INTERNET",
         ] {
             assert!(
                 shortlist_categories(

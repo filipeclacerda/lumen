@@ -46,6 +46,7 @@ type GuideCoachmarkProps = {
 
 const viewportGap = 16;
 const targetGap = 14;
+const highlightOuterSpread = 4;
 const layoutSettlementDelays = [0, 50, 150, 300, 600, 1000];
 const automaticPlacements: PlacementSide[] = ["bottom", "top", "right", "left"];
 const placementModes: ReadonlyArray<{ side?: PlacementSide; announcement: string }> = [
@@ -76,26 +77,32 @@ function readSafeInsets(): SafeInsets {
   };
 }
 
-function visibleRect(element: Element, padding = 0): TargetRect | undefined {
+function visibleRect(element: Element, padding = 0, pageZoom = 1): TargetRect | undefined {
   const rect = element.getBoundingClientRect();
+  const titlebar = document.querySelector<HTMLElement>(".window-titlebar");
+  const visibleTop = titlebar
+    ? Math.max(rect.top - padding, titlebar.getBoundingClientRect().bottom + highlightOuterSpread * pageZoom)
+    : rect.top - padding;
+  const visibleBottom = rect.bottom + padding;
   if (
     rect.width <= 0 ||
     rect.height <= 0 ||
     rect.right <= 0 ||
     rect.left >= window.innerWidth ||
-    rect.bottom <= 0 ||
-    rect.top >= window.innerHeight
+    visibleBottom <= visibleTop ||
+    visibleBottom <= 0 ||
+    visibleTop >= window.innerHeight
   ) {
     return undefined;
   }
   const borderRadius = window.getComputedStyle(element).borderRadius;
   return {
-    top: rect.top - padding,
+    top: visibleTop,
     right: rect.right + padding,
-    bottom: rect.bottom + padding,
+    bottom: visibleBottom,
     left: rect.left - padding,
     width: rect.width + padding * 2,
-    height: rect.height + padding * 2,
+    height: visibleBottom - visibleTop,
     borderRadius: borderRadius === "0px" ? "var(--radius-lg)" : borderRadius,
   };
 }
@@ -206,7 +213,7 @@ export function GuideCoachmark({
   const updatePosition = useCallback(() => {
     const zoom = readPageZoom();
     setPageZoom((current) => (current === zoom ? current : zoom));
-    const measuredTarget = targetElement ? visibleRect(targetElement, targetPadding * zoom) : undefined;
+    const measuredTarget = targetElement ? visibleRect(targetElement, targetPadding * zoom, zoom) : undefined;
     setTargetRect((current) => (sameRect(current, measuredTarget) ? current : measuredTarget));
     const card = cardRef.current;
     if (!measuredTarget || !card) {

@@ -220,6 +220,15 @@ const demoCategories: Category[] = [
     sortOrder: 32,
     isSystem: true,
   },
+  {
+    id: "bills",
+    name: "Contas",
+    color: "#728bba",
+    icon: "receipt",
+    kind: "expense",
+    sortOrder: 35,
+    isSystem: true,
+  },
   { id: "transport", name: "Transporte", color: "#9165a4", kind: "expense", sortOrder: 40, isSystem: true },
   {
     id: "fuel",
@@ -234,6 +243,15 @@ const demoCategories: Category[] = [
   { id: "shopping", name: "Compras", color: "#c97f9e", kind: "expense", sortOrder: 90, isSystem: true },
   { id: "personal-care", name: "Cuidados pessoais", color: "#c97f9e", kind: "expense", sortOrder: 95, isSystem: true },
   { id: "leisure", name: "Lazer", color: "#4c94a8", kind: "expense", sortOrder: 100, isSystem: true },
+  {
+    id: "other-expenses",
+    name: "Outras Despesas",
+    color: "#8a8078",
+    icon: "tag",
+    kind: "expense",
+    sortOrder: 115,
+    isSystem: true,
+  },
   { id: "investments", name: "Investimentos", color: "#1a5b82", kind: "investment", sortOrder: 130, isSystem: true },
   { id: "transfers", name: "Transferências", color: "#6d7d78", kind: "transfer", sortOrder: 120, isSystem: true },
   {
