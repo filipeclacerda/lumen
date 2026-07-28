@@ -1053,11 +1053,16 @@ pub async fn rename_account(
 
 #[tauri::command]
 pub async fn archive_account(id: String, state: State<'_, AppState>) -> Result<(), AppError> {
+    archive_account_impl(&id, &state.db).await
+}
+
+async fn archive_account_impl(id: &str, db: &SqlitePool) -> Result<(), AppError> {
+    let mut tx = db.begin().await?;
     let has_active_transactions = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM transactions WHERE account_id=? AND deleted_at IS NULL",
     )
-    .bind(&id)
-    .fetch_one(&state.db)
+    .bind(id)
+    .fetch_one(&mut *tx)
     .await?
         > 0;
     if has_active_transactions {
@@ -1066,11 +1071,27 @@ pub async fn archive_account(id: String, state: State<'_, AppState>) -> Result<(
                 .into(),
         ));
     }
+    let has_active_recurring = sqlx::query_scalar::<_, i64>(
+        "SELECT EXISTS(
+           SELECT 1 FROM recurring_transactions
+           WHERE account_id=? AND active=1 AND deleted_at IS NULL
+         )",
+    )
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await?
+        != 0;
+    if has_active_recurring {
+        return Err(AppError::Validation(
+            "A conta tem recorrências ativas; pause ou arquive essas recorrências antes de arquivá-la"
+                .into(),
+        ));
+    }
     let remaining = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM accounts WHERE deleted_at IS NULL AND id!=?",
     )
-    .bind(&id)
-    .fetch_one(&state.db)
+    .bind(id)
+    .fetch_one(&mut *tx)
     .await?;
     if remaining == 0 {
         return Err(AppError::Validation(
@@ -1081,11 +1102,12 @@ pub async fn archive_account(id: String, state: State<'_, AppState>) -> Result<(
         "UPDATE accounts SET deleted_at=datetime('now') WHERE id=? AND deleted_at IS NULL",
     )
     .bind(id)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
     if result.rows_affected() == 0 {
         return Err(AppError::Validation("Conta não encontrada".into()));
     }
+    tx.commit().await?;
     Ok(())
 }
 
@@ -2922,6 +2944,25 @@ async fn restore_transactions_impl(
     let ids = normalize_transaction_ids(transaction_ids)?;
     let mut tx = db.begin().await?;
     ensure_transactions_unlinked(&mut tx, &ids).await?;
+    for id in &ids {
+        let belongs_to_archived_account = sqlx::query_scalar::<_, i64>(
+            "SELECT EXISTS(
+               SELECT 1
+               FROM transactions t
+               JOIN accounts a ON a.id=t.account_id
+               WHERE t.id=? AND a.deleted_at IS NOT NULL
+             )",
+        )
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?
+            != 0;
+        if belongs_to_archived_account {
+            return Err(AppError::Validation(
+                "Restaure a conta antes de restaurar suas transações".into(),
+            ));
+        }
+    }
     let mut count = 0;
     for id in ids {
         // Refuse to restore a transaction whose fingerprint now matches an active one,
@@ -3875,6 +3916,58 @@ mod tests {
         );
         assert!(normalize_transaction_ids(vec![]).is_err());
         assert!(normalize_transaction_ids((0..1001).map(|i| i.to_string()).collect()).is_err());
+    }
+
+    #[tokio::test]
+    async fn archive_account_rejects_active_recurring_but_allows_paused_recurring() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = crate::infrastructure::database::connect(&directory.path().join("accounts.db"))
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO accounts(id,name,kind) VALUES('other-account','Outra conta','cash')",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO recurring_transactions(
+               id,account_id,description,amount_cents,day_of_month,start_month,active
+             ) VALUES('active-recurring','default-account','Mensalidade',-1000,1,'2026-01',1)",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+
+        let result = archive_account_impl("default-account", &db).await;
+        assert!(matches!(
+            result,
+            Err(AppError::Validation(message)) if message.contains("recorrências ativas")
+        ));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM accounts WHERE id='default-account' AND deleted_at IS NULL"
+            )
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+            1
+        );
+
+        sqlx::query("UPDATE recurring_transactions SET active=0 WHERE id='active-recurring'")
+            .execute(&db)
+            .await
+            .unwrap();
+        archive_account_impl("default-account", &db).await.unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM accounts WHERE id='default-account' AND deleted_at IS NOT NULL"
+            )
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+            1
+        );
     }
 
     #[test]
@@ -5389,6 +5482,58 @@ mod tests {
                 .await
                 .unwrap(),
             before_links
+        );
+    }
+
+    #[tokio::test]
+    async fn restoring_transactions_rejects_archived_accounts_atomically() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = crate::infrastructure::database::connect(&directory.path().join("restore.db"))
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO accounts(id,name,kind,deleted_at)
+             VALUES('archived-account','Conta arquivada','cash',datetime('now'))",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO transactions(
+               id,account_id,date,description,normalized_description,amount_cents,
+               fingerprint,status,deleted_at
+             ) VALUES
+               ('active-account-transaction','default-account','2026-07-01','Ativa','ATIVA',-1000,
+                'restore-active-account','cleared',datetime('now')),
+               ('archived-account-transaction','archived-account','2026-07-02','Arquivada','ARQUIVADA',-2000,
+                'restore-archived-account','cleared',datetime('now'))",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+
+        let result = restore_transactions_impl(
+            vec![
+                "active-account-transaction".into(),
+                "archived-account-transaction".into(),
+            ],
+            &db,
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(AppError::Validation(message)) if message.contains("Restaure a conta")
+        ));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM transactions
+                 WHERE id IN ('active-account-transaction','archived-account-transaction')
+                   AND deleted_at IS NULL"
+            )
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+            0
         );
     }
 

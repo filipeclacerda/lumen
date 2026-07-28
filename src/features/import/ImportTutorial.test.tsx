@@ -163,16 +163,16 @@ describe("ImportTutorial", () => {
         .parentElement as HTMLElement;
       expect(positioned.dataset.placement).toBeTruthy();
       expect(positioned.style.opacity).toBe("0");
+      expect(document.querySelector(".quick-start-guide__highlight")).toBeNull();
     });
 
     targetTop = 340;
     fireEvent(window, new Event("resize"));
     await waitFor(() => {
-      const highlight = document.querySelector(".quick-start-guide__highlight") as HTMLElement;
-      expect(Number.parseFloat(highlight.style.top)).toBeCloseTo(340);
       const positioned = screen.getByRole("region", { name: "Escolha o arquivo exportado" })
         .parentElement as HTMLElement;
       expect(positioned.style.opacity).toBe("0");
+      expect(document.querySelector(".quick-start-guide__highlight")).toBeNull();
     });
 
     await waitFor(() => {
@@ -180,6 +180,8 @@ describe("ImportTutorial", () => {
         .parentElement as HTMLElement;
       expect(positioned.dataset.placement).toBeTruthy();
       expect(positioned.style.opacity).toBe("");
+      const highlight = document.querySelector(".quick-start-guide__highlight") as HTMLElement;
+      expect(Number.parseFloat(highlight.style.top)).toBeCloseTo(340);
     });
   });
 

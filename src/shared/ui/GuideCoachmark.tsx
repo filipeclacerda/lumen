@@ -418,6 +418,7 @@ export function GuideCoachmark({
   const layoutReady = revealAfterStableMs === 0 || (geometryKey !== undefined && stableGeometryKey === geometryKey);
   const concealUntilPositioned =
     placementModeIndex > 0 ? awaitingPosition && !fallbackReady : awaitingPosition ? !fallbackReady : !layoutReady;
+  const highlightReady = !awaitingPosition && !concealUntilPositioned;
   const floatingStyle = position
     ? ({
         position: "fixed",
@@ -478,7 +479,8 @@ export function GuideCoachmark({
 
   return (
     <>
-      {targetRect &&
+      {highlightReady &&
+        targetRect &&
         createPortal(
           <div
             className="quick-start-guide__highlight"

@@ -1,6 +1,12 @@
 name: CI
 
 on:
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
   push:
     branches:
       - main
@@ -8,6 +14,9 @@ on:
       - "**/*.md"
       - "docs/**"
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}

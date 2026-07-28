@@ -36,11 +36,15 @@ fn csv_field(value: &str) -> String {
     }
 }
 
-/// Formats integer cents as a Brazilian decimal string (e.g. -1234 -> "-12,34").
-fn format_amount(cents: i64) -> String {
+fn format_amount_with_separator(cents: i128, separator: char) -> String {
     let sign = if cents < 0 { "-" } else { "" };
     let abs = cents.unsigned_abs();
-    format!("{}{},{:02}", sign, abs / 100, abs % 100)
+    format!("{sign}{}{separator}{:02}", abs / 100, abs % 100)
+}
+
+/// Formats integer cents as a Brazilian decimal string (e.g. -1234 -> "-12,34").
+fn format_amount(cents: i64) -> String {
+    format_amount_with_separator(i128::from(cents), ',')
 }
 
 fn account_kind_label(kind: &str) -> &'static str {
@@ -99,7 +103,7 @@ async fn fetch_export_rows(
 }
 
 fn format_amount_dot(cents: i64) -> String {
-    format!("{:.2}", cents as f64 / 100.0)
+    format_amount_with_separator(i128::from(cents), '.')
 }
 
 fn xml_escape(value: &str) -> String {
@@ -271,22 +275,40 @@ fn build_pdf(title: &str, lines: &[String]) -> Vec<u8> {
     pdf
 }
 
-fn build_transactions_pdf(rows: &[ExportRow]) -> Vec<u8> {
-    let income: i64 = rows
-        .iter()
-        .filter(|r| r.amount_in_cents > 0)
-        .map(|r| r.amount_in_cents)
-        .sum();
-    let expenses: i64 = rows
-        .iter()
-        .filter(|r| r.amount_in_cents < 0)
-        .map(|r| -r.amount_in_cents)
-        .sum();
+fn export_totals(rows: &[ExportRow]) -> Result<(i128, i128), AppError> {
+    rows.iter()
+        .try_fold((0i128, 0i128), |(income, expenses), row| {
+            match row.amount_in_cents {
+                amount if amount > 0 => Ok((
+                    income.checked_add(i128::from(amount)).ok_or_else(|| {
+                        AppError::Validation("O total exportado excede o limite suportado".into())
+                    })?,
+                    expenses,
+                )),
+                amount if amount < 0 => Ok((
+                    income,
+                    expenses.checked_add(-i128::from(amount)).ok_or_else(|| {
+                        AppError::Validation("O total exportado excede o limite suportado".into())
+                    })?,
+                )),
+                _ => Ok((income, expenses)),
+            }
+        })
+}
+
+fn build_transactions_pdf(rows: &[ExportRow]) -> Result<Vec<u8>, AppError> {
+    let (income, expenses) = export_totals(rows)?;
     let mut lines = vec![
         format!("Transações exportadas: {}", rows.len()),
-        format!("Receitas: R$ {}", format_amount(income)),
-        format!("Despesas: R$ {}", format_amount(expenses)),
-        format!("Saldo: R$ {}", format_amount(income - expenses)),
+        format!("Receitas: R$ {}", format_amount_with_separator(income, ',')),
+        format!(
+            "Despesas: R$ {}",
+            format_amount_with_separator(expenses, ',')
+        ),
+        format!(
+            "Saldo: R$ {}",
+            format_amount_with_separator(income - expenses, ',')
+        ),
         String::new(),
         "Data | Descrição | Conta | Categoria | Valor".into(),
     ];
@@ -306,26 +328,25 @@ fn build_transactions_pdf(rows: &[ExportRow]) -> Vec<u8> {
             rows.len() - 120
         ));
     }
-    build_pdf("Relatório de transações", &lines)
+    Ok(build_pdf("Relatório de transações", &lines))
 }
 
-fn build_financial_report_pdf(rows: &[ExportRow], filter: &ReportPdfFilter) -> Vec<u8> {
-    let income: i64 = rows
-        .iter()
-        .filter(|r| r.amount_in_cents > 0)
-        .map(|r| r.amount_in_cents)
-        .sum();
-    let expenses: i64 = rows
-        .iter()
-        .filter(|r| r.amount_in_cents < 0)
-        .map(|r| -r.amount_in_cents)
-        .sum();
-    let mut by_category = std::collections::BTreeMap::<String, i64>::new();
+fn build_financial_report_pdf(
+    rows: &[ExportRow],
+    filter: &ReportPdfFilter,
+) -> Result<Vec<u8>, AppError> {
+    let (income, expenses) = export_totals(rows)?;
+    let mut by_category = std::collections::BTreeMap::<String, i128>::new();
     for row in rows.iter().filter(|r| r.amount_in_cents < 0) {
-        *by_category.entry(row.category.clone()).or_default() += -row.amount_in_cents;
+        let total = by_category.entry(row.category.clone()).or_default();
+        *total = total
+            .checked_add(-i128::from(row.amount_in_cents))
+            .ok_or_else(|| {
+                AppError::Validation("O total exportado excede o limite suportado".into())
+            })?;
     }
     let mut categories: Vec<_> = by_category.into_iter().collect();
-    categories.sort_by_key(|(_, amount)| -*amount);
+    categories.sort_by_key(|right| std::cmp::Reverse(right.1));
     let source = match filter.source.as_str() {
         "bank" => "contas bancárias",
         "credit_card" => "cartões de crédito",
@@ -335,9 +356,15 @@ fn build_financial_report_pdf(rows: &[ExportRow], filter: &ReportPdfFilter) -> V
         format!("Período: {} a {}", filter.start_month, filter.end_month),
         format!("Origem: {}", source),
         format!("Lançamentos considerados: {}", rows.len()),
-        format!("Receitas: R$ {}", format_amount(income)),
-        format!("Despesas: R$ {}", format_amount(expenses)),
-        format!("Economia: R$ {}", format_amount(income - expenses)),
+        format!("Receitas: R$ {}", format_amount_with_separator(income, ',')),
+        format!(
+            "Despesas: R$ {}",
+            format_amount_with_separator(expenses, ',')
+        ),
+        format!(
+            "Economia: R$ {}",
+            format_amount_with_separator(income - expenses, ',')
+        ),
         String::new(),
         "Maiores categorias de despesa".into(),
     ];
@@ -350,7 +377,7 @@ fn build_financial_report_pdf(rows: &[ExportRow], filter: &ReportPdfFilter) -> V
         lines.push(format!(
             "{} | R$ {} | {:.1}%",
             category,
-            format_amount(*amount),
+            format_amount_with_separator(*amount, ','),
             share
         ));
     }
@@ -365,7 +392,7 @@ fn build_financial_report_pdf(rows: &[ExportRow], filter: &ReportPdfFilter) -> V
             format_amount(row.amount_in_cents)
         ));
     }
-    build_pdf("Relatório financeiro", &lines)
+    Ok(build_pdf("Relatório financeiro", &lines))
 }
 
 /// Builds the full CSV document (UTF-8 BOM + pt-BR header + semicolon-delimited rows with
@@ -421,7 +448,7 @@ pub async fn export_transactions_pdf(
 ) -> Result<usize, AppError> {
     let rows = fetch_export_rows(&state.db, &filter).await?;
     let count = rows.len();
-    std::fs::write(&path, build_transactions_pdf(&rows))?;
+    std::fs::write(&path, build_transactions_pdf(&rows)?)?;
     Ok(count)
 }
 
@@ -440,7 +467,7 @@ pub async fn export_financial_report_pdf(
     };
     let rows = fetch_export_rows(&state.db, &transaction_filter).await?;
     let count = rows.len();
-    std::fs::write(&path, build_financial_report_pdf(&rows, &filter))?;
+    std::fs::write(&path, build_financial_report_pdf(&rows, &filter)?)?;
     Ok(count)
 }
 
@@ -542,6 +569,38 @@ mod tests {
         assert!(text.contains("Relatório financeiro"));
         assert!(text.contains("Período: 2026-06 a 2026-07"));
         assert!(text.contains("Transações | Alimentação | Cartão de crédito | R$ 1.234,56"));
+    }
+
+    #[test]
+    fn ofx_amount_formatter_preserves_i64_limits_exactly() {
+        assert_eq!(format_amount_dot(i64::MAX), "92233720368547758.07");
+        assert_eq!(format_amount_dot(i64::MIN), "-92233720368547758.08");
+    }
+
+    #[test]
+    fn transaction_pdf_totals_do_not_overflow_i64() {
+        let row = |id: &str, amount_in_cents| ExportRow {
+            id: id.into(),
+            date: "2026-07-01".into(),
+            description: "Teste de limite".into(),
+            account_name: "Conta".into(),
+            account_kind: "checking".into(),
+            category: "Sem categoria".into(),
+            amount_in_cents,
+            status: "cleared".into(),
+        };
+        let rows = vec![
+            row("income-max", i64::MAX),
+            row("income-cent", 1),
+            row("expense-min", i64::MIN),
+        ];
+
+        let pdf = build_transactions_pdf(&rows).unwrap();
+        let text = pdf_extract::extract_text_from_mem(&pdf).unwrap();
+
+        assert!(text.contains("Receitas: R$ 92233720368547758,08"));
+        assert!(text.contains("Despesas: R$ 92233720368547758,08"));
+        assert!(text.contains("Saldo: R$ 0,00"));
     }
 
     #[tokio::test]

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { useMaintenanceRestart } from "../shared/maintenanceRestart";
 import { disposeUiPreferences, initializeUiPreferences } from "../shared/uiPreferences";
+import { ToastProvider } from "../shared/ui/toast";
 
 const mocks = vi.hoisted(() => ({
   bootstrap: vi.fn(),
@@ -29,9 +30,11 @@ function renderApp(initialEntry = "/") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[initialEntry]}>
-        <App />
-      </MemoryRouter>
+      <ToastProvider>
+        <MemoryRouter initialEntries={[initialEntry]}>
+          <App />
+        </MemoryRouter>
+      </ToastProvider>
     </QueryClientProvider>,
   );
 }
@@ -75,6 +78,26 @@ describe("App sidebar", () => {
 
     expect(await screen.findByText("Rota de transações lazy")).toBeTruthy();
     expect(screen.queryByText("Dashboard")).toBeNull();
+  });
+
+  it("offers a keyboard shortcut to the main content", async () => {
+    renderApp();
+
+    const shortcut = await screen.findByRole("link", { name: "Ir para o conteúdo principal" });
+    const main = screen.getByRole("main");
+
+    expect(shortcut.getAttribute("href")).toBe("#main-content");
+    expect(main.id).toBe("main-content");
+    expect(main.tabIndex).toBe(-1);
+  });
+
+  it("reports a recurring synchronization failure without an unhandled rejection", async () => {
+    mocks.syncRecurringTransactions.mockRejectedValueOnce(new Error("falha interna"));
+    renderApp();
+
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "Não foi possível atualizar os lançamentos recorrentes.",
+    );
   });
 
   it("persists the collapsed preference and restores it after remounting", async () => {

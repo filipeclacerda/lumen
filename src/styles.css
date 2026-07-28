@@ -704,6 +704,17 @@ input:focus-visible,select:focus-visible,textarea:focus-visible{outline:none;bor
 .recurring-row small{display:block;color:var(--text-muted);margin-top:3px}
 .recurring-amount.negative{color:var(--danger)}
 .recurring-amount.positive{color:var(--accent-green)}
+@media(max-width:650px){
+  .recurring-row{
+    grid-template-columns:minmax(0,1fr) auto;
+    align-items:start;
+    gap:var(--space-3);
+  }
+  .recurring-row>div:first-child{min-width:0;overflow-wrap:anywhere}
+  .recurring-row>.recurring-amount{justify-self:end;white-space:nowrap}
+  .recurring-row>button.secondary{grid-column:1;grid-row:2;justify-self:start}
+  .recurring-row>.row-actions{grid-column:2;grid-row:2;justify-self:end}
+}
 
 /* Settings danger zone (reset all data) */
 .danger-zone{border-color:var(--danger-soft)}

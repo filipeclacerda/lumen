@@ -34,9 +34,11 @@ import { MaintenanceRestartNotice } from "../shared/ui/MaintenanceRestartNotice"
 import { BackupReminderNotice } from "../shared/ui/BackupReminderNotice";
 import { QuickStartGuide } from "../shared/ui/QuickStartGuide";
 import { LazyErrorBoundary } from "../shared/ui/LazyErrorBoundary";
+import { useToast } from "../shared/ui/toast";
 
 export function App() {
   const client = useQueryClient();
+  const toast = useToast();
   const navigate = useNavigate();
   const location = useLocation();
   const SettingsIcon = settingsNavigation.icon;
@@ -118,18 +120,22 @@ export function App() {
   } = useQuery({ queryKey: ["bootstrap"], queryFn: api.bootstrap });
   useEffect(() => {
     if (!bootstrap?.onboardingCompleted) return;
-    api.syncRecurringTransactions().then(async (count) => {
-      if (count > 0) {
-        await Promise.all([
-          client.invalidateQueries({ queryKey: ["transactions"] }),
-          client.invalidateQueries({ queryKey: ["summary"] }),
-          client.invalidateQueries({ queryKey: ["financial-report"] }),
-        ]);
-      }
-    });
+    void api
+      .syncRecurringTransactions()
+      .then(async (count) => {
+        if (count > 0) {
+          await Promise.all([
+            client.invalidateQueries({ queryKey: ["transactions"] }),
+            client.invalidateQueries({ queryKey: ["summary"] }),
+            client.invalidateQueries({ queryKey: ["financial-report"] }),
+          ]);
+        }
+      })
+      .catch(() => {
+        toast("Não foi possível atualizar os lançamentos recorrentes.", "error");
+      });
     // Runs once per app session, right after the profile/account are known to exist.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bootstrap?.onboardingCompleted]);
+  }, [bootstrap?.onboardingCompleted, client, toast]);
   if (isLoading) return <LoadingState variant="page" label="Preparando seu espaço financeiro…" />;
   if (isError)
     return (
@@ -155,6 +161,9 @@ export function App() {
     );
   return (
     <div className={`shell ${collapsed ? "collapsed" : ""} ${drawerOpen ? "drawer-open" : ""}`}>
+      <a className="skip-link" href="#main-content">
+        Ir para o conteúdo principal
+      </a>
       <button
         ref={drawerTrigger}
         className="mobile-menu-trigger"
@@ -234,7 +243,7 @@ export function App() {
           <div className="app-version">Lumen v{APP_VERSION}</div>
         </div>
       </aside>
-      <main>
+      <main id="main-content" tabIndex={-1}>
         <UpdateNotice enabled={bootstrap.onboardingCompleted} />
         <BackupReminderNotice enabled={bootstrap.onboardingCompleted} />
         {!maintenanceRestartRequired && <CommandPalette />}

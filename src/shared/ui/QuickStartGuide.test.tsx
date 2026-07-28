@@ -194,6 +194,7 @@ describe("QuickStartGuide", () => {
     );
     const loadingDialog = screen.getByRole("dialog", { name: "Separe saldo, crédito e conciliação" });
     expect((loadingDialog.parentElement as HTMLElement).style.opacity).toBe("0");
+    expect(document.querySelector(".quick-start-guide__highlight")).toBeNull();
 
     view.rerender(
       <MemoryRouter initialEntries={["/accounts"]}>

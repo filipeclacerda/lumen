@@ -161,8 +161,34 @@ pub async fn set_recurring_transaction_active(
     active: bool,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
+    set_recurring_transaction_active_impl(&id, active, &state.db).await
+}
+
+async fn set_recurring_transaction_active_impl(
+    id: &str,
+    active: bool,
+    db: &SqlitePool,
+) -> Result<(), AppError> {
+    let mut tx = db.begin().await?;
+    if active {
+        let account_is_active = sqlx::query_scalar::<_, i64>(
+            "SELECT a.deleted_at IS NULL
+             FROM recurring_transactions r
+             JOIN accounts a ON a.id=r.account_id
+             WHERE r.id=? AND r.deleted_at IS NULL",
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if account_is_active == Some(0) {
+            return Err(AppError::Validation(
+                "Restaure a conta antes de reativar esta recorrência".into(),
+            ));
+        }
+    }
     sqlx::query("UPDATE recurring_transactions SET active=?,updated_at=datetime('now') WHERE id=? AND deleted_at IS NULL")
-        .bind(active as i64).bind(id).execute(&state.db).await?;
+        .bind(active as i64).bind(id).execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -188,9 +214,16 @@ async fn sync_recurring_transactions_impl(db: &SqlitePool) -> Result<usize, AppE
     let today = Local::now().date_naive();
     let current_month = today.format("%Y-%m").to_string();
     let rows = sqlx::query(
-        "SELECT id,account_id,category_id,description,amount_cents,day_of_month,start_month,end_month,last_generated_month
-         FROM recurring_transactions WHERE active=1 AND deleted_at IS NULL AND start_month<=?"
-    ).bind(&current_month).fetch_all(db).await?;
+        "SELECT r.id,r.account_id,r.category_id,r.description,r.amount_cents,r.day_of_month,
+                r.start_month,r.end_month,r.last_generated_month
+         FROM recurring_transactions r
+         JOIN accounts a ON a.id=r.account_id
+         WHERE r.active=1 AND r.deleted_at IS NULL AND r.start_month<=?
+           AND a.deleted_at IS NULL",
+    )
+    .bind(&current_month)
+    .fetch_all(db)
+    .await?;
 
     let mut generated = 0usize;
     for row in rows {
@@ -383,5 +416,134 @@ mod tests {
         } else {
             assert_eq!(generated, 1);
         }
+    }
+
+    #[tokio::test]
+    async fn sync_skips_legacy_recurring_on_archived_account_and_continues() {
+        let (_directory, db, active_account_id) = setup().await;
+        let current_month = Local::now().format("%Y-%m").to_string();
+        sqlx::query(
+            "INSERT INTO accounts(id,name,kind)
+             VALUES('legacy-archived-account','Conta arquivada','cash')",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+        let archived_recurring_id = save_recurring_transaction_impl(
+            RecurringTransactionInput {
+                id: None,
+                account_id: "legacy-archived-account".into(),
+                category_id: None,
+                description: "Recorrência legada arquivada".into(),
+                amount_in_cents: -2500,
+                day_of_month: 1,
+                start_month: current_month.clone(),
+                end_month: Some(current_month.clone()),
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+        let active_recurring_id = save_recurring_transaction_impl(
+            RecurringTransactionInput {
+                id: None,
+                account_id: active_account_id,
+                category_id: None,
+                description: "Recorrência ativa".into(),
+                amount_in_cents: -3500,
+                day_of_month: 1,
+                start_month: current_month.clone(),
+                end_month: Some(current_month),
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE accounts SET deleted_at=datetime('now')
+             WHERE id='legacy-archived-account'",
+        )
+        .execute(&db)
+        .await
+        .unwrap();
+
+        let generated = sync_recurring_transactions_impl(&db).await.unwrap();
+
+        assert_eq!(generated, 1);
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM transactions WHERE recurring_transaction_id=?"
+            )
+            .bind(&archived_recurring_id)
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM transactions WHERE recurring_transaction_id=?"
+            )
+            .bind(&active_recurring_id)
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT last_generated_month FROM recurring_transactions WHERE id=?"
+            )
+            .bind(&archived_recurring_id)
+            .fetch_one(&db)
+            .await
+            .unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn reactivating_recurring_on_archived_account_is_rejected() {
+        let (_directory, db, account_id) = setup().await;
+        let current_month = Local::now().format("%Y-%m").to_string();
+        let recurring_id = save_recurring_transaction_impl(
+            RecurringTransactionInput {
+                id: None,
+                account_id: account_id.clone(),
+                category_id: None,
+                description: "Recorrência pausada".into(),
+                amount_in_cents: -2500,
+                day_of_month: 1,
+                start_month: current_month,
+                end_month: None,
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE accounts SET deleted_at=datetime('now') WHERE id=?")
+            .bind(account_id)
+            .execute(&db)
+            .await
+            .unwrap();
+
+        set_recurring_transaction_active_impl(&recurring_id, false, &db)
+            .await
+            .unwrap();
+        let result = set_recurring_transaction_active_impl(&recurring_id, true, &db).await;
+
+        assert!(matches!(
+            result,
+            Err(AppError::Validation(message))
+                if message.contains("Restaure a conta antes de reativar")
+        ));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT active FROM recurring_transactions WHERE id=?")
+                .bind(recurring_id)
+                .fetch_one(&db)
+                .await
+                .unwrap(),
+            0
+        );
     }
 }

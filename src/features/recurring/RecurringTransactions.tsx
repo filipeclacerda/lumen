@@ -1,5 +1,5 @@
 import { PageHeader } from "../../shared/ui/PageHeader";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, Pencil, Play, Repeat, Save } from "lucide-react";
 import { api } from "../../shared/api";
@@ -52,6 +52,8 @@ export function RecurringTransactions() {
   const [amountInCents, setAmountInCents] = useState<number | null>(null);
   const [amountInputVersion, setAmountInputVersion] = useState(0);
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const saveLock = useRef(false);
   const editing = Boolean(draft.id);
   const contentReady =
     !recurringLoading &&
@@ -97,6 +99,7 @@ export function RecurringTransactions() {
   }
 
   async function save() {
+    if (saveLock.current) return;
     setError("");
     const resolvedAccountId = draft.accountId || accounts[0]?.id || "";
     const cents = amountInCents;
@@ -112,6 +115,8 @@ export function RecurringTransactions() {
       setError("Descreva a recorrência.");
       return;
     }
+    saveLock.current = true;
+    setSaving(true);
     try {
       await api.saveRecurringTransaction({
         ...draft,
@@ -124,6 +129,9 @@ export function RecurringTransactions() {
       await refresh();
     } catch (e) {
       setError((e as { message?: string })?.message ?? "Não foi possível salvar.");
+    } finally {
+      saveLock.current = false;
+      setSaving(false);
     }
   }
 
@@ -169,20 +177,30 @@ export function RecurringTransactions() {
       )}
       {contentReady && (
         <div className="rules-layout" data-quick-guide="recurring-editor">
-          <article className="panel rule-editor recurring-editor">
+          <article className="panel rule-editor recurring-editor" aria-busy={saving}>
             <div className="panel-title">
               <h2>{editing ? "Editar recorrência" : "Nova recorrência"}</h2>
               {editing && (
-                <button className="text-button cancel-action" onClick={resetDraft}>
+                <button className="text-button cancel-action" onClick={resetDraft} disabled={saving}>
                   Cancelar
                 </button>
               )}
             </div>
             <div className="segmented" role="group" aria-label="Tipo de recorrência">
-              <button type="button" className={type === "expense" ? "active" : ""} onClick={() => setType("expense")}>
+              <button
+                type="button"
+                className={type === "expense" ? "active" : ""}
+                onClick={() => setType("expense")}
+                disabled={saving}
+              >
                 Despesa
               </button>
-              <button type="button" className={type === "income" ? "active" : ""} onClick={() => setType("income")}>
+              <button
+                type="button"
+                className={type === "income" ? "active" : ""}
+                onClick={() => setType("income")}
+                disabled={saving}
+              >
                 Receita
               </button>
             </div>
@@ -192,6 +210,7 @@ export function RecurringTransactions() {
                 value={draft.description}
                 onChange={(e) => setDraft({ ...draft, description: e.target.value })}
                 placeholder="Ex.: Aluguel, Netflix, Salário"
+                disabled={saving}
               />
             </label>
             <div className="form-row">
@@ -201,6 +220,7 @@ export function RecurringTransactions() {
                   key={`${draft.id ?? "new-recurring"}-${amountInputVersion}`}
                   defaultCents={amountInCents ?? 0}
                   onChange={setAmountInCents}
+                  disabled={saving}
                 />
               </label>
               <label>
@@ -208,6 +228,7 @@ export function RecurringTransactions() {
                 <Select
                   value={draft.dayOfMonth}
                   onChange={(value) => setDraft({ ...draft, dayOfMonth: Number(value) })}
+                  disabled={saving}
                   options={[
                     ...dayOptions.map((day) => ({ value: String(day), label: String(day) })),
                     { value: "31", label: "Último dia do mês" },
@@ -221,6 +242,7 @@ export function RecurringTransactions() {
                 <Select
                   value={draft.accountId || accounts[0]?.id || ""}
                   onChange={(value) => setDraft({ ...draft, accountId: value })}
+                  disabled={saving}
                   options={accounts.map((account) => ({ value: account.id, label: account.name }))}
                 />
               </label>
@@ -234,6 +256,7 @@ export function RecurringTransactions() {
                   allowEmpty
                   emptyLabel="Sem categoria"
                   aria-label="Categoria da recorrência"
+                  disabled={saving}
                 />
               </label>
             </div>
@@ -245,6 +268,7 @@ export function RecurringTransactions() {
                   value={draft.startMonth}
                   onChange={(value) => setDraft({ ...draft, startMonth: value })}
                   allowClear={false}
+                  disabled={saving}
                 />
               </label>
               <label>
@@ -253,13 +277,18 @@ export function RecurringTransactions() {
                   ariaLabel="Mês de término da recorrência"
                   value={draft.endMonth ?? ""}
                   onChange={(value) => setDraft({ ...draft, endMonth: value || undefined })}
+                  disabled={saving}
                 />
               </label>
             </div>
-            {error && <p className="form-error">{error}</p>}
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
             <div className="editor-actions">
-              <button onClick={save}>
-                <Save size={16} /> {editing ? "Salvar" : "Criar recorrência"}
+              <button onClick={save} disabled={saving}>
+                <Save size={16} /> {saving ? "Salvando…" : editing ? "Salvar" : "Criar recorrência"}
               </button>
             </div>
           </article>
