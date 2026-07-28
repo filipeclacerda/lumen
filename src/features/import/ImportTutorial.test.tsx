@@ -107,10 +107,10 @@ describe("ImportTutorial", () => {
 
     await waitFor(() => {
       const highlight = document.querySelector(".quick-start-guide__highlight") as HTMLElement;
-      expect(Number.parseFloat(highlight.style.top)).toBeCloseTo(74);
-      expect(Number.parseFloat(highlight.style.left)).toBeCloseTo(34);
-      expect(Number.parseFloat(highlight.style.width)).toBeCloseTo(492);
-      expect(Number.parseFloat(highlight.style.height)).toBeCloseTo(82);
+      expect(Number.parseFloat(highlight.style.top)).toBeCloseTo(70);
+      expect(Number.parseFloat(highlight.style.left)).toBeCloseTo(30);
+      expect(Number.parseFloat(highlight.style.width)).toBeCloseTo(500);
+      expect(Number.parseFloat(highlight.style.height)).toBeCloseTo(90);
     });
   });
 
@@ -181,7 +181,7 @@ describe("ImportTutorial", () => {
       expect(positioned.dataset.placement).toBeTruthy();
       expect(positioned.style.opacity).toBe("");
       const highlight = document.querySelector(".quick-start-guide__highlight") as HTMLElement;
-      expect(Number.parseFloat(highlight.style.top)).toBeCloseTo(340);
+      expect(Number.parseFloat(highlight.style.top)).toBeCloseTo(330);
     });
   });
 
@@ -232,13 +232,13 @@ describe("ImportTutorial", () => {
 
     await waitFor(() => {
       const highlight = document.querySelector(".quick-start-guide__highlight") as HTMLElement;
-      expect(Number.parseFloat(highlight.style.top)).toBeCloseTo(114);
-      expect(Number.parseFloat(highlight.style.left)).toBeCloseTo(494);
-      expect(Number.parseFloat(highlight.style.width)).toBeCloseTo(352);
-      expect(Number.parseFloat(highlight.style.height)).toBeCloseTo(252);
+      expect(Number.parseFloat(highlight.style.top)).toBeCloseTo(110);
+      expect(Number.parseFloat(highlight.style.left)).toBeCloseTo(490);
+      expect(Number.parseFloat(highlight.style.width)).toBeCloseTo(360);
+      expect(Number.parseFloat(highlight.style.height)).toBeCloseTo(260);
       const positioner = region.parentElement as HTMLElement;
       expect(positioner.dataset.placement).toBe("left");
-      expect(positioner.style.transform).toContain("translate(80px, 114px)");
+      expect(positioner.style.transform).toContain("translate(76px, 110px)");
     });
   });
 
@@ -287,7 +287,7 @@ describe("ImportTutorial", () => {
       await waitFor(() => {
         const positioner = region.parentElement as HTMLElement;
         expect(positioner.dataset.placement).toBe("top");
-        expect(positioner.style.transform).toContain("translate(94px, 40px)");
+        expect(positioner.style.transform).toContain("translate(90px, 36px)");
       });
     } finally {
       Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
@@ -369,10 +369,10 @@ describe("ImportTutorial", () => {
 
     await waitFor(() => {
       const highlight = document.querySelector(".quick-start-guide__highlight") as HTMLElement;
-      expect(Number.parseFloat(highlight.style.top)).toBeCloseTo(94);
-      expect(Number.parseFloat(highlight.style.left)).toBeCloseTo(294);
-      expect(Number.parseFloat(highlight.style.width)).toBeCloseTo(472);
-      expect(Number.parseFloat(highlight.style.height)).toBeCloseTo(272);
+      expect(Number.parseFloat(highlight.style.top)).toBeCloseTo(90);
+      expect(Number.parseFloat(highlight.style.left)).toBeCloseTo(290);
+      expect(Number.parseFloat(highlight.style.width)).toBeCloseTo(480);
+      expect(Number.parseFloat(highlight.style.height)).toBeCloseTo(280);
     });
 
     view.rerender(
@@ -385,8 +385,8 @@ describe("ImportTutorial", () => {
     expect(screen.getByRole("heading", { name: "Cadastre o cartão da fatura" })).toBeTruthy();
     await waitFor(() => {
       const highlight = document.querySelector(".quick-start-guide__highlight") as HTMLElement;
-      expect(Number.parseFloat(highlight.style.top)).toBeCloseTo(80);
-      expect(Number.parseFloat(highlight.style.left)).toBeCloseTo(500);
+      expect(Number.parseFloat(highlight.style.top)).toBeCloseTo(70);
+      expect(Number.parseFloat(highlight.style.left)).toBeCloseTo(490);
     });
   });
 
@@ -486,10 +486,10 @@ describe("ImportTutorial", () => {
     await waitFor(() => {
       expect(region.parentElement?.getAttribute("data-placement")).toBe("top");
       const highlight = document.querySelector(".quick-start-guide__highlight") as HTMLElement;
-      expect(Number.parseFloat(highlight.style.top)).toBeCloseTo(354);
-      expect(Number.parseFloat(highlight.style.left)).toBeCloseTo(66);
-      expect(Number.parseFloat(highlight.style.width)).toBeCloseTo(892);
-      expect(Number.parseFloat(highlight.style.height)).toBeCloseTo(372);
+      expect(Number.parseFloat(highlight.style.top)).toBeCloseTo(350);
+      expect(Number.parseFloat(highlight.style.left)).toBeCloseTo(62);
+      expect(Number.parseFloat(highlight.style.width)).toBeCloseTo(900);
+      expect(Number.parseFloat(highlight.style.height)).toBeCloseTo(380);
     });
   });
 

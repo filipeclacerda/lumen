@@ -86,6 +86,21 @@ export function AccountsCards() {
   });
   const invoices = invoicePageData?.items ?? [];
   const {
+    data: allInvoices = [],
+    isLoading: currentInvoicesLoading,
+    isError: currentInvoicesError,
+  } = useQuery({
+    queryKey: ["credit-card-invoices", "all"],
+    queryFn: api.creditCardInvoices,
+  });
+  const currentInvoiceByAccount = new Map<string, CreditCardInvoice>();
+  for (const invoice of allInvoices) {
+    const current = currentInvoiceByAccount.get(invoice.accountId);
+    if (!current || invoice.dueDate > current.dueDate) {
+      currentInvoiceByAccount.set(invoice.accountId, invoice);
+    }
+  }
+  const {
     data: reconciliations = [],
     isLoading: reconciliationsLoading,
     isError: reconciliationsError,
@@ -310,6 +325,13 @@ export function AccountsCards() {
         <div className="account-grid" data-quick-guide="accounts-overview">
           {accounts.map((account) => {
             const balanceSummary = balanceSummaryByAccount.get(account.id);
+            const currentInvoice = currentInvoiceByAccount.get(account.id);
+            const displayedBalance =
+              account.kind === "credit_card"
+                ? currentInvoicesLoading || currentInvoicesError
+                  ? undefined
+                  : (currentInvoice?.totalInCents ?? 0)
+                : (balanceSummary?.realizedBalanceInCents ?? account.balanceInCents);
             return (
               <article
                 id={`account-${account.id}`}
@@ -337,8 +359,8 @@ export function AccountsCards() {
                     )}
                   </div>
                   <div className="account-card-balance">
-                    <small>Saldo atual</small>
-                    <strong>{money(balanceSummary?.realizedBalanceInCents ?? account.balanceInCents)}</strong>
+                    <small>{account.kind === "credit_card" ? "Fatura atual" : "Saldo atual"}</small>
+                    <strong>{displayedBalance === undefined ? "—" : money(displayedBalance)}</strong>
                   </div>
                 </div>
                 {account.kind !== "credit_card" && (
@@ -749,9 +771,12 @@ export function AccountsCards() {
         </article>
       )}
       {matching && (
-        <Modal title="Vincular pagamento" onClose={() => setMatching(undefined)}>
-          <article className="modal wide-modal">
-            <h2>Vincular pagamento de {money(matching.amountInCents)}</h2>
+        <Modal
+          title={`Vincular pagamento de ${money(matching.amountInCents)}`}
+          onClose={() => setMatching(undefined)}
+          wide
+        >
+          <div className="modal-form">
             <p className="muted">
               Sugestões com o mesmo valor e até 10 dias de distância. O vínculo só será criado após sua confirmação.
             </p>
@@ -783,7 +808,7 @@ export function AccountsCards() {
                 Fechar
               </button>
             </div>
-          </article>
+          </div>
         </Modal>
       )}
       {deletingTransaction && (

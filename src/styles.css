@@ -192,6 +192,9 @@ textarea:focus-visible,[role="button"]:focus-visible,[tabindex]:focus-visible{
 .dropzone{background:var(--surface);border-color:var(--border-strong);color:var(--brand)}
 .dropzone p{color:var(--text-muted)}
 .dropzone small{color:var(--text-muted)}
+.dropzone.import-dropzone{padding:0}
+.dropzone.import-dropzone h2{margin-top:0}
+.dropzone.import-dropzone button{margin:0}
 .dropzone{position:relative;transition:border-color var(--motion-duration-base) ease,background var(--motion-duration-base) ease,box-shadow var(--motion-duration-base) ease,transform var(--motion-duration-base) ease}
 .dropzone.dragging{border-color:var(--brand);background:var(--brand-soft);box-shadow:0 16px 42px #155c4717;transform:translateY(-1px)}
 .dropzone.dragging h2{color:var(--brand)}

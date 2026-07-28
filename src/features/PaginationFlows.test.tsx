@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   accounts: vi.fn(),
   accountBalanceSummaries: vi.fn(),
   categories: vi.fn(),
+  creditCardInvoices: vi.fn(),
   creditCardInvoicesPage: vi.fn(),
   cardPaymentReconciliations: vi.fn(),
   listTransactions: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock("../shared/api", () => ({
     accounts: mocks.accounts,
     accountBalanceSummaries: mocks.accountBalanceSummaries,
     categories: mocks.categories,
+    creditCardInvoices: mocks.creditCardInvoices,
     creditCardInvoicesPage: mocks.creditCardInvoicesPage,
     cardPaymentReconciliations: mocks.cardPaymentReconciliations,
     listTransactions: mocks.listTransactions,
@@ -60,6 +62,7 @@ describe("paginated screens", () => {
     mocks.accounts.mockResolvedValue([]);
     mocks.accountBalanceSummaries.mockResolvedValue([]);
     mocks.categories.mockResolvedValue([]);
+    mocks.creditCardInvoices.mockResolvedValue([]);
     mocks.creditCardInvoicesPage.mockResolvedValue({ items: [], totalCount: 0 });
     mocks.cardPaymentReconciliations.mockResolvedValue([]);
     mocks.listTransactions.mockResolvedValue({ items: [], totalCount: 0 });

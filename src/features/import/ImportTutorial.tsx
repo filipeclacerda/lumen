@@ -70,6 +70,8 @@ const phaseLabels: Record<ImportGuidePhase, string> = {
   success: "Conclusão",
 };
 
+const importTutorialTargetPadding = 10;
+
 function lessonsForPhase({
   phase,
   configureKind,
@@ -118,7 +120,7 @@ function lessonsForPhase({
             "Depois do cadastro, confira o vencimento identificado no arquivo.",
           ],
           icon: Settings2,
-          targetPadding: 6,
+          targetPadding: importTutorialTargetPadding,
         },
       ];
     }
@@ -135,7 +137,7 @@ function lessonsForPhase({
                 "Confirme os dois campos antes de abrir a revisão das compras.",
               ],
               icon: Settings2,
-              targetPadding: 6,
+              targetPadding: importTutorialTargetPadding,
               initialPlacement: "left",
             },
           ]
@@ -173,7 +175,7 @@ function lessonsForPhase({
             "Os campos marcados com * são obrigatórios; o perfil pode ser salvo para arquivos futuros com o mesmo layout.",
           ],
           icon: Settings2,
-          targetPadding: 6,
+          targetPadding: importTutorialTargetPadding,
         },
         {
           id: "configure-mapping-sample",
@@ -185,7 +187,7 @@ function lessonsForPhase({
             "Se algo parecer deslocado, volte ao mapeamento antes de liberar a prévia.",
           ],
           icon: FileSearch,
-          targetPadding: 6,
+          targetPadding: importTutorialTargetPadding,
         },
       ];
     }
@@ -200,7 +202,7 @@ function lessonsForPhase({
           "A prévia será aberta somente depois que o destino estiver definido.",
         ],
         icon: Settings2,
-        targetPadding: 6,
+        targetPadding: importTutorialTargetPadding,
       },
     ];
   }
@@ -218,7 +220,7 @@ function lessonsForPhase({
           "A validação final procura duplicidades entre os arquivos e nada é persistido antes da confirmação do lote.",
         ],
         icon: Layers3,
-        targetPadding: 6,
+        targetPadding: importTutorialTargetPadding,
       });
     }
     if (hasPreview) {
@@ -234,7 +236,7 @@ function lessonsForPhase({
             "Nada desta prévia altera seu histórico antes da confirmação.",
           ],
           icon: Tags,
-          targetPadding: 6,
+          targetPadding: importTutorialTargetPadding,
         },
         {
           id: "review-all",
@@ -246,7 +248,7 @@ function lessonsForPhase({
             "Duplicatas exatas ficam identificadas e não são importadas novamente.",
           ],
           icon: FileSearch,
-          targetPadding: 6,
+          targetPadding: importTutorialTargetPadding,
         },
         {
           id: "review-categories",
@@ -262,7 +264,7 @@ function lessonsForPhase({
             "Ao escolher, o próximo grupo entra em foco e você pode voltar à escolha anterior.",
           ],
           icon: Tags,
-          targetPadding: 6,
+          targetPadding: importTutorialTargetPadding,
           initialPlacement: "top",
         },
         {
@@ -282,7 +284,7 @@ function lessonsForPhase({
                 "Se ainda houver categorias pendentes, o Lumen pedirá uma decisão explícita antes de continuar.",
               ],
           icon: ListChecks,
-          targetPadding: 6,
+          targetPadding: importTutorialTargetPadding,
         },
       );
     } else if (batchMode) {
@@ -296,7 +298,7 @@ function lessonsForPhase({
           "Se houver categorias pendentes, o Lumen mostrará uma confirmação específica.",
         ],
         icon: ListChecks,
-        targetPadding: 6,
+        targetPadding: importTutorialTargetPadding,
       });
     }
     return lessons;
@@ -314,7 +316,7 @@ function lessonsForPhase({
           "Importar com pendências salva os lançamentos mesmo assim; eles aparecerão em Transações e na central de Pendências.",
         ],
         icon: ListChecks,
-        targetPadding: 6,
+        targetPadding: importTutorialTargetPadding,
       },
     ];
   }
@@ -443,7 +445,7 @@ export function ImportTutorial({
     <GuideCoachmark
       active
       target={lesson.target}
-      targetPadding={lesson.targetPadding}
+      targetPadding={lesson.targetPadding ?? importTutorialTargetPadding}
       initialPlacement={lesson.initialPlacement}
       className="import-tutorial"
       role="region"

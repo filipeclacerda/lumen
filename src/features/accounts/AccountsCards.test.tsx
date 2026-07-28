@@ -11,7 +11,9 @@ const mocks = vi.hoisted(() => ({
   accounts: vi.fn(),
   accountBalanceSummaries: vi.fn(),
   cardPaymentReconciliations: vi.fn(),
+  creditCardInvoices: vi.fn(),
   creditCardInvoicesPage: vi.fn(),
+  invoicePaymentMatches: vi.fn(),
   reconciliationPreview: vi.fn(),
   recordBalanceCheckpoint: vi.fn(),
   reconcileCardPayment: vi.fn(),
@@ -23,7 +25,9 @@ vi.mock("../../shared/api", () => ({
     accounts: mocks.accounts,
     accountBalanceSummaries: mocks.accountBalanceSummaries,
     cardPaymentReconciliations: mocks.cardPaymentReconciliations,
+    creditCardInvoices: mocks.creditCardInvoices,
     creditCardInvoicesPage: mocks.creditCardInvoicesPage,
+    invoicePaymentMatches: mocks.invoicePaymentMatches,
     reconciliationPreview: mocks.reconciliationPreview,
     recordBalanceCheckpoint: mocks.recordBalanceCheckpoint,
     reconcileCardPayment: mocks.reconcileCardPayment,
@@ -93,6 +97,7 @@ describe("AccountsCards card payment reconciliations", () => {
     vi.clearAllMocks();
     mocks.accounts.mockResolvedValue([]);
     mocks.accountBalanceSummaries.mockResolvedValue([]);
+    mocks.creditCardInvoices.mockResolvedValue([]);
     mocks.creditCardInvoicesPage.mockResolvedValue({ items: [], totalCount: 0 });
     mocks.cardPaymentReconciliations.mockResolvedValue([reconciliation()]);
     mocks.reconcileCardPayment.mockResolvedValue({
@@ -180,6 +185,58 @@ describe("AccountsCards card payment reconciliations", () => {
   });
 });
 
+describe("AccountsCards invoice payment modal", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.accounts.mockResolvedValue([]);
+    mocks.accountBalanceSummaries.mockResolvedValue([]);
+    mocks.cardPaymentReconciliations.mockResolvedValue([]);
+    mocks.creditCardInvoices.mockResolvedValue([
+      {
+        id: "invoice-1",
+        accountId: "card-1",
+        accountName: "XP",
+        dueDate: "2026-08-10",
+        purchasesInCents: 143_076,
+        creditsInCents: 0,
+        paymentsInCents: 0,
+        totalInCents: 143_076,
+        status: "open",
+      },
+    ]);
+    mocks.creditCardInvoicesPage.mockResolvedValue({
+      items: [
+        {
+          id: "invoice-1",
+          accountId: "card-1",
+          accountName: "XP",
+          dueDate: "2026-08-10",
+          purchasesInCents: 143_076,
+          creditsInCents: 0,
+          paymentsInCents: 0,
+          totalInCents: 143_076,
+          status: "open",
+        },
+      ],
+      totalCount: 1,
+    });
+    mocks.invoicePaymentMatches.mockResolvedValue([]);
+  });
+
+  afterEach(cleanup);
+
+  it("usa um único diálogo largo e mantém o conteúdo dentro do modal", async () => {
+    renderAccounts();
+    fireEvent.click(await screen.findByRole("button", { name: "Vincular pagamento à fatura XP" }));
+
+    const dialog = await screen.findByRole("dialog", { name: /Vincular pagamento de/ });
+    expect(dialog.classList.contains("wide-modal")).toBe(true);
+    expect(dialog.querySelector(".modal")).toBeNull();
+    expect(dialog.querySelector(".modal-form")).toBeTruthy();
+    expect(dialog.textContent).toContain("Nenhum débito bancário compatível foi encontrado.");
+  });
+});
+
 describe("AccountsCards balance reconciliation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -196,6 +253,19 @@ describe("AccountsCards balance reconciliation", () => {
         minimumBalanceInCents: 100_000,
         scheduledCount: 0,
         needsReconciliation: true,
+      },
+    ]);
+    mocks.creditCardInvoices.mockResolvedValue([
+      {
+        id: "invoice-1",
+        accountId: "card-1",
+        accountName: "Cartão principal",
+        dueDate: "2026-08-10",
+        purchasesInCents: 143_076,
+        creditsInCents: 0,
+        paymentsInCents: 351_976,
+        totalInCents: 143_076,
+        status: "paid",
       },
     ]);
     mocks.creditCardInvoicesPage.mockResolvedValue({ items: [], totalCount: 0 });
@@ -293,6 +363,9 @@ describe("AccountsCards balance reconciliation", () => {
     expect(cardCard?.querySelector(".account-card-header")).toBeTruthy();
     expect(cardCard?.querySelector(".account-card-support")).toBeNull();
     expect(cardCard?.querySelector(".account-card-footer")).toBeTruthy();
+    expect(cardCard?.querySelector(".account-card-balance")?.textContent).toContain("Fatura atual");
+    expect(cardCard?.querySelector(".account-card-balance")?.textContent).toContain("R$ 1.430,76");
+    expect(cardCard?.querySelector(".account-card-balance")?.textContent).not.toContain("R$ 200,00");
     expect(cardCard?.querySelector(".account-balance-button")).toBeNull();
     expect(screen.getByRole("button", { name: "Renomear Cartão principal" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Arquivar Cartão principal" })).toBeTruthy();
