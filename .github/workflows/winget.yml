@@ -1,0 +1,238 @@
+name: Publish WinGet catalog
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag de uma release estavel publicada (por exemplo, v0.9.0)"
+        required: true
+        type: string
+      dry_run:
+        description: "Validar e gerar manifests sem publicar em repositorios externos"
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  group: winget-catalog-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  WINGET_PACKAGE_ID: Lacerda.Lumen
+
+jobs:
+  release-metadata:
+    name: Validate stable release and MSI
+    runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      release_url: ${{ steps.release.outputs.release_url }}
+      msi_url: ${{ steps.release.outputs.msi_url }}
+      publish: ${{ steps.release.outputs.publish }}
+    steps:
+      - name: Resolve and validate release
+        id: release
+        uses: actions/github-script@v7
+        env:
+          REQUESTED_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const tag = process.env.REQUESTED_TAG?.trim();
+            if (!tag || !/^v\d+\.\d+\.\d+$/.test(tag)) {
+              throw new Error(`Tag SemVer estavel invalida: ${tag || '<vazia>'}`);
+            }
+
+            const { data: release } = await github.rest.repos.getReleaseByTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag,
+            });
+
+            if (release.tag_name !== tag) throw new Error(`A release retornou a tag inesperada ${release.tag_name}.`);
+            if (release.draft) throw new Error('A release precisa estar publicada, nao em draft.');
+            if (release.prerelease) throw new Error('O WinGet recebe apenas releases estaveis.');
+            if (!release.published_at) throw new Error('A release nao possui data de publicacao.');
+
+            const version = tag.slice(1);
+            const expectedAssets = {
+              msi_url: `Lumen-v${version}-windows-x64.msi`,
+            };
+
+            for (const [output, assetName] of Object.entries(expectedAssets)) {
+              const matches = release.assets.filter((asset) => asset.name === assetName);
+              if (matches.length !== 1) {
+                throw new Error(`Esperado exatamente um asset ${assetName}; encontrados: ${matches.length}.`);
+              }
+              if (!matches[0].browser_download_url.startsWith('https://github.com/')) {
+                throw new Error(`URL inesperada para ${assetName}.`);
+              }
+              core.setOutput(output, matches[0].browser_download_url);
+            }
+
+            const publish = process.env.DRY_RUN !== 'true';
+            core.setOutput('tag', tag);
+            core.setOutput('version', version);
+            core.setOutput('release_url', release.html_url);
+            core.setOutput('publish', publish ? 'true' : 'false');
+
+            await core.summary
+              .addHeading(`WinGet do Lumen ${tag}`)
+              .addRaw(`Modo: ${publish ? 'publicacao' : 'dry-run'}\n`)
+              .addRaw(`Release: ${release.html_url}\n`)
+              .addRaw(`Publicada em: ${release.published_at}\n`)
+              .write();
+
+  winget:
+    name: WinGet (MSI x64)
+    needs: release-metadata
+    runs-on: windows-latest
+    env:
+      PACKAGE_VERSION: ${{ needs.release-metadata.outputs.version }}
+      RELEASE_TAG: ${{ needs.release-metadata.outputs.tag }}
+      RELEASE_URL: ${{ needs.release-metadata.outputs.release_url }}
+      MSI_URL: ${{ needs.release-metadata.outputs.msi_url }}
+    steps:
+      - name: Download and validate MSI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Invoke-WebRequest -Uri $env:MSI_URL -OutFile lumen.msi
+
+          $expectedMagic = [byte[]](0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1)
+          $actualMagic = [byte[]]::new($expectedMagic.Length)
+          $stream = [System.IO.File]::OpenRead((Resolve-Path lumen.msi))
+          try {
+            if ($stream.Read($actualMagic, 0, $actualMagic.Length) -ne $actualMagic.Length) {
+              throw "O MSI esta truncado."
+            }
+          } finally {
+            $stream.Dispose()
+          }
+
+          if ([Convert]::ToHexString($actualMagic) -ne [Convert]::ToHexString($expectedMagic)) {
+            throw "O asset nao possui o cabecalho OLE esperado de um MSI."
+          }
+
+          $hash = (Get-FileHash lumen.msi -Algorithm SHA256).Hash.ToLowerInvariant()
+          "MSI SHA-256: $hash"
+
+      - name: Check existing manifest or pull request
+        id: upstream
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $headers = @{
+            Accept = "application/vnd.github+json"
+            Authorization = "Bearer $env:GH_TOKEN"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          $manifestPath = "manifests/l/Lacerda/Lumen/$env:PACKAGE_VERSION"
+          $manifestUri = "https://api.github.com/repos/microsoft/winget-pkgs/contents/$manifestPath"
+          $manifest = Invoke-WebRequest -Uri $manifestUri -Headers $headers -SkipHttpErrorCheck
+
+          if ($manifest.StatusCode -eq 200) {
+            "skip=true" >> $env:GITHUB_OUTPUT
+            "reason=O manifesto $env:WINGET_PACKAGE_ID $env:PACKAGE_VERSION ja existe no winget-pkgs." >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+          if ($manifest.StatusCode -ne 404) {
+            throw "Falha ao consultar winget-pkgs: HTTP $($manifest.StatusCode)."
+          }
+
+          $query = [Uri]::EscapeDataString(
+            "repo:microsoft/winget-pkgs is:pr is:open in:title `"$env:WINGET_PACKAGE_ID`" `"$env:PACKAGE_VERSION`""
+          )
+          $search = Invoke-RestMethod -Uri "https://api.github.com/search/issues?q=$query" -Headers $headers
+          if ($search.total_count -gt 0) {
+            "skip=true" >> $env:GITHUB_OUTPUT
+            "reason=Ja existe PR aberto: $($search.items[0].html_url)" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+
+          "skip=false" >> $env:GITHUB_OUTPUT
+          "reason=Nenhum manifesto ou PR aberto para esta versao." >> $env:GITHUB_OUTPUT
+
+      - name: Report idempotent skip
+        if: steps.upstream.outputs.skip == 'true'
+        shell: pwsh
+        env:
+          SKIP_REASON: ${{ steps.upstream.outputs.reason }}
+        run: |
+          "WinGet: $env:SKIP_REASON"
+          "### WinGet`n$env:SKIP_REASON" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Setup .NET for WingetCreate
+        if: steps.upstream.outputs.skip != 'true'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Download and verify official WingetCreate
+        if: steps.upstream.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Invoke-WebRequest -Uri "https://aka.ms/wingetcreate/latest" -OutFile wingetcreate.exe
+          $signature = Get-AuthenticodeSignature .\wingetcreate.exe
+          if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
+            throw "Assinatura Authenticode invalida no WingetCreate: $($signature.StatusMessage)"
+          }
+          if ($signature.SignerCertificate.Subject -notmatch "(^|,\s*)O=Microsoft Corporation(,|$)") {
+            throw "O WingetCreate nao foi assinado pela Microsoft Corporation."
+          }
+          .\wingetcreate.exe --version
+
+      - name: Generate WinGet manifest
+        if: steps.upstream.outputs.skip != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          .\wingetcreate.exe update $env:WINGET_PACKAGE_ID `
+            --urls "$env:MSI_URL|x64" `
+            --version $env:PACKAGE_VERSION `
+            --release-notes-url $env:RELEASE_URL `
+            --out winget-manifests
+          if ($LASTEXITCODE -ne 0) {
+            throw "WingetCreate nao conseguiu gerar o manifesto."
+          }
+
+      - name: Upload generated WinGet manifest
+        if: steps.upstream.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: winget-manifest-${{ needs.release-metadata.outputs.tag }}
+          path: winget-manifests
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Submit WinGet pull request
+        if: needs.release-metadata.outputs.publish == 'true' && steps.upstream.outputs.skip != 'true'
+        shell: pwsh
+        env:
+          WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_CREATE_GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ([string]::IsNullOrWhiteSpace($env:WINGET_CREATE_GITHUB_TOKEN)) {
+            throw "Configure o secret WINGET_CREATE_GITHUB_TOKEN antes da publicacao."
+          }
+
+          .\wingetcreate.exe update $env:WINGET_PACKAGE_ID `
+            --urls "$env:MSI_URL|x64" `
+            --version $env:PACKAGE_VERSION `
+            --release-notes-url $env:RELEASE_URL `
+            --prtitle "Update: $env:WINGET_PACKAGE_ID version $env:PACKAGE_VERSION" `
+            --submit `
+            --no-open
+          if ($LASTEXITCODE -ne 0) {
+            throw "WingetCreate nao conseguiu submeter o manifesto."
+          }

@@ -127,6 +127,9 @@ gh attestation verify CAMINHO_DO_ARTEFATO --repo filipeclacerda/lumen
 
 A verificação exige o [GitHub CLI](https://cli.github.com/). Releases anteriores à adoção das attestations podem não possuir esse registro. A attestation comprova a origem do build, mas não substitui a assinatura do updater nem garante, isoladamente, que o artefato seja seguro.
 
+O procedimento de publicação pós-release no WinGet está documentado em
+[Publicação no WinGet](docs/winget-publishing.md).
+
 ### Nota importante sobre criptografia
 
 O banco local ainda não é criptografado pela própria aplicação. Até que a criptografia nativa seja implementada, recomenda-se proteger o computador com recursos do sistema operacional, como senha forte, disco criptografado e backups guardados em local seguro.
