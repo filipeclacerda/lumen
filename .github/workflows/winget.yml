@@ -190,7 +190,6 @@ jobs:
           if ($signature.SignerCertificate.Subject -notmatch "(^|,\s*)O=Microsoft Corporation(,|$)") {
             throw "O WingetCreate nao foi assinado pela Microsoft Corporation."
           }
-          .\wingetcreate.exe version
 
       - name: Generate WinGet manifest
         if: steps.upstream.outputs.skip != 'true'
