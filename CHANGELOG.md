@@ -5,6 +5,66 @@ Todas as mudanças relevantes deste projeto são documentadas neste arquivo.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o
 projeto adota o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.9.1] - 2026-07-30
+
+Esta versão torna a importação e a orientação dentro do Lumen mais completas,
+reforça a integridade de recorrências e exportações e prepara a distribuição
+automática pelo WinGet.
+
+### Adicionado
+
+- **Importação de vários arquivos em lote**, com revisão individual de extratos
+  e faturas, detecção de duplicatas entre arquivos e confirmação conjunta em
+  uma única transação atômica.
+- **Aprendizado temporário de categorias durante o lote**, que reaproveita as
+  escolhas confirmadas em arquivos seguintes sem pré-selecionar ou persistir
+  regras antes da confirmação.
+- **Guia completo do Lumen por lições**, cobrindo as principais áreas do
+  aplicativo e preservando o progresso dos guias das versões anteriores.
+- Novas categorias de sistema **Contas** e **Outras Despesas**, acompanhadas de
+  vocabulário para despesas recorrentes, doações e cobranças diversas.
+
+### Alterado
+
+- A importação ganhou seleção múltipla e arrastar e soltar, fila e progresso do
+  lote, revisão assistida por grupos e uma apresentação mais clara dos formatos,
+  da privacidade local e das ações de confirmação.
+- Sugestões de categoria passam a reconhecer abreviações, truncamentos e erros
+  simples de digitação quando a correspondência é segura, mantendo bloqueios
+  para termos genéricos ou ambíguos.
+- Cartões exibem a **fatura atual** no lugar de um saldo genérico, e a janela de
+  vínculo de pagamento usa um único diálogo acessível.
+- Hierarquia de botões, foco do guia, atalho para o conteúdo principal e
+  feedback de operações assíncronas foram refinados em várias telas.
+
+### Corrigido
+
+- O cadastro de recorrências impede envios duplicados enquanto salva, informa
+  falhas sem travar uma nova tentativa e não gera nem reativa recorrências
+  vinculadas a contas arquivadas.
+- Falhas na sincronização automática de recorrências agora são informadas sem
+  deixar rejeições assíncronas sem tratamento.
+- Exportações OFX e PDF preservam valores extremos em centavos sem conversão
+  para ponto flutuante nem estouro nos totais.
+
+### Testes e qualidade
+
+- Ampliada a cobertura de importação em lote, rollback atômico, duplicatas entre
+  arquivos, aprendizado de categorias, recorrências, faturas e migração do
+  progresso dos guias.
+- A migration `0029` adiciona as novas categorias de sistema sem alterar o
+  histórico distribuído e possui teste de atualização a partir do schema
+  anterior.
+
+### Projeto
+
+- Novo fluxo pós-release valida o MSI publicado, gera o manifesto do
+  `Lacerda.Lumen` e permite submeter a atualização ao catálogo do WinGet, com
+  modo manual de validação sem publicação.
+- O CI passa a validar pull requests para `main` com permissões somente de
+  leitura; dependências não utilizadas foram removidas e o React Router foi
+  atualizado para `7.18.1`.
+
 ## [0.9.0] - 2026-07-25
 
 Atualização ampla de confiabilidade e organização financeira, com novos fluxos
@@ -640,3 +700,4 @@ erros, com cadastro rápido de cartão sem sair do fluxo.
 [0.4.0]: https://github.com/filipeclacerda/lumen/compare/v0.3.7...v0.4.0
 [0.7.0]: https://github.com/filipeclacerda/lumen/compare/v0.6.0...v0.7.0
 [0.9.0]: https://github.com/filipeclacerda/lumen/compare/v0.8.1...v0.9.0
+[0.9.1]: https://github.com/filipeclacerda/lumen/compare/v0.9.0...v0.9.1
