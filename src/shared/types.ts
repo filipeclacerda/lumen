@@ -307,6 +307,7 @@ export type ImportFileInspection = {
   matchedProfiles: CsvMappingProfile[];
   suggestedSourceKind?: ImportSourceKind;
 };
+export type ImportFileIdentity = { path: string; contentHash: string };
 export type TemplateKind = "bank" | "credit_card";
 export type ImportPreview = { sessionId: string; fileName: string; candidates: ImportCandidate[] };
 export type CreditCardLineKind = "purchase" | "refund" | "payment";
@@ -343,7 +344,7 @@ export type ImportBatchValidationIssue = {
   conflictingFileId?: string;
   conflictingSourceRow?: number;
 };
-export type ImportBatchValidation = { issues: ImportBatchValidationIssue[] };
+export type ImportBatchValidation = { issues: ImportBatchValidationIssue[]; skippedCount: number };
 export type ImportBatchFileCommitResult = {
   fileId: string;
   kind: ImportBatchSessionKind;
@@ -353,7 +354,11 @@ export type ImportBatchFileCommitResult = {
   invoiceId?: string;
   paymentTransactionIds: string[];
 };
-export type ImportBatchCommitResult = { totalCount: number; files: ImportBatchFileCommitResult[] };
+export type ImportBatchCommitResult = {
+  totalCount: number;
+  skippedCount: number;
+  files: ImportBatchFileCommitResult[];
+};
 export type CreditCardInvoice = {
   id: string;
   accountId: string;

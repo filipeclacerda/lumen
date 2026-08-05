@@ -16,6 +16,8 @@ export type BatchCategorySuggestion = Omit<ImportCandidate["categorySuggestions"
   source: ImportCandidate["categorySuggestions"][number]["source"] | "batch_choice";
 };
 
+export type BatchCategoryAssignment = { categoryId: string; sourceRows: number[] };
+
 function decisionKey(sessionId: string, sourceRow: number) {
   return `${sessionId}:${sourceRow}`;
 }
@@ -101,6 +103,32 @@ function categoryCompatible(candidate: ImportCandidate, category: Category, cred
     return candidate.amountInCents < 0 || isRefund(candidate);
   }
   return false;
+}
+
+export function batchCategoryAssignments(
+  candidates: ImportCandidate[],
+  choices: BatchCategoryChoice[],
+  categories: Category[],
+  creditCard: boolean,
+): BatchCategoryAssignment[] {
+  const assignments = new Map<string, number[]>();
+  for (const candidate of candidates) {
+    if (
+      candidate.isPix ||
+      !candidate.included ||
+      candidate.duplicateStatus === "exact" ||
+      candidate.suggestedCategoryId
+    )
+      continue;
+    const learned = batchCategorySuggestions(candidate, choices, categories, creditCard).find(
+      (suggestion) => suggestion.source === "batch_choice",
+    );
+    if (!learned) continue;
+    const rows = assignments.get(learned.categoryId) ?? [];
+    rows.push(candidate.sourceRow);
+    assignments.set(learned.categoryId, rows);
+  }
+  return [...assignments].map(([categoryId, sourceRows]) => ({ categoryId, sourceRows }));
 }
 
 export function batchCategorySuggestions(

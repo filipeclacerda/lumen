@@ -560,6 +560,7 @@ describe("ImportReviewGroups", () => {
     const pix = candidate({
       sourceRow: 12,
       merchantKey: "JOAO SILVA",
+      description: "PIX RECEBIDO JOAO SILVA PEDIDO 1700",
       isPix: true,
       categorySuggestions: [
         {
@@ -575,8 +576,22 @@ describe("ImportReviewGroups", () => {
     render(<ImportReviewGroups groups={groupPendingCandidates([pix])} categories={categories} onApply={onApply} />);
 
     expect(screen.getByText("LANÇAMENTO PIX")).toBeTruthy();
+    const title = screen.getByRole("heading", { name: "JOAO SILVA" });
+    expect(title.nextElementSibling?.textContent).toBe("PIX RECEBIDO JOAO SILVA PEDIDO 1700");
+    expect(title.nextElementSibling?.classList.contains("import-review-pix-description")).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: /Aplicar Alimentacao/ }));
     expect(onApply).toHaveBeenCalledWith([12], "food", pix);
+  });
+
+  it("nao promove a descricao para o cabecalho de lancamentos que nao sao PIX", () => {
+    const item = candidate({
+      merchantKey: "MERCADO BAIRRO",
+      description: "COMPRA CARTAO MERCADO BAIRRO TERMINAL 04",
+    });
+
+    render(<ImportReviewGroups groups={groupPendingCandidates([item])} categories={categories} onApply={vi.fn()} />);
+
+    expect(document.querySelector(".import-review-pix-description")).toBeNull();
   });
 
   it("orienta PIX para conta propria sem decidir entre transferencia e pagamento de fatura", () => {

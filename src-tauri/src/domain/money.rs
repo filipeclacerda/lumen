@@ -24,6 +24,13 @@ pub fn parse_money(value: &str, separator: DecimalSeparator) -> Result<i64, AppE
     {
         return invalid();
     }
+    if input.starts_with("-R$")
+        || input.starts_with("-r$")
+        || input.starts_with("+R$")
+        || input.starts_with("+r$")
+    {
+        input.replace_range(1..3, "");
+    }
     if input.starts_with("R$") || input.starts_with("r$") {
         input.drain(..2);
     } else if input.contains("R$") || input.contains("r$") {
@@ -144,6 +151,8 @@ mod tests {
     fn parses_brazilian_money() {
         assert_eq!(parse_brl("R$ 1.234,56").unwrap(), 123456);
         assert_eq!(parse_brl("-42,10").unwrap(), -4210);
+        assert_eq!(parse_brl("-R$ 1.234,56").unwrap(), -123456);
+        assert_eq!(parse_brl("+R$ 42,10").unwrap(), 4210);
     }
     #[test]
     fn parses_integer_without_float_and_rejects_special_values() {

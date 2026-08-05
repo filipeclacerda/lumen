@@ -33,6 +33,7 @@ import { Select } from "../../shared/ui/Select";
 import { Tabs } from "../../shared/ui/Tabs";
 import { ImportTutorial, shouldAutoStartImportGuide } from "./ImportTutorial";
 import {
+  batchCategoryAssignments,
   batchCategorySuggestions,
   removeBatchCategoryChoicesForSession,
   syncBatchCategoryChoiceCandidate,
@@ -41,6 +42,7 @@ import {
   type BatchCategorySuggestion,
 } from "./batchCategoryLearning";
 import { useQuickStartGuide, type ImportGuidePhase } from "../../shared/quickStartGuide";
+import { useImportPageMemoryState } from "./importPageMemory";
 import {
   money,
   centsToInput,
@@ -376,30 +378,47 @@ export function ImportPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const client = useQueryClient();
-  const [bankPreview, setBankPreview] = useState<ImportPreview>();
-  const [cardPreview, setCardPreview] = useState<CreditCardImportPreview>();
-  const [pendingBankPath, setPendingBankPath] = useState("");
-  const [bankAccountId, setBankAccountId] = useState("");
-  const [queuedFiles, setQueuedFiles] = useState<QueuedImportFile[]>([]);
-  const [preparedFiles, setPreparedFiles] = useState<PreparedImportFile[]>([]);
-  const [currentBatchFile, setCurrentBatchFile] = useState<QueuedImportFile>();
-  const [batchMode, setBatchMode] = useState(false);
-  const [batchIssues, setBatchIssues] = useState<ImportBatchValidationIssue[]>([]);
+  const [bankPreview, setBankPreview] = useImportPageMemoryState<ImportPreview | undefined>("bankPreview", undefined);
+  const [cardPreview, setCardPreview] = useImportPageMemoryState<CreditCardImportPreview | undefined>(
+    "cardPreview",
+    undefined,
+  );
+  const [pendingBankPath, setPendingBankPath] = useImportPageMemoryState("pendingBankPath", "");
+  const [bankAccountId, setBankAccountId] = useImportPageMemoryState("bankAccountId", "");
+  const [queuedFiles, setQueuedFiles] = useImportPageMemoryState<QueuedImportFile[]>("queuedFiles", []);
+  const [preparedFiles, setPreparedFiles] = useImportPageMemoryState<PreparedImportFile[]>("preparedFiles", []);
+  const [currentBatchFile, setCurrentBatchFile] = useImportPageMemoryState<QueuedImportFile | undefined>(
+    "currentBatchFile",
+    undefined,
+  );
+  const [batchMode, setBatchMode] = useImportPageMemoryState("batchMode", false);
+  const [batchIssues, setBatchIssues] = useImportPageMemoryState<ImportBatchValidationIssue[]>("batchIssues", []);
   const [batchCardCommitSummaries, setBatchCardCommitSummaries] = useState<CreditCardImportCommitResult[]>([]);
-  const [batchCategoryChoices, setBatchCategoryChoices] = useState<BatchCategoryChoice[]>([]);
-  const [pendingMappingProfiles, setPendingMappingProfiles] = useState<CsvMappingDraft[]>([]);
+  const [batchCategoryChoices, setBatchCategoryChoices] = useImportPageMemoryState<BatchCategoryChoice[]>(
+    "batchCategoryChoices",
+    [],
+  );
+  const [groupCategoriesAcrossBatch, setGroupCategoriesAcrossBatch] = useImportPageMemoryState(
+    "groupCategoriesAcrossBatch",
+    true,
+  );
+  const [pendingMappingProfiles, setPendingMappingProfiles] = useImportPageMemoryState<CsvMappingDraft[]>(
+    "pendingMappingProfiles",
+    [],
+  );
   const [learning, setLearning] = useState<LearningDraft>();
   const [lastChoice, setLastChoice] = useState<LearningDraft>();
   const [lastReviewChoice, setLastReviewChoice] = useState<ReviewUndoChoice>();
-  const [previewMode, setPreviewMode] = useState<"review" | "all">("review");
+  const [previewMode, setPreviewMode] = useImportPageMemoryState<"review" | "all">("previewMode", "review");
   const [pendingCommit, setPendingCommit] = useState<"bank" | "card" | "batch">();
-  const [mappingState, setMappingState] = useState<MappingState>();
-  const [mappingError, setMappingError] = useState("");
-  const [pendingCardPath, setPendingCardPath] = useState("");
-  const [cardAccountId, setCardAccountId] = useState("");
+  const automaticBatchAssignments = useRef(new Set<string>());
+  const [mappingState, setMappingState] = useImportPageMemoryState<MappingState | undefined>("mappingState", undefined);
+  const [mappingError, setMappingError] = useImportPageMemoryState("mappingError", "");
+  const [pendingCardPath, setPendingCardPath] = useImportPageMemoryState("pendingCardPath", "");
+  const [cardAccountId, setCardAccountId] = useImportPageMemoryState("cardAccountId", "");
   const [newCardName, setNewCardName] = useState("");
   const [creatingCard, setCreatingCard] = useState(false);
-  const [cardDueDate, setCardDueDate] = useState("");
+  const [cardDueDate, setCardDueDate] = useImportPageMemoryState("cardDueDate", "");
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [isReadingFile, setIsReadingFile] = useState(false);
   const [transferCandidates, setTransferCandidates] = useState<TransferCandidate[]>([]);
@@ -419,7 +438,7 @@ export function ImportPage() {
       const match = pendingCardPath.match(/\d{4}-\d{2}-\d{2}/);
       if (match) setCardDueDate(match[0]);
     }
-  }, [pendingCardPath]);
+  }, [pendingCardPath, setCardDueDate]);
 
   const [message, setMessage] = useState("");
   const [showTroubleMenu, setShowTroubleMenu] = useState(false);
@@ -427,6 +446,7 @@ export function ImportPage() {
   const troubleMenuRef = useRef<HTMLDivElement>(null);
   const troubleMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const chooseFileRef = useRef<HTMLButtonElement>(null);
+  const skipRestoredMappedPreview = useRef(Boolean(mappingState && (bankPreview || cardPreview)));
 
   useEffect(() => {
     if (searchParams.get("action") !== "choose") return;
@@ -506,6 +526,65 @@ export function ImportPage() {
   );
 
   useEffect(() => {
+    if (!batchMode || !groupCategoriesAcrossBatch || batchCategoryChoices.length === 0) return;
+    const preview = bankPreview ?? cardPreview;
+    if (!preview) return;
+    const creditCard = Boolean(cardPreview);
+    const candidates = creditCard ? creditCardCategorizationCandidates(cardPreview) : (bankPreview?.candidates ?? []);
+    const assignments = batchCategoryAssignments(candidates, batchCategoryChoices, categories, creditCard).filter(
+      (assignment) => {
+        const key = `${preview.sessionId}:${assignment.categoryId}:${assignment.sourceRows.join(",")}`;
+        if (automaticBatchAssignments.current.has(key)) return false;
+        automaticBatchAssignments.current.add(key);
+        return true;
+      },
+    );
+    if (assignments.length === 0) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        if (creditCard) {
+          let updated = cardPreview!;
+          for (const assignment of assignments) {
+            updated = await api.updateCreditCardImportCategories(
+              updated.sessionId,
+              assignment.sourceRows,
+              assignment.categoryId,
+            );
+          }
+          if (!cancelled) setCardPreview(updated);
+        } else {
+          let updated = bankPreview!;
+          for (const assignment of assignments) {
+            updated = await api.setImportCategories(updated.sessionId, assignment.sourceRows, assignment.categoryId);
+          }
+          if (!cancelled) setBankPreview(updated);
+        }
+      } catch (error: any) {
+        for (const assignment of assignments) {
+          automaticBatchAssignments.current.delete(
+            `${preview.sessionId}:${assignment.categoryId}:${assignment.sourceRows.join(",")}`,
+          );
+        }
+        if (!cancelled) setMessage(`Não foi possível agrupar as categorias do lote: ${error?.message || error}`);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    bankPreview,
+    batchCategoryChoices,
+    batchMode,
+    cardPreview,
+    categories,
+    groupCategoriesAcrossBatch,
+    setBankPreview,
+    setCardPreview,
+  ]);
+
+  useEffect(() => {
     if (!bootstrap || tutorialAutoStartAttempted.current) return;
     if (
       !shouldAutoStartImportGuide({
@@ -567,13 +646,13 @@ export function ImportPage() {
     ) {
       setPreviewMode("review");
     }
-  }, [activeGuide, importGuideProgress?.lessonId, importGuideProgress?.phase]);
+  }, [activeGuide, importGuideProgress?.lessonId, importGuideProgress?.phase, setPreviewMode]);
 
   useEffect(() => {
     setPreviewMode("review");
     setLastChoice(undefined);
     setLastReviewChoice(undefined);
-  }, [bankPreview?.sessionId, cardPreview?.sessionId]);
+  }, [bankPreview?.sessionId, cardPreview?.sessionId, setPreviewMode]);
 
   // Keep the selected card valid: a custom select with a value that matches no
   // option shows the first option visually but leaves cardAccountId empty.
@@ -584,15 +663,16 @@ export function ImportPage() {
     if (!cardList.some((card) => card.id === cardAccountId)) {
       setCardAccountId(cardList[0].id);
     }
-  }, [accounts, cardAccountId]);
+  }, [accounts, cardAccountId, setCardAccountId]);
 
   useEffect(() => {
     const available = accounts.filter((account) => account.kind !== "credit_card");
     if (available.length === 1 && bankAccountId !== available[0].id) setBankAccountId(available[0].id);
-  }, [accounts, bankAccountId]);
+  }, [accounts, bankAccountId, setBankAccountId]);
 
   useEffect(() => {
     if (!mappingState) return;
+    if (accountsLoading) return;
     const draft = mappingState.draft;
     // A bank import needs a bank account; a card import needs a destination card.
     const accountReady = draft.sourceKind === "bank" ? Boolean(bankAccount) : Boolean(cardAccountId);
@@ -600,6 +680,10 @@ export function ImportPage() {
       setBankPreview(undefined);
       setCardPreview(undefined);
       setMappingError("");
+      return;
+    }
+    if (skipRestoredMappedPreview.current) {
+      skipRestoredMappedPreview.current = false;
       return;
     }
     const timer = setTimeout(async () => {
@@ -617,7 +701,7 @@ export function ImportPage() {
       }
     }, 250);
     return () => clearTimeout(timer);
-  }, [mappingState, bankAccount, cardAccountId]);
+  }, [accountsLoading, mappingState, bankAccount, cardAccountId, setBankPreview, setCardPreview, setMappingError]);
 
   const resetFlow = useCallback(() => {
     setBankPreview(undefined);
@@ -631,7 +715,15 @@ export function ImportPage() {
     setLastReviewChoice(undefined);
     setPendingCommit(undefined);
     setPreviewMode("review");
-  }, []);
+  }, [
+    setBankPreview,
+    setCardPreview,
+    setMappingError,
+    setMappingState,
+    setPendingBankPath,
+    setPendingCardPath,
+    setPreviewMode,
+  ]);
 
   const processImportPath = useCallback(
     async (path: string) => {
@@ -682,31 +774,80 @@ export function ImportPage() {
         setIsReadingFile(false);
       }
     },
-    [bankAccountId, bankAccounts.length, cards.length, firstCardId, isReadingFile, resetFlow],
+    [
+      bankAccountId,
+      bankAccounts.length,
+      cards.length,
+      firstCardId,
+      isReadingFile,
+      resetFlow,
+      setBankAccountId,
+      setBankPreview,
+      setCardAccountId,
+      setMappingState,
+      setPendingBankPath,
+      setPendingCardPath,
+    ],
   );
 
   const startImportPaths = useCallback(
     async (paths: string[]) => {
       const uniquePaths = [...new Set(paths.filter(Boolean))];
       if (uniquePaths.length === 0) return;
+      let selectedPaths = uniquePaths;
+      let repeatedFileCount = paths.filter(Boolean).length - uniquePaths.length;
+      try {
+        const identities = await api.identifyImportFiles(uniquePaths);
+        const seenHashes = new Set<string>();
+        selectedPaths = identities.flatMap((identity) => {
+          if (seenHashes.has(identity.contentHash)) {
+            repeatedFileCount += 1;
+            return [];
+          }
+          seenHashes.add(identity.contentHash);
+          return [identity.path];
+        });
+      } catch (error: any) {
+        setMessage(`Não foi possível validar os arquivos selecionados: ${error?.message || error}`);
+        return;
+      }
+      if (selectedPaths.length === 0) return;
       resetFlow();
       setPreparedFiles([]);
       setBatchIssues([]);
       setBatchCategoryChoices([]);
+      setGroupCategoriesAcrossBatch(true);
+      automaticBatchAssignments.current.clear();
       setPendingMappingProfiles([]);
       setBatchCardCommitSummaries([]);
-      setBatchMode(uniquePaths.length > 1);
-      const files = uniquePaths.map((path, index) => ({
+      setBatchMode(selectedPaths.length > 1);
+      const files = selectedPaths.map((path, index) => ({
         id: `${Date.now()}-${index}`,
         path,
         label: path.split(/[\\/]/).pop() || "arquivo",
       }));
       const [first, ...remaining] = files;
-      setCurrentBatchFile(uniquePaths.length > 1 ? first : undefined);
+      setCurrentBatchFile(selectedPaths.length > 1 ? first : undefined);
       setQueuedFiles(remaining);
       await processImportPath(first.path);
+      if (repeatedFileCount > 0) {
+        setMessage(
+          `${repeatedFileCount} ${repeatedFileCount === 1 ? "arquivo repetido foi ignorado" : "arquivos repetidos foram ignorados"}.`,
+        );
+      }
     },
-    [processImportPath, resetFlow],
+    [
+      processImportPath,
+      resetFlow,
+      setBatchCategoryChoices,
+      setBatchIssues,
+      setBatchMode,
+      setCurrentBatchFile,
+      setGroupCategoriesAcrossBatch,
+      setPendingMappingProfiles,
+      setPreparedFiles,
+      setQueuedFiles,
+    ],
   );
 
   const handleDroppedPaths = useCallback(
@@ -966,7 +1107,13 @@ export function ImportPage() {
         .filter((file) => file.kind === "credit_card" && file.invoiceId)
         .map((file) => ({ invoiceId: file.invoiceId!, paymentTransactionIds: file.paymentTransactionIds }));
       setBatchCardCommitSummaries(cardSummaries);
-      setMessage(`${result.totalCount} lançamentos importados com segurança em ${result.files.length} arquivos.`);
+      setMessage(
+        `${result.totalCount} lançamentos importados com segurança em ${result.files.length} arquivos.${
+          result.skippedCount > 0
+            ? ` ${result.skippedCount} ${result.skippedCount === 1 ? "repetido foi ignorado" : "repetidos foram ignorados"}.`
+            : ""
+        }`,
+      );
       finishImportTutorial();
       for (const file of result.files) {
         if (file.kind === "bank" && file.batchId) await checkForTransferCandidates(file.batchId);
@@ -1325,6 +1472,20 @@ export function ImportPage() {
               </div>
             </div>
           </div>
+          <label className="import-batch-category-grouping">
+            <input
+              type="checkbox"
+              checked={groupCategoriesAcrossBatch}
+              onChange={(event) => setGroupCategoriesAcrossBatch(event.target.checked)}
+            />
+            <span>
+              <strong>Agrupar categorias iguais entre todas as faturas</strong>
+              <small>
+                Marcado por padrão: uma categoria escolhida para o mesmo estabelecimento será aplicada às próximas
+                faturas do lote. Desmarque para revisar cada fatura separadamente.
+              </small>
+            </span>
+          </label>
           <ul className="import-batch-files" aria-label="Arquivos do lote">
             {preparedFiles.map((file, index) => (
               <li className="import-batch-file import-batch-file--ready" key={file.id}>
@@ -2630,6 +2791,9 @@ export function ImportReviewGroups({
                     {activeGroup.isPix ? "LANÇAMENTO PIX" : "ESTABELECIMENTO"}
                   </span>
                   <h3 id="import-review-active-title">{activeGroup.label}</h3>
+                  {activeGroup.isPix && (
+                    <p className="import-review-pix-description">{activeGroup.candidates[0].description}</p>
+                  )}
                   <p>
                     {activeGroup.candidates.length}{" "}
                     {activeGroup.candidates.length === 1 ? "lançamento neste grupo" : "lançamentos neste grupo"}

@@ -1437,7 +1437,7 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap(),
-            29
+            30
         );
         pool.close().await;
     }
@@ -1477,7 +1477,7 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap(),
-            29
+            30
         );
         pool.close().await;
     }
@@ -1519,6 +1519,80 @@ mod tests {
         assert_eq!(opening, 1);
         assert_eq!(invoices, 1);
     }
+
+    #[tokio::test]
+    async fn duplicate_invoice_migration_combines_partial_and_complete_records() {
+        let directory = tempfile::tempdir().unwrap();
+        let pool = connect(&directory.path().join("duplicate-invoices.db"))
+            .await
+            .unwrap();
+        sqlx::raw_sql(
+            "INSERT INTO accounts(id,name,kind) VALUES('card','Cartão','credit_card');
+             INSERT INTO import_batches(id,file_name,created_at) VALUES
+               ('partial-batch','partial.csv',datetime('now')),
+               ('complete-batch','complete.csv',datetime('now'));
+             INSERT INTO credit_card_invoices(
+               id,account_id,due_date,purchases_cents,credits_cents,payments_cents,
+               total_cents,status,import_batch_id,created_at
+             ) VALUES
+               ('partial','card','2026-08-10',1000,0,0,1000,'open','partial-batch','2026-08-01'),
+               ('complete','card','2026-08-10',2000,0,0,2000,'open','complete-batch','2026-08-02');
+             INSERT INTO transactions(
+               id,account_id,date,description,normalized_description,amount_cents,
+               fingerprint,status,import_batch_id
+             ) VALUES
+               ('partial-item','card','2026-07-01','Compra parcial','COMPRA PARCIAL',-1000,
+                'partial-fingerprint','cleared','partial-batch'),
+               ('complete-item','card','2026-07-02','Compra nova','COMPRA NOVA',-2000,
+                'complete-fingerprint','cleared','complete-batch');
+             INSERT INTO credit_card_invoice_items(
+               invoice_id,transaction_id,source_row,raw_amount_cents,line_kind
+             ) VALUES
+               ('partial','partial-item',1,1000,'purchase'),
+               ('complete','complete-item',1,2000,'purchase');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::raw_sql(include_str!(
+            "../../migrations/0030_merge_duplicate_credit_card_invoices.sql"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM credit_card_invoices
+                 WHERE account_id='card' AND due_date='2026-08-10' AND deleted_at IS NULL",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            1
+        );
+        let invoice = sqlx::query(
+            "SELECT purchases_cents,total_cents,
+                    (SELECT COUNT(*) FROM credit_card_invoice_items items
+                     WHERE items.invoice_id=credit_card_invoices.id) item_count
+             FROM credit_card_invoices WHERE account_id='card' AND due_date='2026-08-10'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(invoice.get::<i64, _>("purchases_cents"), 3_000);
+        assert_eq!(invoice.get::<i64, _>("total_cents"), 3_000);
+        assert_eq!(invoice.get::<i64, _>("item_count"), 2);
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM pragma_foreign_key_check")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            0
+        );
+    }
+
     #[tokio::test]
     async fn connect_repairs_line_ending_checksum_mismatches() {
         let d = tempfile::tempdir().unwrap();

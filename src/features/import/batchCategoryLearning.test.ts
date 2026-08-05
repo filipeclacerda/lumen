@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Category, ImportCandidate } from "../../shared/types";
 import {
+  batchCategoryAssignments,
   batchCategoryMatchKey,
   batchCategorySuggestions,
   removeBatchCategoryChoicesForSession,
@@ -46,6 +47,32 @@ describe("aprendizado temporário de categorias no lote", () => {
       reason: "Escolhida por você neste lote",
     });
     expect(nextFile.suggestedCategoryId).toBeUndefined();
+  });
+
+  it("agrupa automaticamente o mesmo estabelecimento nas próximas faturas", () => {
+    const choices = updateBatchCategoryChoices([], "session-1", [candidate()], categories[0]);
+
+    expect(
+      batchCategoryAssignments(
+        [candidate({ sourceRow: 8 }), candidate({ sourceRow: 9, merchantKey: "OUTRA LOJA" })],
+        choices,
+        categories,
+        true,
+      ),
+    ).toEqual([{ categoryId: "food", sourceRows: [8] }]);
+  });
+
+  it("mantém PIX e lançamentos já categorizados fora do agrupamento automático", () => {
+    const choices = updateBatchCategoryChoices([], "session-1", [candidate()], categories[0]);
+
+    expect(
+      batchCategoryAssignments(
+        [candidate({ sourceRow: 8, isPix: true }), candidate({ sourceRow: 9, suggestedCategoryId: "health" })],
+        choices,
+        categories,
+        false,
+      ),
+    ).toEqual([]);
   });
 
   it("ordena por frequência e usa a escolha mais recente no empate", () => {

@@ -133,6 +133,7 @@ pub fn run() {
             commands::delete_transactions,
             commands::restore_transactions,
             commands::inspect_import_file,
+            commands::identify_import_files,
             commands::list_csv_mapping_profiles,
             commands::save_csv_mapping_profile,
             commands::delete_csv_mapping_profile,

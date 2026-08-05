@@ -349,12 +349,26 @@ fn read_optional(record: &StringRecord, index: Option<usize>) -> Option<String> 
 }
 
 fn parse_date(value: &str) -> Result<String, AppError> {
-    for fmt in ["%Y-%m-%d", "%d/%m/%Y", "%d/%m/%y"] {
-        if let Ok(date) = NaiveDate::parse_from_str(value.trim(), fmt) {
+    let trimmed = value.trim();
+    if let Ok(date) = NaiveDate::parse_from_str(trimmed, "%Y-%m-%d") {
+        return Ok(date.format("%Y-%m-%d").to_string());
+    }
+    let year_length = trimmed.rsplit('/').next().map(str::len);
+    if year_length == Some(4) {
+        if let Ok(date) = NaiveDate::parse_from_str(trimmed, "%d/%m/%Y") {
+            return Ok(date.format("%Y-%m-%d").to_string());
+        }
+    }
+    if year_length == Some(2) {
+        if let Some(date) = parse_two_digit_year_date(trimmed) {
             return Ok(date.format("%Y-%m-%d").to_string());
         }
     }
     Err(AppError::Validation(format!("Data inválida: {value}")))
+}
+
+fn parse_two_digit_year_date(value: &str) -> Option<NaiveDate> {
+    NaiveDate::parse_from_str(value, "%d/%m/%y").ok()
 }
 
 fn parse_date_from_mapping(value: &str, format: Option<&str>) -> Result<String, AppError> {
@@ -365,7 +379,11 @@ fn parse_date_from_mapping(value: &str, format: Option<&str>) -> Result<String, 
     let explicit = match format {
         Some("dd/MM/yyyy") => Some("%d/%m/%Y"),
         Some("yyyy-MM-dd") => Some("%Y-%m-%d"),
-        Some("dd/MM/yy") => Some("%d/%m/%y"),
+        Some("dd/MM/yy") => {
+            return parse_two_digit_year_date(trimmed)
+                .map(|date| date.format("%Y-%m-%d").to_string())
+                .ok_or_else(|| AppError::Validation(format!("Data inválida: {value}")));
+        }
         _ => None,
     };
     if let Some(pattern) = explicit {
@@ -1242,5 +1260,53 @@ RESUMO
         assert_eq!(invoice.items[1].line_kind, CreditCardLineKind::Payment);
         assert!(invoice.items[1].is_payment);
         assert_eq!(invoice.items[1].installment.as_deref(), Some("de 1"));
+    }
+
+    #[test]
+    fn pilot_bank_fixture_remains_importable_and_fictitious() {
+        let content = include_str!("../../../docs/pilot/fixtures/extrato-ficticio.csv");
+        assert_eq!(
+            detect_csv_kind(content).unwrap(),
+            DetectedImportKind::KnownBank
+        );
+
+        let rows = parse_csv_legacy(content).unwrap();
+        assert_eq!(rows.len(), 7);
+        assert_eq!(rows[0].amount_in_cents, 520_000);
+        assert_eq!(rows[6].amount_in_cents, -45_540);
+        assert!(rows.iter().all(|row| row
+            .external_id
+            .as_deref()
+            .is_some_and(|id| id.starts_with("LUMEN-DEMO-"))));
+    }
+
+    #[test]
+    fn pilot_credit_card_fixture_preserves_purchase_and_refund_signs() {
+        let content = include_str!("../../../docs/pilot/fixtures/Fatura2026-08-10.csv");
+        assert_eq!(
+            detect_csv_kind(content).unwrap(),
+            DetectedImportKind::KnownCreditCard
+        );
+
+        let invoice = parse_legacy_credit_card_csv(content).unwrap();
+        assert_eq!(invoice.items.len(), 4);
+        assert_eq!(invoice.items[0].candidate.amount_in_cents, -14_590);
+        assert_eq!(invoice.items[3].candidate.amount_in_cents, 2_000);
+        assert_eq!(invoice.items[3].line_kind, CreditCardLineKind::Refund);
+    }
+
+    #[test]
+    fn imports_bank_csv_with_currency_symbol_after_negative_sign() {
+        let content = include_str!("../../test-fixtures/bank-currency-symbol-after-sign.csv");
+
+        assert_eq!(
+            detect_csv_kind(content).unwrap(),
+            DetectedImportKind::KnownBank
+        );
+        let rows = parse_csv_legacy(content).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].date, "2026-05-07");
+        assert_eq!(rows[0].amount_in_cents, -123_456);
+        assert_eq!(rows[1].amount_in_cents, 50_000);
     }
 }

@@ -608,21 +608,53 @@ pub(crate) async fn commit_credit_card_import_in_transaction(
     let count = included.len();
     let totals = totals(&included)?;
     let batch_id = Uuid::new_v4().to_string();
-    let invoice_id = Uuid::new_v4().to_string();
+    let existing_invoice = sqlx::query(
+        "SELECT i.id,COALESCE(MAX(x.source_row),0) max_source_row
+         FROM credit_card_invoices i
+         LEFT JOIN credit_card_invoice_items x ON x.invoice_id=i.id
+         WHERE i.account_id=? AND i.due_date=? AND i.deleted_at IS NULL
+         GROUP BY i.id
+         ORDER BY (i.payment_transaction_id IS NOT NULL) DESC,
+                  EXISTS(SELECT 1 FROM transaction_links l WHERE l.invoice_id=i.id) DESC,
+                  i.created_at,i.id
+         LIMIT 1",
+    )
+    .bind(&session.account_id)
+    .bind(&session.due_date)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let invoice_id = existing_invoice
+        .as_ref()
+        .map(|row| row.get::<String, _>("id"))
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    let mut next_source_row = existing_invoice
+        .as_ref()
+        .map(|row| row.get::<i64, _>("max_source_row"))
+        .unwrap_or(0);
     sqlx::query("INSERT INTO import_batches(id,file_name,created_at) VALUES(?,?,datetime('now'))")
         .bind(&batch_id)
         .bind(&session.file_name)
         .execute(&mut *tx)
         .await?;
-    sqlx::query(
-        "INSERT INTO credit_card_invoices(id,account_id,due_date,purchases_cents,credits_cents,payments_cents,total_cents,status,import_batch_id)
-         VALUES(?,?,?,?,?,?,?,?,?)"
-    ).bind(&invoice_id).bind(&session.account_id).bind(&session.due_date)
-        .bind(totals.purchases_in_cents).bind(totals.credits_in_cents).bind(totals.payments_in_cents).bind(totals.total_in_cents)
-        .bind(if totals.total_in_cents <= 0 { "paid" } else { "open" })
-        .bind(&batch_id).execute(&mut *tx).await?;
+    if existing_invoice.is_none() {
+        sqlx::query(
+            "INSERT INTO credit_card_invoices(id,account_id,due_date,purchases_cents,credits_cents,payments_cents,total_cents,status,import_batch_id)
+             VALUES(?,?,?,?,?,?,?,?,?)"
+        ).bind(&invoice_id).bind(&session.account_id).bind(&session.due_date)
+            .bind(totals.purchases_in_cents).bind(totals.credits_in_cents).bind(totals.payments_in_cents).bind(totals.total_in_cents)
+            .bind(if totals.total_in_cents <= 0 { "paid" } else { "open" })
+            .bind(&batch_id).execute(&mut *tx).await?;
+    }
     let mut payment_transaction_ids = Vec::new();
     for item in included {
+        let source_row = if existing_invoice.is_some() {
+            next_source_row = next_source_row
+                .checked_add(1)
+                .ok_or_else(|| AppError::Validation("A fatura possui lançamentos demais".into()))?;
+            next_source_row
+        } else {
+            item.candidate.source_row as i64
+        };
         let transaction_id = Uuid::new_v4().to_string();
         let source = match item.candidate.suggestion_source {
             Some(SuggestionSource::Rule) => Some("rule"),
@@ -651,7 +683,7 @@ pub(crate) async fn commit_credit_card_import_in_transaction(
             "INSERT INTO credit_card_invoice_items(invoice_id,transaction_id,holder,installment,source_row,raw_amount_cents,line_kind)
              VALUES(?,?,?,?,?,?,?)"
         ).bind(&invoice_id).bind(&transaction_id).bind(&item.holder).bind(&item.installment)
-            .bind(item.candidate.source_row as i64).bind(item.raw_amount_in_cents).bind(item.line_kind.as_str())
+            .bind(source_row).bind(item.raw_amount_in_cents).bind(item.line_kind.as_str())
             .execute(&mut *tx).await?;
         if item.is_payment {
             payment_transaction_ids.push(transaction_id.clone());
@@ -663,6 +695,9 @@ pub(crate) async fn commit_credit_card_import_in_transaction(
                 .await?;
         }
     }
+    if existing_invoice.is_some() {
+        recalculate_credit_card_invoice_totals(&invoice_id, tx).await?;
+    }
     Ok((
         CreditCardImportCommitResult {
             invoice_id,
@@ -671,6 +706,50 @@ pub(crate) async fn commit_credit_card_import_in_transaction(
         batch_id,
         count,
     ))
+}
+
+async fn recalculate_credit_card_invoice_totals(
+    invoice_id: &str,
+    tx: &mut SqliteConnection,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "UPDATE credit_card_invoices
+         SET purchases_cents=COALESCE((
+                 SELECT SUM(-t.amount_cents)
+                 FROM credit_card_invoice_items x JOIN transactions t ON t.id=x.transaction_id
+                 WHERE x.invoice_id=? AND x.line_kind='purchase'
+                   AND t.deleted_at IS NULL AND t.amount_cents<0
+             ),0),
+             credits_cents=COALESCE((
+                 SELECT SUM(t.amount_cents)
+                 FROM credit_card_invoice_items x JOIN transactions t ON t.id=x.transaction_id
+                 WHERE x.invoice_id=? AND x.line_kind='refund'
+                   AND t.deleted_at IS NULL AND t.amount_cents>0
+             ),0),
+             payments_cents=COALESCE((
+                 SELECT SUM(t.amount_cents)
+                 FROM credit_card_invoice_items x JOIN transactions t ON t.id=x.transaction_id
+                 WHERE x.invoice_id=? AND x.line_kind='payment'
+                   AND t.deleted_at IS NULL AND t.amount_cents>0
+             ),0),
+             total_cents=COALESCE((
+                 SELECT SUM(CASE
+                     WHEN x.line_kind='purchase' AND t.amount_cents<0 THEN -t.amount_cents
+                     WHEN x.line_kind='refund' AND t.amount_cents>0 THEN -t.amount_cents
+                     ELSE 0 END)
+                 FROM credit_card_invoice_items x JOIN transactions t ON t.id=x.transaction_id
+                 WHERE x.invoice_id=? AND t.deleted_at IS NULL
+             ),0)
+         WHERE id=?",
+    )
+    .bind(invoice_id)
+    .bind(invoice_id)
+    .bind(invoice_id)
+    .bind(invoice_id)
+    .bind(invoice_id)
+    .execute(&mut *tx)
+    .await?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -1567,13 +1646,14 @@ pub async fn set_credit_card_invoice_deleted(
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
     let mut tx = state.db.begin().await?;
-    let batch_id = sqlx::query_scalar::<_, String>(
-        "SELECT import_batch_id FROM credit_card_invoices WHERE id=?",
-    )
-    .bind(&invoice_id)
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or_else(|| AppError::Validation("Fatura não encontrada".into()))?;
+    let exists =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM credit_card_invoices WHERE id=?")
+            .bind(&invoice_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if exists == 0 {
+        return Err(AppError::Validation("Fatura não encontrada".into()));
+    }
     if deleted {
         let linked: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM transaction_links l
@@ -1592,27 +1672,49 @@ pub async fn set_credit_card_invoice_deleted(
         }
         sqlx::query("UPDATE credit_card_invoices SET deleted_at=datetime('now'),payment_transaction_id=NULL WHERE id=?")
             .bind(&invoice_id).execute(&mut *tx).await?;
-        sqlx::query("UPDATE transactions SET deleted_at=datetime('now') WHERE import_batch_id=?")
-            .bind(&batch_id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("UPDATE import_batches SET undone_at=datetime('now') WHERE id=?")
-            .bind(&batch_id)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "UPDATE transactions SET deleted_at=datetime('now')
+             WHERE id IN (SELECT transaction_id FROM credit_card_invoice_items WHERE invoice_id=?)",
+        )
+        .bind(&invoice_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "UPDATE import_batches SET undone_at=datetime('now')
+             WHERE id IN (
+               SELECT DISTINCT t.import_batch_id
+               FROM credit_card_invoice_items x JOIN transactions t ON t.id=x.transaction_id
+               WHERE x.invoice_id=? AND t.import_batch_id IS NOT NULL
+             ) OR id=(SELECT import_batch_id FROM credit_card_invoices WHERE id=?)",
+        )
+        .bind(&invoice_id)
+        .bind(&invoice_id)
+        .execute(&mut *tx)
+        .await?;
     } else {
         sqlx::query("UPDATE credit_card_invoices SET deleted_at=NULL WHERE id=?")
             .bind(&invoice_id)
             .execute(&mut *tx)
             .await?;
-        sqlx::query("UPDATE transactions SET deleted_at=NULL WHERE import_batch_id=?")
-            .bind(&batch_id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("UPDATE import_batches SET undone_at=NULL WHERE id=?")
-            .bind(&batch_id)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "UPDATE transactions SET deleted_at=NULL
+             WHERE id IN (SELECT transaction_id FROM credit_card_invoice_items WHERE invoice_id=?)",
+        )
+        .bind(&invoice_id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "UPDATE import_batches SET undone_at=NULL
+             WHERE id IN (
+               SELECT DISTINCT t.import_batch_id
+               FROM credit_card_invoice_items x JOIN transactions t ON t.id=x.transaction_id
+               WHERE x.invoice_id=? AND t.import_batch_id IS NOT NULL
+             ) OR id=(SELECT import_batch_id FROM credit_card_invoices WHERE id=?)",
+        )
+        .bind(&invoice_id)
+        .bind(&invoice_id)
+        .execute(&mut *tx)
+        .await?;
     }
     tx.commit().await?;
     Ok(())
@@ -1809,6 +1911,87 @@ mod tests {
         let persisted: Option<String> = sqlx::query_scalar("SELECT external_id FROM transactions WHERE import_batch_id=(SELECT import_batch_id FROM credit_card_invoices WHERE id=? )").bind(commit_result.invoice_id).fetch_one(&db).await.unwrap();
         assert_eq!(persisted.as_deref(), Some("card-new"));
         assert_eq!(1_i64, sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM credit_card_invoice_items WHERE invoice_id=(SELECT id FROM credit_card_invoices ORDER BY rowid DESC LIMIT 1)").fetch_one(&db).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn later_complete_import_extends_invoice_with_same_card_and_due_date() {
+        let (_directory, db, account_id) = card_test_setup().await;
+        let first_purchase = card_item("COMPRA JÁ PRESENTE", Some("purchase-existing"));
+        let first_result = commit_credit_card_import_impl(
+            CreditCardImportSession {
+                account_id: account_id.clone(),
+                file_name: "fatura-parcial.csv".into(),
+                due_date: "2026-08-10".into(),
+                items: vec![first_purchase.clone(), payment_item(5_000)],
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+
+        let mut repeated_purchase = first_purchase;
+        repeated_purchase.included = false;
+        repeated_purchase.candidate.included = false;
+        let mut new_purchase = card_item("COMPRA NOVA", Some("purchase-new"));
+        // Arquivos atualizados podem renumerar linhas já usadas pela versão parcial.
+        new_purchase.candidate.source_row = 1;
+        let second_result = commit_credit_card_import_impl(
+            CreditCardImportSession {
+                account_id: account_id.clone(),
+                file_name: "fatura-completa.csv".into(),
+                due_date: "2026-08-10".into(),
+                items: vec![repeated_purchase, new_purchase],
+            },
+            &db,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(first_result.invoice_id, second_result.invoice_id);
+        assert_eq!(
+            1_i64,
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM credit_card_invoices
+                 WHERE account_id=? AND due_date='2026-08-10' AND deleted_at IS NULL",
+            )
+            .bind(&account_id)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        );
+        let invoice = sqlx::query(
+            "SELECT purchases_cents,credits_cents,payments_cents,total_cents
+             FROM credit_card_invoices WHERE id=?",
+        )
+        .bind(&first_result.invoice_id)
+        .fetch_one(&db)
+        .await
+        .unwrap();
+        assert_eq!(invoice.get::<i64, _>("purchases_cents"), 2_000);
+        assert_eq!(invoice.get::<i64, _>("credits_cents"), 0);
+        assert_eq!(invoice.get::<i64, _>("payments_cents"), 5_000);
+        assert_eq!(invoice.get::<i64, _>("total_cents"), 2_000);
+        assert_eq!(
+            3_i64,
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM credit_card_invoice_items WHERE invoice_id=?",
+            )
+            .bind(&first_result.invoice_id)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        );
+        assert_eq!(
+            3_i64,
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(DISTINCT source_row)
+                 FROM credit_card_invoice_items WHERE invoice_id=?",
+            )
+            .bind(&first_result.invoice_id)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        );
     }
 
     #[tokio::test]
